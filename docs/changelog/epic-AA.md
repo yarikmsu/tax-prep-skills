@@ -3088,3 +3088,46 @@ joint phase-out start. The 2025 form's line 22 prints $463,745, which the new
 case used, so the class contradicted itself; both older joint cases moved to
 the form's figure. Part III's credit limits, which start from line 35 after
 the exemption credits, remain AA72's.
+
+## AA43 — full-year NY/NC projected estimated payments
+
+The mid-year projection can now price reviewed TY2025 full-year NY/NC
+households with their own deduction/modification engines and emit equal-quarter
+IT-2105/NC-40 annual payment targets. NY includes State, NYC, Yonkers and
+per-person MCTMT alongside all matching withholding. NC reworks Schedule S,
+the child deduction, raw NC Schedule A and the spouse election. Moves,
+source/local allocations, incomplete residency/credit worksheets, unreviewed
+form years and uncomputed NC provisions leave the entire state balance and
+schedule unavailable while the federal forecast can continue.
+
+The annual shares and thresholds are fetched state law. Prior bases are
+explicit completed estimated-tax worksheets, with filed twelve-month,
+no-liability or confirmed-ineligibility evidence; gross archived tax is
+insufficient. Refundable credits and sales/use tax remain distinct in the
+filing balance. A reviewed STAR payment reduces the NY underpayment base
+without becoming a second refund.
+
+Review found two source questions that must stay separate: IT-2105's tax
+columns take their own minima, but Form IT-2105.9 lines 1-17 combine all taxes,
+credits, withholding and prior base for the penalty safe harbor. Separate
+column minima can understate that combined annual requirement. The primary
+schedule follows the latter, with the applicable tax-count floor and dated
+catch-up warnings. Existing jurisdiction calendar helpers and their documented
+holiday limitation are retained.
+
+The skill interview, input template, maintained state contracts, JSON and
+markdown carry the same boundaries and notes. Synthetic worksheet tests cover
+local liability, per-spouse mobility cliffs, combined prior/current minima,
+STAR, credit caps, thresholds, refusals and the secured read-only CLI.
+Payment tables retain cents so their printed installments reconcile with the
+printed shortfall. Source-component bounds reject state subtractions whose
+income is absent from the federal forecast, and NY modification keys are
+validated against the engine's schema. Combined NY withholding is explicitly
+confirmed; imported City/Yonkers actuals require the documented manual
+resolution because the importer binds State withholding alone.
+Residency/capability flags reject nonboolean answers and compare only applicable
+local detail fields. A gifts-trust addback requires an elected NY itemized
+deduction. Income, deduction and tax-table notes, including unfetched table
+departures, reach the forecast output. Regression tests were checked with
+deliberate reversals of the guards and arithmetic; each fault was rejected
+and the implementation restored before verification.

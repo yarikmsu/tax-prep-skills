@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "timeout": 500,
+            "timeout": 540,
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/skill-invariants.sh"
           }
         ]

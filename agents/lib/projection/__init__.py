@@ -35,6 +35,7 @@ from agents.lib.projection.types import (  # noqa: E402,F401
     ProjectionReport,
     SafeHarbor,
     StateProjection,
+    StatePaymentSchedule,
     Voucher,
     W4Adjustment,
     _money,
@@ -304,11 +305,11 @@ def capital_gains_limits(tax_law: dict, filing_status: "str | None",
 
 def _state_bracket_estimate_note(state, ca_safe_harbor,
                                  federal_itemized: bool) -> "str | None":
-    """The qualification a non-CA state figure has to carry, or None for CA.
+    """Qualify generic bracket estimates; dedicated form forecasts return None.
 
     One copy for the payload field and the markdown banner. Written out of the
-    same discriminator the Caveats section uses — a CA run has a modeled 540
-    harbor and every other taxed state does not — rather than by re-testing
+    same discriminator the Caveats section uses — CA has a modeled 540 harbor,
+    while reviewed NY/NC forecasts declare form_modeled — rather than re-testing
     `state.code != "CA"`, so the two cannot disagree about which states are
     modeled.
 
@@ -316,7 +317,7 @@ def _state_bracket_estimate_note(state, ca_safe_harbor,
     so: some states require the federal choice, and where one does, the
     larger deduction priced here is one it would not allow (AA21).
     """
-    if state is None or ca_safe_harbor is not None:
+    if state is None or ca_safe_harbor is not None or getattr(state, "form_modeled", False):
         return None
     # Plain prose, no markdown: this is a PAYLOAD field first and the
     # renderer's banner second, and a `**` embedded here would reach an agent
@@ -350,7 +351,7 @@ def _mfs_deduction_notes(fs: str, federal, state) -> "tuple[str | None, str | No
     if federal_note and federal.charitable_non_itemizer_deduction:
         federal_note += (" That difference includes the charitable deduction "
                          "for non-itemizers taken here, which itemizing gives up.")
-    if state is None:
+    if state is None or getattr(state, "form_modeled", False):
         return federal_note, None
     rule = ("California makes separate filers match their spouse, both "
             "itemizing or both taking the standard deduction"
@@ -370,7 +371,7 @@ def _itemized_deduction_note(federal, state) -> "str | None":
     worked out at another income reads the tax high or low (AA21). Plain
     prose, a payload field first, like `_state_bracket_estimate_note`."""
     federal_held = federal.itemized and not getattr(federal, "schedule_a_repriced", False)
-    state_held = state is not None and state.itemized
+    state_held = state is not None and state.itemized and not getattr(state, "form_modeled", False)
     if not (federal_held or state_held):
         return None
     if getattr(federal, "schedule_a_repriced", False) and not federal_held:
@@ -1274,13 +1275,18 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
     deps = profile.get("dependents") or []
     n_ctc = sum(1 for d in deps if isinstance(d, dict) and d.get("ctc_eligible"))
     ctc_cfg = fed.get("child_tax_credit", {}) or {}
-    if n_ctc and ctc_cfg.get("amount_per_child"):
-        ctc = compute_child_tax_credit(
-            n_ctc, ctc_cfg["amount_per_child"], agi,
-            (ctc_cfg.get("phase_out_start") or {}).get(bin_key) or 0,
-        )["credit_allowed"]
-    else:
-        ctc = 0.0
+    ctc = 0.0
+    if n_ctc:
+        if not isinstance(ctc_cfg, dict):
+            raise ProjectionError("Fetch federal.child_tax_credit as the covered-year cache object")
+        amount = _nonneg_num(_fetched_num(ctc_cfg.get("amount_per_child"),
+                              "federal.child_tax_credit.amount_per_child"), "federal.child_tax_credit.amount_per_child")
+        if amount > 0:
+            phases = ctc_cfg.get("phase_out_start")
+            phaseout_key = f"federal.child_tax_credit.phase_out_start.{bin_key}"
+            phaseout = _nonneg_num(_fetched_num(phases.get(bin_key) if isinstance(phases, dict) else None,
+                                               phaseout_key), phaseout_key)
+            ctc = compute_child_tax_credit(n_ctc, amount, agi, phaseout)["credit_allowed"]
 
     addl_cfg = fed.get("additional_medicare_tax", {}) or {}
     threshold_map = addl_cfg.get("threshold") or {}
@@ -2286,6 +2292,11 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     clock: the CLI already carries a `--today` override the tests drive.
     """
     _validate_tax_law_year(tax_law, year)
+    if inputs.get("state_projection") is not None:
+        from agents.lib.projection.states import _year, validate_forecast_profile
+        validate_forecast_profile(profile, year)
+        _year(inputs.get("tax_year"), year, "projection_inputs.tax_year")
+        _year(as_of.year, year, "projection as_of year")
     from agents.lib.paystub import PaystubError, validate_projection_provenance
     paystub_address = profile.get("address")
     try:
@@ -2322,8 +2333,32 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         ca_plan = ca_540nr_plan(profile)
     except ValueError as exc:
         raise ProjectionError(f"CA filing plan: {exc}") from None
-    state = None if ny_plan or ca_plan else project_state_tax(proj, prior, tax_law, fs,
-                              resident_state=resident_state)
+    state_schedule = None
+    dedicated_note = None
+    forecast = inputs.get("state_projection")
+    if forecast is not None and not (ny_plan or ca_plan):
+        from agents.lib.projection.states import project_resident_state
+        try:
+            state, state_schedule = project_resident_state(
+                forecast, proj, federal, inputs, profile, tax_law, fs, year)
+        except ProjectionError as exc:
+            state = None
+            dedicated_note = str(exc) + ". No state/local balance or payment schedule is estimated."
+    else:
+        state = None if ny_plan or ca_plan else project_state_tax(proj, prior, tax_law, fs,
+                                  resident_state=resident_state)
+    if state_schedule is not None:
+        if state_schedule.code == "NY":
+            state_vouchers = compute_ny_estimated_vouchers(
+                state_schedule.shortfall, as_of, state_schedule.estimates_paid)
+            catchup, state_calendar = _NY_CATCHUP, _NY_CALENDAR
+        else:
+            state_vouchers = compute_nc_estimated_vouchers(
+                state_schedule.shortfall, as_of, state_schedule.estimates_paid)
+            catchup, state_calendar = _NC_CATCHUP, _NC_CALENDAR
+        state_schedule = replace(state_schedule, vouchers=state_vouchers,
+            voucher_catchup_note=_voucher_catchup_note(catchup, state_vouchers, state_schedule, as_of),
+            voucher_dates_note=_voucher_dates_note(state_calendar, [state_vouchers], year, today))
 
     prior_tax, prior_agi = _prior_tax_agi(
         inputs.get("prior_year_form_2210_tax_base"),
@@ -2348,8 +2383,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     w4_penalty = compute_w4_4c(safe_harbor.shortfall, proj.paychecks_remaining)
     w4_zero = compute_w4_4c(full_shortfall, proj.paychecks_remaining)
 
-    # CA is the only state whose voucher weighting (30/40/0/30) is modeled;
-    # other states fall back to the informational note in the renderer.
+    # CA retains its weighted schedule; dedicated NY/NC use equal quarters.
     ca_safe_harbor = None
     ca_vouchers: list = []
     ca_voucher_catchup_note = None
@@ -2366,7 +2400,9 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         ca_voucher_dates_note = _voucher_dates_note(
             _CA_CALENDAR, [ca_vouchers], year, today)
 
-    resident_code = _normalize_state_code(resident_state)
+    # A reviewed full-year forecast asserts residence; mailing address does not.
+    resident_code = (state.code if state_schedule is not None and state is not None
+                     else _normalize_state_code(resident_state))
     no_income_tax, cache_mismatch, no_income_tax_code = _resolve_state_no_income_tax(
         tax_law, resident_code, year)
 
@@ -2436,6 +2472,9 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         no_income_tax, no_income_tax_code, cache_mismatch = False, None, None
         state_unsupported_note = ("CA Form540NR source allocations and residency changes are not projected. "
                                   "No CA liability/refund or 540-ES target is forecast; use actual allocations and the reviewed part-year estimated-tax worksheet.")
+    if dedicated_note:
+        no_income_tax, no_income_tax_code, cache_mismatch = False, None, None
+        state_unsupported_note = dedicated_note
     mfs_deduction_note, state_mfs_deduction_note = _mfs_deduction_notes(
         fs, federal, state)
 
@@ -2447,6 +2486,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         proj=proj, federal=federal, state=state,
         safe_harbor=safe_harbor, vouchers=vouchers, w4_penalty=w4_penalty, w4_zero=w4_zero,
         ca_safe_harbor=ca_safe_harbor, ca_vouchers=ca_vouchers,
+        state_payment_schedule=state_schedule,
         voucher_catchup_note=voucher_catchup_note,
         ca_voucher_catchup_note=ca_voucher_catchup_note,
         voucher_dates_note=voucher_dates_note,
@@ -2454,9 +2494,8 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
         w4_lever_note=_w4_lever_note(
             proj.paychecks_remaining, year, max(0.0, federal.balance),
             max(0.0, state.balance) if state is not None else 0.0,
-            # Same discriminator the Caveats section uses one rule below: a CA
-            # run has a modeled 540 harbor, every other taxed state does not.
-            state_is_bracket_estimate=ca_safe_harbor is None),
+            # Dedicated CA/NY/NC forecasts do not carry a generic-bracket label.
+            state_is_bracket_estimate=ca_safe_harbor is None and state_schedule is None),
         state_bracket_estimate_note=_state_bracket_estimate_note(
             state, ca_safe_harbor, federal.itemized),
         state_no_income_tax=no_income_tax,
@@ -2700,10 +2739,25 @@ _NY_VOUCHER_CATCHUP_NOTE = (
     "together.")
 _NY_CATCHUP = _CatchupNote(_NY_VOUCHER_CATCHUP_NOTE,
                            _ES_ESTIMATES_UNDATED,
-                           _ES_VOUCHER_TIMING_SETTLED,
-                           _ES_VOUCHER_TIMING_SCHEDULED,
+                           "The NY annual requirement is met, but undated estimates do not "
+                           "prove timely payment of earlier equal-quarter installments. "
+                           "Reconcile IT-2105.9 with actual dates.",
+                           "No NY installment already due is short on these totals; "
+                           "remaining vouchers are unpaid. Verify actual payment dates "
+                           "in IT-2105.9.",
                            _federal_instalment_fraction,
                            "NY")
+_NC_CATCHUP = _CatchupNote(
+    "This NC-40 schedule targets the ANNUAL requirement across remaining deadlines. "
+    "D-422 measures cumulative equal quarters; an overdue installment can require "
+    "more than the printed share. Reconcile actual payment dates and pay catch-up "
+    "amounts promptly. A later payment does not erase an earlier underpayment.",
+    " Estimates are an undated total; verify the dated D-422 worksheet.",
+    "The NC annual requirement is met, but undated estimates do not prove timely "
+    "payment of earlier installments. Reconcile D-422 with actual dates.",
+    "No NC installment already due is short on these totals; remaining vouchers "
+    "are unpaid. Verify actual payment dates in D-422.",
+    _federal_instalment_fraction, "NC")
 _CA_CATCHUP = _CatchupNote(_CA_VOUCHER_CATCHUP_NOTE,
                            _CA_ESTIMATES_UNDATED,
                            _CA_VOUCHER_TIMING_SETTLED,
@@ -2936,6 +2990,17 @@ def compute_ny_estimated_vouchers(shortfall: float, as_of: datetime.date,
                                       observed=_ny_observed_due)
 
 
+def _nc_observed_due(statutory: datetime.date) -> datetime.date:
+    return next_business_day_state(statutory, "NC")
+
+
+def compute_nc_estimated_vouchers(shortfall: float, as_of: datetime.date,
+                                  estimates_paid: float = 0.0) -> list:
+    """NC-40 regular equal quarters, using the existing state deadline roll."""
+    return compute_estimated_vouchers(shortfall, as_of, estimates_paid,
+                                      observed=_nc_observed_due)
+
+
 def _state_observed_due(statutory: datetime.date) -> datetime.date:
     """A CALIFORNIA 540-ES deadline as observed (see `irs_dates`).
 
@@ -3021,6 +3086,13 @@ _NY_CALENDAR = _VoucherCalendar(
         "may be a day or two before the one New York observes, which is the "
         "safe direction for a payment and the wrong one for a missed-deadline "
         "warning. Confirm both with the Department before relying on them."))
+
+_NC_CALENDAR = _VoucherCalendar(
+    form="NC-40", accrual="G.S. 105-163.15 / D-422",
+    bill="on the NCDOR bill or Form D-422", step="the D-422 cumulative worksheet",
+    observed_due=_nc_observed_due,
+    due_date_caveat=" The balance-due date is federal; NC installment dates roll "
+    "weekends only here. Confirm NCDOR holidays and any postponement before relying on dates.")
 
 def accrual_period_closed(year: int, today: "datetime.date | None") -> bool:
     """Has §6654(b)(2)'s accrual period for `year` closed as of `today`?
@@ -3522,6 +3594,9 @@ def _report_to_dict(r: ProjectionReport) -> dict:
         "ca_safe_harbor": (vars(r.ca_safe_harbor)
                            if r.ca_safe_harbor is not None else None),
         "ca_vouchers": [vars(v) for v in r.ca_vouchers],
+        "state_payment_schedule": ({**vars(r.state_payment_schedule),
+            "vouchers": [vars(v) for v in r.state_payment_schedule.vouchers]}
+            if r.state_payment_schedule is not None else None),
         "voucher_catchup_note": r.voucher_catchup_note,
         "ca_voucher_catchup_note": r.ca_voucher_catchup_note,
         "voucher_dates_note": r.voucher_dates_note,
@@ -3916,7 +3991,7 @@ def project_state_tax(proj: ProjectedInputs, prior, tax_law: dict,
 # because `render.py` imports `types.py` and this module imports both — putting
 # it at the top would make the order load-bearing for no gain.
 #
-# Eighteen of the thirty-three names `render.py` holds are addressed from
+# Eighteen of the thirty-four names `render.py` holds are addressed from
 # outside it — `withholding.py` shares eleven of them, which is what the file
 # is for — and the other fifteen are read by the renderers alone. A re-export
 # nothing imports is an address this module has to keep valid forever in

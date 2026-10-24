@@ -838,6 +838,8 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   Origin: [2026-05-25-tax-project-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-25-tax-project-design.md) §Open follow-ups.
 
 - **AA43 (P2, M): Extend projection estimated-payment schedules beyond CA.**
+  Implementation: [PR #33](https://github.com/yarikmsu/tax-prep-skills/pull/33),
+  open for review; not merged. Depends on PR #32.
   CA weighted projection vouchers and CA/NY/NC computed-return true-ups already
   exist. Projection currently models only CA's state voucher weighting. Add
   bounded full-year NY/NC projection schedules using their fetched safe-harbor

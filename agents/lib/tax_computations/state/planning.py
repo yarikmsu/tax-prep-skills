@@ -183,7 +183,8 @@ def _ca(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year
 
 
 def _ny(fagi: float, taxable_ss: float, retirement_delta: float,
-        plan: dict, cfg: dict, status: str) -> dict:
+        plan: dict, cfg: dict, status: str, *, forecast_credits: dict | None = None,
+        forecast_mctmt: float | None = None) -> dict:
     p = _obj(plan.get("ny"), "state_planning_inputs.ny")
     additions = copy.deepcopy(_obj(p.get("additions"), "NY additions"))
     subs = copy.deepcopy(_obj(p.get("subtractions"), "NY subtractions"))
@@ -198,7 +199,9 @@ def _ny(fagi: float, taxable_ss: float, retirement_delta: float,
             raise StatePlanningError("NY pension delta needs one reviewed per-owner exclusion entry")
         matching[0]["qualifying_amount"] = round(
             _number(matching[0].get("qualifying_amount"), "NY qualifying pension") + retirement_delta, 2)
-    agi = compute_ny_agi(fagi, additions, subs, status, cfg.get("subtractions"))["nyagi"]
+    income = compute_ny_agi(fagi, additions, subs, status, cfg.get("subtractions"))
+    agi = income["nyagi"]
+    notes = list(income["notes"])
     # The existing engine computes IT-196 46-49. Lines 1-45 cannot be borrowed
     # from federal Schedule A: require a reviewed fixed base with no moving
     # medical/misc/gift/investment-interest limits for this initial scope.
@@ -219,16 +222,24 @@ def _ny(fagi: float, taxable_ss: float, retirement_delta: float,
         nyagi=agi, filing_status=status, **itemized,
         reduction=cfg.get("itemized_reduction"), charitable_limit=cfg.get("charitable_limit"),
         standard_deduction=_number(cfg.get("standard_deduction", {}).get(standard_key), "NY standard deduction"))
+    notes.extend(d["notes"])
     dependents = _count(p.get("dependent_count"), "NY dependent count")
     taxable = round(max(0.0, agi - d["deduction"] - dependents *
                         _number(cfg.get("dependent_exemption", {}).get("amount"), "NY dependent exemption")), 2)
-    tax = compute_ny_tax(taxable, agi, status, cfg.get("brackets", {}),
+    state_tax_result = compute_ny_tax(taxable, agi, status, cfg.get("brackets", {}),
                          cfg.get("bracket_schedule_by_status", {}),
-                         cfg.get("tax_table_benefit_recapture", {}), cfg.get("tax_table"))["tax"]
+                         cfg.get("tax_table_benefit_recapture", {}), cfg.get("tax_table"))
+    tax = state_tax_result["tax"]
+    notes.extend(state_tax_result["notes"])
     exemptions = dependents + (2 if status == "mfj" else 1)
     household = compute_ny_household_credit(fagi, status, exemptions,
                     cfg.get("credits", {}).get("household", {}).get("table"), dependent)["credit"]
-    state_tax = compute_ny_state_tax_total(tax, household)["line_46_total_state_tax"]
+    credits = forecast_credits or {}
+    state_tax = compute_ny_state_tax_total(
+        tax, household,
+        resident_credit=credits.get("resident_credit", 0),
+        other_nonrefundable_credits=credits.get("other_nonrefundable_credits", 0),
+        net_other_state_taxes=credits.get("net_other_state_taxes", 0))["line_46_total_state_tax"]
     local = _obj(p.get("local"), "NY local evidence")
     nyc = _bool(local.get("nyc_resident"), "NYC resident")
     yonkers = _bool(local.get("yonkers_resident"), "Yonkers resident")
@@ -239,37 +250,54 @@ def _ny(fagi: float, taxable_ss: float, retirement_delta: float,
     city_tax = None
     city_credit = 0.0
     if nyc:
-        city_income = compute_nyc_taxable_income(
-            taxable, _number(local.get("charitable_gifts_trust_deducted"), "NYC gifts trust"),
-            local.get("nyc_resident_spouses"), status, local.get("nyc_resident_full_year"))["nyc_taxable_income"]
+        trust_addback = _number(local.get("charitable_gifts_trust_deducted"), "NYC gifts trust")
+        if trust_addback and not d["use_itemized"]:
+            # IT-201-I line47 applies only to contributions deducted on IT-196.
+            raise StatePlanningError("NYC gifts-trust addback requires a claimed NY itemized deduction")
+        city_income_result = compute_nyc_taxable_income(
+            taxable, trust_addback,
+            local.get("nyc_resident_spouses"), status, local.get("nyc_resident_full_year"))
+        city_income = city_income_result["nyc_taxable_income"]
+        notes.extend(city_income_result["notes"])
         city = _obj(cfg.get("nyc_tax"), "state.nyc_tax")
-        city_tax = compute_nyc_resident_tax(city_income, status, city.get("brackets"),
-                      cfg.get("bracket_schedule_by_status", {}), city.get("tax_table"))["tax"]
+        city_tax_result = compute_nyc_resident_tax(city_income, status, city.get("brackets"),
+                      cfg.get("bracket_schedule_by_status", {}), city.get("tax_table"))
+        city_tax = city_tax_result["tax"]
+        notes.extend(city_tax_result["notes"])
         city_credit = compute_ny_household_credit(fagi, status, exemptions,
                       city.get("household_credit", {}).get("table"), dependent)["credit"]
     yonkers_tax = None
     if yonkers:
         # Income-sensitive refundable credits are outside the initial planner.
         worksheet = _obj(local.get("yonkers_worksheet_credits"), "Yonkers credit worksheet")
-        if any(_number(v, "Yonkers worksheet credit") != 0 for v in worksheet.values()):
+        if (forecast_credits is None
+                and any(_number(v, "Yonkers worksheet credit") != 0 for v in worksheet.values())):
             raise StatePlanningError("Yonkers income-sensitive credit worksheets need separate repricing")
         yonkers_tax = compute_yonkers_resident_surcharge(
             state_tax, status, cfg.get("yonkers_tax"), worksheet,
             _number(local.get("star_reconciliation"), "Yonkers STAR reconciliation"),
             local.get("yonkers_resident_spouses"), local.get("yonkers_resident_full_year"),
             bool(itemized.get("college_tuition_deduction")))["tax"]
-    mobility = compute_mctmt(**_obj(local.get("mctmt"), "MCTMT zone earnings"),
-                            mctmt=cfg.get("mctmt"))["mctmt"]
-    city_total = compute_city_and_yonkers_total(
-        city_tax, city_credit, mctmt=mobility, yonkers_resident_surcharge=yonkers_tax,
+    mobility = (compute_mctmt(**_obj(local.get("mctmt"), "MCTMT zone earnings"),
+                             mctmt=cfg.get("mctmt"))["mctmt"]
+                if forecast_mctmt is None else _number(forecast_mctmt, "forecast MCTMT"))
+    city_out = compute_city_and_yonkers_total(
+        city_tax, city_credit, other_nyc_taxes=credits.get("other_nyc_taxes", 0),
+        nyc_nonrefundable_credits=credits.get("nyc_nonrefundable_credits", 0),
+        mctmt=mobility, yonkers_resident_surcharge=yonkers_tax,
         nyc_resident=nyc, yonkers_resident=yonkers,
-        yonkers_nonresident_earnings=False)["line_58_total_city_and_yonkers"]
-    return dict(agi=agi, deduction=d["deduction"], taxable_income=taxable,
+        yonkers_nonresident_earnings=False)
+    city_total = city_out["line_58_total_city_and_yonkers"]
+    out = dict(agi=agi, deduction=d["deduction"], taxable_income=taxable,
                 state_tax=state_tax, local_tax=city_total,
-                total_tax=round(state_tax + city_total, 2))
+                total_tax=round(state_tax + city_total, 2), itemized=d["use_itemized"])
+    if forecast_credits is not None:
+        out["notes"] = notes
+    return out
 
 
-def _nc(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year: int) -> dict:
+def _nc(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year: int,
+        *, forecast_use_tax: float | None = None) -> dict:
     # The jurisdiction was validated before dispatch; use its canonical input
     # key. A literal get("nc") also resembles a netcat command to the repository's
     # conservative no-network source scan.
@@ -277,11 +305,18 @@ def _nc(fagi: float, taxable_ss: float, plan: dict, cfg: dict, status: str, year
     if raw.get("other_state_credit") is not None:
         raise StatePlanningError("NC D-400TC other-state credit allocation needs separate repricing")
     _obj(raw.get("schedule_s"), "NC Schedule S")["taxable_social_security"] = taxable_ss
+    if forecast_use_tax is not None:
+        raw.update(use_tax=forecast_use_tax, use_tax_certified_none=forecast_use_tax == 0)
     out = compute_nc_d400(year, status, fagi, cfg, **raw)
-    return dict(agi=round(out["line_8"] - out["line_9_deductions"], 2),
+    priced = dict(agi=round(out["line_8"] - out["line_9_deductions"], 2),
                 deduction=out["line_11_deduction"], taxable_income=out["line_14_nc_taxable_income"],
                 state_tax=out["line_17"], local_tax=0.0, total_tax=out["line_17"],
-                child_deduction=out["line_10b_child_deduction"])
+                child_deduction=out["line_10b_child_deduction"],
+                itemized=out.get("schedule_a") is not None and
+                         out["schedule_a"]["line_10"] == out["line_11_deduction"])
+    if forecast_use_tax is not None:
+        priced["notes"] = out["notes"]
+    return priced
 
 
 def price_state_points(result: dict, tax_law: dict, year: int, status: str | None,

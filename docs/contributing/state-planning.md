@@ -128,3 +128,60 @@ unreviewed years and secured CLI publication exercise the boundaries.
 Roth planning binds a reviewed NY pension `retirement_owner` to the selected
 `--ira-owner`. A mismatch leaves state and combined estimates unavailable until
 the individual exclusion evidence is corrected.
+
+## Mid-year payment forecasts (AA43)
+
+`projection/states.py` consumes **`projection_inputs.json.state_projection`**,
+separate from a scenario's return-bound `state_planning_inputs`. Initial
+reviewed form year is TY2025 for NY/NC. The complete interview and field list
+is [tax-project's state-estimates reference](../../.agents/skills/tax-project/references/state-estimates.md).
+This is a full-year household/calendar-year forecast; residency/source moves,
+IT-203, Schedule PN, mixed local spouses, IT-360.1 and Y-203 refuse. Missing
+deductions or City/Yonkers/MCTMT answers never become zero. Federal output can
+continue, with state liability, balance and payment schedule all unavailable.
+
+The forecast is independently reviewed at its projected federal AGI and SE
+income. Its raw NY/NC deduction/modification inputs rerun the existing form
+engines, rather than applying generic brackets to federal taxable income. NY
+credit source worksheets are explicit reviewed forecast outputs, including
+refundable credits, while the engine applies the nonrefundable caps, household
+bands and local assembly. Yonkers uses its own listed credit source lines.
+MCTMT zone earnings are computed per person before summing joint liability.
+NY withholding combines all State/City/Yonkers amounts, and the voucher covers
+State, City, Yonkers and MCTMT. NC retains its named uncomputed provisions and
+other-state credit refusal. Sales/use tax affects the filing balance alone;
+refundable credits reduce both the payment base and the balance.
+
+Annual shares and thresholds come from `state.estimated_tax_safe_harbor` (NY)
+and `state.estimated_tax` (NC) in the requested year's cache. NY's fetched
+de_minimis multiplies by the applicable State/City/Yonkers tax count, while
+MCTMT contributes zero to that count. Form IT-2105.9 lines 1-17 combine all
+four taxes, refundable credits, STAR credit payments and withholding before
+comparing the current and prior annual shares. The separate IT-2105 voucher
+column minima answer a different question and cannot replace this combined
+safe-harbor target. Prior NY income tests the covered worksheet's NYAGI and
+MCTD earnings measures. A reviewed current-year STAR credit payment reduces
+the penalty base but not the filing balance.
+
+The prior base is the completed covered-year estimated-tax worksheet amount
+after its named credit/STAR adjustments, with a filed twelve-month return, an
+independently confirmed no-liability exception, or confirmed ineligibility.
+An unresolved prong refuses the state forecast instead of overstating an
+amount to pay. Archived gross tax cannot stand in for the completed base.
+
+`state_payment_schedule` travels in both JSON and markdown with the tested
+shares, annual requirement, paid totals, shortfall, equal-quarter vouchers and
+timing/date notes. Existing jurisdiction deadline helpers roll weekends only
+for NY/NC; verify legal holidays/disaster relief with the department. Remaining
+annual-target shares do not erase prior underpayments. Reconcile dates in
+IT-2105.9/D-422, especially with undated estimates or a late first requirement;
+annualized-income and farmer/fisherman worksheets remain separate.
+
+Structure re-read live on 2026-10-22 against
+[TY2025 IT-2105-I](https://www.tax.ny.gov/pdf/2025/inc/it2105i_2025.pdf),
+[IT-2105.9-I](https://www.tax.ny.gov/pdf/2025/inc/it2105_9i_2025.pdf),
+[the actual IT-2105.9 form](https://www.tax.ny.gov/pdf/2025/inc/it2105_9_2025_fill_in.pdf),
+[NC-40](https://www.ncdor.gov/2025-nc-40-individual-estimated-income-tax/open)
+and [G.S. 105-163.15](https://www.ncleg.gov/EnactedLegislation/Statutes/HTML/BySection/Chapter_105/GS_105-163.15.html).
+These references do not authorize carrying annual figures or form structure
+into a later year.

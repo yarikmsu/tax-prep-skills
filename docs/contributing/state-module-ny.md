@@ -114,6 +114,9 @@ remain on lines 72/70 and do not reduce that refund.
 
 Generic NY projections and IT-203 true-up forecasts skip with a named
 allocation/scope reason; zero projected state tax is not zero NY liability.
+Reviewed full-year IT-201 forecasts use the dedicated
+[`state_projection` contract](state-planning.md#mid-year-payment-forecasts-aa43)
+for NYS/NYC/Yonkers/MCTMT liability and equal-quarter IT-2105 payments.
 IT-201 true-up reads the completed combined liability and NY's own fetched
 safe-harbor inputs. IT-2105 calendar and IT-370 labels follow the selected form.
 Dates use the documented state-calendar fallback and require annual verification.

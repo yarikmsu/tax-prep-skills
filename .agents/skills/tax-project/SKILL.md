@@ -15,6 +15,8 @@ R&TC §19136.3 rule that current-year CA AGI ≥ $1M / $500K MFS forces
 **30/40/0/30** installment weighting (30% Apr 15, 40% Jun 15, NO September
 payment, 30% Jan 15 — R&TC §19136.1). Read-only: never modifies result.json or
 taxpayer_profile.json. Re-runnable quarterly.
+Reviewed full-year NY/NC forecasts also produce equal-quarter IT-2105/NC-40
+annual targets, with complete state/local worksheets and fetched safe-harbor law.
 
 ## Prerequisites
 - `taxpayer_profile.json` and `tax_law_{year}.json` exist (else: run `/tax-setup {year}` first).
@@ -72,6 +74,12 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    The importer preserves forecasts and writes secured source/date/pay-period
    provenance to `paystub_provenance` and `summaries/paystub_import.json`.
    Continue the forecast interview after import.
+   For full-year NY/NC households, follow
+   [the dedicated state forecast interview](references/state-estimates.md)
+   before computing. It collects the complete state/local liability forecast,
+   combined withholding and prior-year estimated-tax worksheet base, and emits
+   IT-2105/NC-40 equal-quarter schedules. Missing City/Yonkers, residency or
+   allocation evidence leaves the state balance and schedule unavailable.
    If absent, copy
    `agents/templates/projection_inputs_template.json` to the workspace and interview the
    user for: YTD wages, YTD federal + state withholding, pay frequency, as-of date, and any
@@ -110,8 +118,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    give to charity this year, not to a donor-advised fund or a supporting organization,
    or 0 for none. An itemizer is asked for the gifts too: they can make the standard
    deduction the better choice, and they stay inside the itemized total as well. The
-   state figure is read only where a state is projected, which New York normally is not,
-   so a New York resident is not asked up front. The state's own rules decide whether it
+   declared state figure is read only by the generic/CA path; dedicated NY/NC
+   forecasts collect their own raw deduction worksheets. The state's own rules decide whether it
    can differ from the federal choice: California lets it, while some states tie it to
    the federal return and some allow no itemized deductions, so enter 0 there. Each
    itemized total is priced where it beats its standard deduction, the federal one with
@@ -229,7 +237,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 
    **`as_of_date` must be null, not empty, to mean "absent".** In an OPEN year every PRESENT value is validated and a malformed one is refused outright — the run produces no report at all, because substituting today's date would silently relabel the YTD figures beside it. A workspace created from an older template may carry `"as_of_date": ""` (or `0`), which used to fall through to today's date and now blocks: edit it to `null`, to the MM-DD the YTD figures are current to, or pass `--as-of MM-DD` for this run.
 
-   **Read these seventeen things out of the payload before you summarize anything.** The
+   **Read these eighteen things out of the payload before you summarize anything.** The
    markdown in the next step carries them in prose, but the audit line below is written
    from HERE, and `safe_harbor.covered` alone is not the verdict:
 
@@ -311,7 +319,7 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      payload field precisely because you read `--json` first — the markdown carries it
      too, but by then the summary is written.
    - **`state_bracket_estimate_note`** — non-null means the resident state is TAXED but
-     handled by a bracket estimate in this projection; California has a dedicated block. Those state figures
+     handled by a bracket estimate in this projection; CA and reviewed NY/NC forecasts have dedicated blocks. Those state figures
      apply that state's brackets to a federally-derived taxable income and model no
      state-specific credit, addition or subtraction. Surface it whenever you report
      `state.balance`, and never present that figure as an amount owed — say it is an
@@ -344,6 +352,11 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      figure is produced. Surface it as its own item: the reader has a state return to
      handle by hand, and a summary that simply omits the state reads as "nothing owed
      there".
+   - **`state_payment_schedule`** — present for a reviewed full-year NY/NC
+     forecast. Report the annual requirement, shortfall, vouchers and all its
+     `notes`, `voucher_catchup_note` and `voucher_dates_note`, alongside the
+     state/local liability, refundable credits, use tax and combined withholding.
+     Follow the [state forecast interview](references/state-estimates.md).
    - **`nonresident_income_warning`** — non-null means the profile flags income sourced
      to ANOTHER state, whose nonresident liability and estimates are absent from every
      figure here. The projection is not wrong about the resident state; it is
