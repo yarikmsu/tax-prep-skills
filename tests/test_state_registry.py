@@ -33,7 +33,7 @@ def _get(d, dotted):
 
 
 def test_the_registry_holds_the_states_the_toolkit_knows():
-    """California and New York computed in depth, Florida's statement — a
+    """California and New York return sections, Florida's statement — a
     state added or dropped is a decision, so the set is pinned exactly."""
     assert [s.code for s in STATE_SECTIONS] == ["CA", "FL", "NY", "NC", "WA", "NY"]
     assert set(registry.BY_CODE) == {"CA", "FL", "NY", "NC", "WA"}
@@ -213,10 +213,14 @@ def test_a_computed_state_is_wired_into_every_module(s):
         return
     category = f"state_withholding_{s.code.lower()}"
     assert tie_out.CATEGORY_TARGETS[category][0] == s.section, category
-    # The capability gate tells the reader the state is computed in depth,
+    # The capability gate tells the reader the state has a dedicated return section,
     # not that it is a bracket estimate.
     note = capabilities._state_note({"address": {"state": s.code}})
-    assert "computed in depth" in note, (s.code, note)
+    if s.code == "CA":
+        assert "Form 540 is partially assembled from manual worksheets" in note
+        assert "NOT COMPUTED" in note
+    else:
+        assert "computed in depth" in note, (s.code, note)
     # The calendar schedules the state's own estimated-tax payments.
     events = tax_calendar.build_events(
         {"address": {"state": s.code}, "flags": {}}, 2026)

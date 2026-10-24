@@ -853,8 +853,8 @@ def render_markdown(r: ProjectionReport) -> str:
         # qualifying neither: the lede says "see the state section below" and
         # sends the reader from the hedged sentence to a bolded, unhedged
         # restatement of the same figure, which reads as the authoritative one.
-        # Only California is computed in depth (AGENTS.md: "other states are
-        # bracket-estimate only"); the Caveats line about scheduling qualifies
+        # Only California has a dedicated projection block (other states are
+        # bracket estimates here); the Caveats line about scheduling qualifies
         # the SCHEDULE, never the amount.
         lines += ["| Item | Amount |", "|---|---:|",
                   f"| State ({s.code}) deduction ({'itemized' if s.itemized else 'standard'}) | {_money(s.deduction)} |",

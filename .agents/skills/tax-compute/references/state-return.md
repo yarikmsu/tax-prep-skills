@@ -1,6 +1,6 @@
 # tax-compute Step 10 — state return
 
-California Form 540 in depth; New York has its own file; every other state is
+California Form 540 uses engine functions and manual worksheets; New York has its own file; every other state is
 a bracket estimate. A `type: "none"` state is a positive declaration, not an
 empty section.
 
@@ -62,6 +62,14 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
 1. Start with Federal AGI
 2. Schedule CA adjustments:
    - HSA add-backs (employer contributions + HSA earnings) — CA non-conformity
+   - Subtract the federally taxable Social Security on Form 1040 line 6b,
+     recording `schedule_ca_adjustments.taxable_social_security_subtraction`.
+     Do not subtract the gross SSA-1099 benefits.
+   - Subtract only `form_1040.taxable_state_refund`, the amount included in
+     federal AGI from the tax-benefit worksheet; record it as
+     `schedule_ca_adjustments.taxable_state_refund_subtraction`.
+     Include both amounts in `total_subtractions`. The tie-out checks each
+     even if a screening flag says no or a limitation was acknowledged.
    - Any other CA-specific additions/subtractions
 3. CA AGI = Federal AGI + additions - subtractions
 4. CA deduction — run `compute_ca_itemized()` whenever `compute_schedule_a`
@@ -156,12 +164,35 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     the CA tax** (write the `schedule_p` block: ca_amti / ca_exemption_allowed /
     ca_tmt / ca_amt / iso_bargain_element / carryforward_to_next_year). The
     `schedule_p_carryforward` is the deferral-attributable (ISO) CA AMT credit —
-    write it to `california_540.schedule_p.carryforward_to_next_year` so
+    write it to `california_540.schedule_p.iso_credit_generated`. For a return
+    with no opening AMT credit it also becomes `carryforward_to_next_year`, so
     /tax-rollover carries it to `prior_year.ca_amt_credit_carryforward` (a
-    SEPARATE carryforward from the federal Form 8801). A non-ISO CA return skips
-    this step (no `schedule_p` block).
+    SEPARATE carryforward from the federal Form 8801).
+    **Opening CA AMT credit:** when `ca_has_amt_credit` is set or
+    `prior_year.ca_amt_credit_carryforward` is nonzero, WRITE the `schedule_p`
+    block even without an ISO exercise. Acknowledge `ca_amt_credit` only after
+    working FTB 3510 and record **[ca_amt_credit_worksheet]** in `answers.md`.
+    Store `ftb3510_credit_available`, `ftb3510_credit_allowable` and
+    `ftb3510_worksheet_confirmed: true`; null refuses and zero must be a worked
+    result. Reconcile the opening amount to the prior-year source. Write
+    `carryforward_to_next_year = available - allowable + iso_credit_generated`
+    (the new ISO figure is zero without an ISO exercise). Claim the allowable
+    code-188 credit from its own worksheet; it is not a payment. An unclaimed
+    allowable credit needs an amended return, not a larger carryforward. The
+    tie-out refuses a missing worksheet, dropped opening credit or wrong sum.
+    **General Schedule P remains manual:** an ISO-only call does not price
+    all Part I adjustments. Read the covered-year form, including standard
+    deduction (line 1), medical (2), property taxes (3), non-acquisition-debt
+    interest (4), miscellaneous deductions (5), property-tax refunds (6), and
+    the itemized phase-out reversal (18 on TY2025). These are return figures,
+    not additional interview answers. Prepare the general worksheet when
+    required, including on a non-ISO return; never infer zero AMT from a no to
+    Boxes A/B or from the Box C special-credit screen. The checked Form 540
+    builder is tracked as AA69. A non-ISO return without an opening AMT credit
+    keeps no ISO-path block unless a separate manual Schedule P needs one.
 10. CA withholding from W-2 Box 17
-    (`ca_total_tax` = CA tax after credits + mental-health surcharge + `ca_amt`
+    (`ca_total_tax` = CA tax after exemption credits minus the separately worked
+    allowable nonrefundable credits, floored at zero, plus mental-health surcharge + `ca_amt`
     from step 9.5 when present.)
 11. Excess SDI/VPDI credit (Form 540 line 74): run `compute_excess_sdi()`
     for EVERY person with any CA-wage W-2 — no trigger condition (cheap pure
@@ -179,7 +210,10 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     credit). A nonzero `employer_error_amount` means that portion is
     recovered from the employer (EDD DE 1964), not the return; only
     `excess_credit` goes on the 540. Write it to `ca_excess_sdi_credit`.
-12. CA refund/owed
+12. CA refund/owed. Claim each separately worked CA credit once in the proper
+    place: nonrefundable credits reduce regular tax under their Schedule P
+    limitations, while CalEITC / young-child / foster-youth credits on lines
+    75-77 add to payments. Never copy a federal credit onto a California line.
 
 **No-income-tax states (`tax_law state.type == "none"` — FL):**
 1. Do NOT compute a state return and do NOT leave the section empty.

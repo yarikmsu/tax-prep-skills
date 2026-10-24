@@ -24,7 +24,7 @@ from pathlib import Path
 _ROOT = str(Path(__file__).resolve().parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-from agents.lib.capabilities import _REQUIRED_GATE_FLAGS  # noqa: E402
+from agents.lib.capabilities import RULES, _REQUIRED_GATE_FLAGS  # noqa: E402
 from agents.lib.secure_fs import secure_path, write_secure  # noqa: E402
 from agents.lib.tax_law_fetcher import (  # noqa: E402
     create_empty_tax_law, save_tax_law)
@@ -300,6 +300,9 @@ def taxpayer_profile() -> dict:
     # `_include_if` on, and the golden carries that section.
     for flag in _REQUIRED_GATE_FLAGS:
         profile["flags"][flag] = False
+    for rule in RULES:
+        if rule.state == "CA":
+            profile["flags"][rule.flag] = False
     profile["flags"]["has_capital_gains"] = True
     return profile
 

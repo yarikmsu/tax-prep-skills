@@ -5123,7 +5123,7 @@ def test_the_spent_lede_names_a_state_balance_on_both_of_its_branches():
 
 
 def test_a_non_ca_state_balance_is_qualified_where_it_is_stated():
-    """Only CA is modeled in depth; every other taxed state is a bracket
+    """CA has a dedicated projection block; other taxed states use a bracket
     estimate, and both closed-year ledes bold the figure.
 
     The only qualification the report carried for it — "State
@@ -5141,7 +5141,7 @@ def test_a_non_ca_state_balance_is_qualified_where_it_is_stated():
         assert "bracket ESTIMATE" in note
         assert "not modeled in depth" in note
 
-    # California IS modeled, so the same figure carries no such hedge —
+    # California has a dedicated projection block, so the same figure carries no such hedge —
     # a caveat false of its reader is one they learn to skip.
     for note in (P._w4_lever_note(0, 2026, 500.0, 4120.0),
                  P._w4_lever_note(0, 2026, 0.0, 4120.0)):
@@ -5318,7 +5318,7 @@ def test_a_non_ca_state_balance_is_qualified_in_the_table_too():
     # And the lede still carries its own, so neither surface relies on the other.
     assert "bracket ESTIMATE" in r.w4_lever_note
 
-    # California, being modeled in depth, gets no such banner in the table.
+    # California, having a dedicated projection block, gets no such banner in the table.
     ca = _build_sample_report()
     assert ca.ca_safe_harbor is not None
     assert "bracket ESTIMATE" not in P.render_markdown(ca)
@@ -5413,7 +5413,7 @@ def test_the_payload_qualifies_a_non_ca_state_balance_on_an_open_year():
     # Plain prose: an agent reading --json must not meet raw markdown.
     assert "**" not in note and "⚠" not in note
 
-    # California is modeled in depth, so its payload carries no hedge.
+    # California has a dedicated projection block, so its payload carries no hedge.
     ca_payload = P._report_to_dict(_build_sample_report())
     assert ca_payload["state_bracket_estimate_note"] is None
 

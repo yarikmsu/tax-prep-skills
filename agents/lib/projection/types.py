@@ -437,9 +437,9 @@ class ProjectionReport:
     # figures may not be the year's is not one to leave out of the payload
     # they summarise from.
     stale_as_of_note: "str | None" = None
-    # Non-null when `state` is a taxed state OTHER than California, whose 540
-    # is the only one computed in depth (AGENTS.md: "other states are
-    # bracket-estimate only"). A FIELD, not a renderer decision, for the
+    # Non-null for a taxed state without California's dedicated projection
+    # block. This projection does not implement those states' full returns.
+    # A FIELD, not a renderer decision, for the
     # reason `stale_as_of_note` above is one, and it is the same defect twice
     # over: the hedge first went onto the W-4 lede only, then onto the
     # markdown table only. Both consuming skills instruct the agent to read

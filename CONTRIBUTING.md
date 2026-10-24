@@ -155,9 +155,11 @@ The gates' `validation_receipt.json` is a runtime artifact like the rest — git
 
 ## Adding a state
 
-State support is California-first: CA Form 540 is computed in depth, Florida is modeled
-as a no-income-tax regime, and other states are bracket-estimate only. Adding a state is
-explicitly community territory and the path is mapped:
+State support is California-first: Form 540 combines engine functions with manual
+worksheets and capability gates. New York and North Carolina have dedicated
+income-tax engines; Washington has a capital-gains excise engine, and Florida
+is a no-income-tax regime. Other taxed states generally receive bracket
+estimates. Adding a state is explicitly community territory and the path is mapped:
 
 - `docs/contributing/state-module-playbook.md` — the procedure.
 - `docs/contributing/state-module-template.md` — the spec template to fill in.

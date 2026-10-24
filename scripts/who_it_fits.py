@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 import sys
 from collections import Counter
@@ -440,6 +441,33 @@ def no_tax_fips(fips_of: dict) -> set:
     return {fips_of[postal] for postal in _NO_INCOME_TAX_STATES}
 
 
+def ca_scope_shares(data: Path, postal: str = "CA") -> dict:
+    """CA-specific stops/bounds from Historic Table 2, not independent totals.
+
+    N02500 is federally taxable Social Security; N00700 taxable state/local
+    refunds; N02300 unemployment; N00400 ALL tax-exempt interest, which only
+    bounds the non-CA municipal subset from above.
+    """
+    fields = {"taxable_ss": "N02500", "taxable_refund": "N00700",
+              "unemployment": "N02300", "muni_upper_bound": "N00400"}
+    rows = [r for r in _dict_rows(data / "23in55cmcsv.csv") if r["STATE"].strip() == postal]
+    by_stub = {r["AGI_STUB"].strip(): r for r in rows}
+    if len(by_stub) != len(rows):
+        raise ValueError("CA scope statistics: duplicate AGI brackets")
+    _require(set(by_stub), {"0", "8", "9", "10"}, "CA scope statistics")
+    out = {}
+    for group, stubs in (("all", ("0",)), ("200k", ("8", "9", "10"))):
+        denominator = sum(_num(by_stub[s]["N1"]) for s in stubs)
+        if not math.isfinite(denominator) or denominator <= 0:
+            raise ValueError("CA scope statistics: denominator must be positive")
+        for name, field in fields.items():
+            numerator = sum(_num(by_stub[s][field]) for s in stubs)
+            if not math.isfinite(numerator) or not 0 <= numerator <= denominator:
+                raise ValueError("CA scope statistics: count outside return population")
+            out[f"{name}_{group}"] = 100 * numerator / denominator
+    return out
+
+
 def extract(data: Path) -> dict:
     """Everything the page quotes that comes from the downloads."""
     fips_of, county_rows = read_county_file(data)
@@ -450,6 +478,7 @@ def extract(data: Path) -> dict:
     return {
         "tax_year": TAX_YEAR,
         "income": income_shares(data, fips_of, county_rows),
+        "ca_scope": ca_scope_shares(data),
         "itemizing_500k": itemizing_500k(data),
         "moves": moves(flows),
         "arrivals": arrivals(flows),
@@ -524,9 +553,9 @@ def phrases(figures: dict) -> list[str]:
     itemize = figures["itemizing_500k"]
     origin = figures["arrivals"][fl][0]
     return [
-        f"{_span([e['all'] for e in ends.values()])} of returns hit a block, depending "
-        f"on the persona, and {_span([e['200k'] for e in ends.values()])} of returns "
-        "above $200,000 of income",
+        "common federal/residency blocks alone reach "
+        f"{_span([e['all'] for e in ends.values()])} of returns, depending "
+        f"on the persona, and {_span([e['200k'] for e in ends.values()])} above $200,000",
         f"Of the {moved[ny]}, {pct(figures['moves'][ny]['state_line'])} cross a state line",
         f"{pct(figures['moves'][ny]['in_state'])} move between the City and the rest "
         "of New York State",
@@ -568,6 +597,16 @@ def phrases(figures: dict) -> list[str]:
         f"{ends[sea]['200k']} of $200,000+ returns hit one",
         f"returns reporting any rent are {n['any_rent_200k']} of $200,000+ returns "
         f"against {n['rental_field_200k']} by this field",
+    ] + ca_scope_phrases(figures)
+
+
+def ca_scope_phrases(figures: dict) -> list[str]:
+    s = figures["ca_scope"]
+    return [
+        f"Taxable Social Security: {s['taxable_ss_200k']:.1f}% above $200,000 and {s['taxable_ss_all']:.1f}% of all California returns",
+        f"Taxable state/local refunds: {s['taxable_refund_200k']:.1f}% above $200,000 and {s['taxable_refund_all']:.1f}% overall",
+        f"Unemployment compensation: {s['unemployment_200k']:.1f}% above $200,000 and {s['unemployment_all']:.1f}% overall",
+        f"All tax-exempt interest bounds the non-CA municipal subset from above: {s['muni_upper_bound_200k']:.1f}% above $200,000 and {s['muni_upper_bound_all']:.1f}% overall",
     ]
 
 
@@ -580,10 +619,11 @@ def claims(figures: dict) -> dict[str, bool]:
     low_all = {p: _low(ends[p]["all"]) for p in PERSONAS}
     others = [p for p in PERSONAS]
     return {
-        "rental is the largest block above $200,000 in every persona": all(
+        "California has the lowest common-block all-returns share":
+            min(others, key=low_all.get) == ca,
+        "rental is the largest of the common measured blocks above $200,000 in every persona": all(
             inc[p]["rental_200k"] > max(inc[p]["marketplace_200k"], moved[p], com[p])
             for p in PERSONAS),
-        "California has the lowest all-returns share": min(others, key=low_all.get) == ca,
         "California has the fewest moves": min(others, key=moved.get) == ca,
         "California's commonest out-of-state workplace does not block": not work[ca][0][2],
         "Florida has the highest all-returns marketplace share":

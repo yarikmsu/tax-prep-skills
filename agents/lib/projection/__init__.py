@@ -328,7 +328,7 @@ def _state_bracket_estimate_note(state, ca_safe_harbor,
         "require the federal choice, and where yours does the state tax here "
         "reads low.")
     return (f"{state.code} is a bracket ESTIMATE — this state's return is not "
-            "modeled in depth, only California is. The figures apply the "
+            "modeled in depth by this projection. The figures apply the "
             "state's brackets to a federally-derived taxable income and model "
             "no state-specific credit, addition or subtraction, so treat the "
             "balance as an order of magnitude rather than an amount owed."
@@ -3426,7 +3426,7 @@ _W4_LEVER_SPENT_DUE = (
 # owed. Qualifying the number where it is STATED is the difference between a
 # projection and a bill.
 _W4_LEVER_STATE_ESTIMATE = (
-    " (a bracket ESTIMATE — this state's return is not modeled in depth, so "
+    " (a bracket ESTIMATE — this state's return is not modeled in depth by this projection, so "
     "treat it as an order of magnitude, not an amount owed)")
 
 _W4_LEVER_STATE_ALSO_DUE = (
@@ -3472,7 +3472,7 @@ def _w4_lever_note(paychecks_remaining: int, year: int,
     own text names.
 
     `state_is_bracket_estimate` qualifies that figure IN PLACE. Only CA is
-    computed in depth; every other taxed state is a bracket estimate, and
+    handled by a dedicated projection block; other taxed states use bracket estimates, and
     bolding one as "ALSO projected due" above a caveat the reader meets at the
     bottom of the report states an estimate with the confidence of a bill.
     """

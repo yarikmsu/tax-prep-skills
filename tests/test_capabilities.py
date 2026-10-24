@@ -54,6 +54,7 @@ def _profile(flags=None, acknowledged=None, state="CA"):
     has_nonresident_source_income, Codex round 3) are explicitly present
     (False) as /tax-setup writes them — absence fails closed."""
     merged = {f: False for f in C._REQUIRED_GATE_FLAGS}
+    merged.update({r.flag: False for r in C.RULES if r.state == state})
     merged.update(flags or {})
     p = {
         "tax_year": 2025,
@@ -476,14 +477,14 @@ def test_usps_territory_codes_accepted():
 # state note + manifest (C2)
 # --------------------------------------------------------------------------
 
-def test_state_ca_noted_in_depth():
+def test_state_ca_scope_is_disclosed():
     r = C.evaluate(_profile(state="CA"))
     assert "Form 540" in r.state_note
     assert r.limitations[0] == r.state_note
 
 
 def test_state_other_noted_estimate_only():
-    # CO: not a no-income-tax state, not one of the two modeled in depth.
+    # CO: an income-tax state without a dedicated return module.
     # This test used NY until the IT-201 module shipped, at which point NY
     # started returning its own depth note — the state that "falls through"
     # is a moving target and the comment naming one is the whole reason this
@@ -1229,6 +1230,7 @@ def _profile_with(residency, **extra):
     profile = {"tax_year": 2026, "filing_status": "single",
                "address": {"state": "CA"},
                "flags": {f: False for f in C._REQUIRED_GATE_FLAGS}}
+    profile["flags"].update({r.flag: False for r in C.RULES if r.state == "CA"})
     profile.update(extra)
     if residency is not None:
         profile["residency"] = residency
@@ -1457,7 +1459,7 @@ class TestTheNewYorkModuleIsDone:
 
     def test_california_is_untouched(self):
         note = C.evaluate(_profile(state="CA")).state_note
-        assert "Form 540 computed in depth" in note
+        assert "Form 540 is partially assembled" in note
 
     # --- the /tax-verify line map ----------------------------------------
 
@@ -1667,8 +1669,7 @@ def test_the_skill_catalog_names_every_blocking_rule():
     text = (REPO / "docs/contributing/skill-catalog.md").read_text()
     paragraph = text[text.index("**Blocking**"):text.index("**Manual-worksheet items**")]
     named = set(re.findall(r"`([a-z0-9_]+)`", paragraph)) - {"acknowledged_limitations"}
-    blocking = {r.rule_id for r in C.RULES
-                if r.level == C.UNSUPPORTED and not r.rule_id.startswith(("nc_", "wa_"))}
+    blocking = {r.rule_id for r in C.RULES if r.level == C.UNSUPPORTED}
     assert named == blocking, (sorted(blocking - named), sorted(named - blocking))
 
 

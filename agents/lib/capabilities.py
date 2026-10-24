@@ -53,6 +53,14 @@ class CapabilityError(Exception):
 UNSUPPORTED = "unsupported"
 MANUAL = "manual"
 
+# Validated scope codes, including the inhabited territories for federal gates.
+_TERRITORIES = frozenset({"PR", "VI", "GU", "AS", "MP"})
+_USPS_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
+    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
+    "WI WY DC".split()
+) | _TERRITORIES
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -62,10 +70,13 @@ class Rule:
     situation: str
     form: str
     note: str
+    state: "str | None" = None
 
     def __post_init__(self):
         if self.level not in (UNSUPPORTED, MANUAL):
             raise CapabilityError(f"invalid rule level {self.level!r}")
+        if self.state is not None and self.state not in _USPS_STATES:
+            raise CapabilityError(f"invalid rule state {self.state!r}")
 
 
 @dataclass(frozen=True)
@@ -91,26 +102,85 @@ class CapabilityReport:
 # /tax-setup interview is what sets them, so a rule keyed on a flag the
 # interview never asks is dead (the D1 lesson from expected_sources).
 RULES: "tuple[Rule, ...]" = (
-    Rule("wa_special_gains", "wa_has_special_gain_rules", UNSUPPORTED, "WA special federal gain rules", "RCW 82.87.020 normalization", "Section 1256/QOF and other special rules require a WA gain worksheet not modeled here."),
-    Rule("wa_separate_household", "wa_has_separate_household", UNSUPPORTED, "WA separate spouse/RDP household", "RCW 82.87.120 allocation", "One household shares all WA deductions and credits; separate allocations are not modeled."),
+    Rule("ca_blind_exemption", "ca_has_blind_exemption", UNSUPPORTED,
+         "CA blind exemption", "Form 540 line 8",
+         "The blind exemption is not assembled by the return engine; prepare the eligible credit manually.", state="CA"),
+    Rule("ca_us_obligation_income", "ca_has_us_obligation_income", UNSUPPORTED,
+         "US-obligation interest or fund distributions", "Schedule CA (540) interest/dividend subtractions",
+         "The California-exempt US-obligation portion is not computed. Omitting it overstates CA tax.", state="CA"),
+    Rule("ca_nonca_muni_interest", "ca_has_nonca_muni_interest", UNSUPPORTED,
+         "Non-California municipal interest or exempt-interest dividends", "Schedule CA (540) interest additions",
+         "California-taxable non-CA municipal income is not computed. Omitting it understates CA tax.", state="CA"),
+    Rule("ca_other_schedule_ca", "ca_has_other_schedule_ca_adjustments", UNSUPPORTED,
+         "Other California/federal income differences", "Schedule CA (540) Part I",
+         "Unemployment/PFL, section 1202, basis/depreciation, K-1, moving expenses, IRA basis, "
+         "California lottery, educator expenses and FEIE adjustments are not computed; prepare each applicable line.", state="CA"),
+    Rule("ca_state_refund", "has_1099g_state_refund", UNSUPPORTED,
+         "State refund requiring the federal tax-benefit worksheet", "Schedule 1 line 1 / Schedule CA (540)",
+         "Determine the federally taxable refund and subtract that amount for CA; the 1099-G gross refund is not the taxable amount.", state="CA"),
+    Rule("ca_noniso_amt", "ca_has_noniso_amt_items", UNSUPPORTED,
+         "CA AMT items outside the modeled ISO path", "Schedule P (540), Form 540 line 61",
+         "Box A/B preferences and adjustments, investment interest, installment-sale income and "
+         "mortgage interest on debt not used to buy or improve the home require a separate Schedule P worksheet.", state="CA"),
+    Rule("ca_distribution_taxes", "ca_has_special_distribution_tax", UNSUPPORTED,
+         "Lump-sum or accumulation distribution tax", "Form 540 line 34 / Schedule G-1 / FTB 5870A",
+         "These additional distribution taxes are not computed.", state="CA"),
+    Rule("ca_other_taxes", "ca_has_other_taxes", UNSUPPORTED,
+         "CA early-distribution and other additional taxes", "Form 540 line 63 / FTB 3805P",
+         "California's additional taxes are not copied from federal forms and are not computed.", state="CA"),
+    Rule("ca_ptet_credit", "ca_has_ptet_credit", UNSUPPORTED,
+         "CA electing-entity PTET credit or carryover", "FTB 3804-CR / Form 540 lines 43-45",
+         "The K-1 credit and any unused carryover need FTB 3804-CR. This is a nonrefundable "
+         "special credit with a limited carryover, never a payment.", state="CA"),
+    Rule("ca_amt_credit", "ca_has_amt_credit", UNSUPPORTED,
+         "CA prior-year AMT credit", "FTB 3510 / Schedule P credit code 188",
+         "Work FTB 3510 to claim the allowable credit. Acknowledgement must preserve the "
+         "opening credit less the credit ALLOWABLE this year plus new ISO credit. An unclaimed "
+         "allowable credit requires an amended return, not an inflated carryforward.", state="CA"),
+    Rule("ca_other_credit_carryover", "ca_has_other_credit_carryover", UNSUPPORTED,
+         "Other CA special-credit carryovers", "Form 540 lines 43-45 / FTB 3540",
+         "Existing credit carryovers must be worked separately; omitting them overstates CA tax.", state="CA"),
+    Rule("ca_nonw2_payments", "ca_has_nonw2_payments", UNSUPPORTED,
+         "CA payments beyond W-2 withholding", "Form 540 lines 72-73 / Forms 592-B and 593",
+         "Estimates, extension payments, prior overpayments, payments allocated by an estate/trust/S "
+         "corporation and Forms 592-B/593 withholding are not routed to the return.", state="CA"),
+    Rule("ca_overpayment_forward", "ca_applies_overpayment_forward", UNSUPPORTED,
+         "CA overpayment applied to next year", "Form 540 line 98",
+         "The applied overpayment is not recorded; omitting it overstates the cash refund.", state="CA"),
+    Rule("ca_use_tax", "ca_owes_use_tax", UNSUPPORTED,
+         "CA use tax due", "Form 540 line 91",
+         "Use tax is not computed; leaving it zero understates the amount payable.", state="CA"),
+    Rule("ca_coverage_penalty", "ca_has_coverage_penalty", UNSUPPORTED,
+         "CA health-coverage penalty", "Form 540 line 92 / FTB 3853",
+         "The coverage penalty and exemptions require a separate FTB 3853 worksheet.", state="CA"),
+    Rule("ca_renters_credit", "ca_paid_rent", MANUAL,
+         "Rent paid for a California residence", "Form 540 line 46, renter's credit worksheet",
+         "Check the covered-year income and eligibility worksheet. The renter's credit is not computed; "
+         "omitting an eligible credit overstates CA tax.", state="CA"),
+    Rule("ca_special_credits", "ca_claims_special_credits", MANUAL,
+         "CA special credits claimed from a separate worksheet", "Form 540 lines 43-45 / Schedule P Part III",
+         "Prepare each credit's own covered-year worksheet and Schedule P limitation. Carryovers and "
+         "the K-1 PTET credit have separate blocking rules.", state="CA"),
+    Rule("wa_special_gains", "wa_has_special_gain_rules", UNSUPPORTED, "WA special federal gain rules", "RCW 82.87.020 normalization", "Section 1256/QOF and other special rules require a WA gain worksheet not modeled here.", state="WA"),
+    Rule("wa_separate_household", "wa_has_separate_household", UNSUPPORTED, "WA separate spouse/RDP household", "RCW 82.87.120 allocation", "One household shares all WA deductions and credits; separate allocations are not modeled.", state="WA"),
     Rule("nc_business_adjustments", "nc_has_business_adjustments", UNSUPPORTED,
          "NC bonus depreciation or section 179 adjustments", "D-400 Schedule S A3/A4",
-         "NC business add-backs are not modeled; prepare the year's Schedule S manually."),
+         "NC business add-backs are not modeled; prepare the year's Schedule S manually.", state="NC"),
     Rule("nc_recovery_deductions", "nc_has_recovery_deductions", UNSUPPORTED,
          "NC prior-year recovery deductions", "D-400 Schedule S B23/B24/B34-B37",
-         "Omitting prior-year recovery deductions OVER-states NC tax; they require a manual worksheet."),
+         "Omitting prior-year recovery deductions OVER-states NC tax; they require a manual worksheet.", state="NC"),
     Rule("nc_nol", "nc_has_nol", UNSUPPORTED,
          "NC or federal net operating loss adjustments", "D-400 Schedule S A7/B39 / NC-NOL",
-         "Federal NOL add-backs and NC NOL deductions are not modeled."),
+         "Federal NOL add-backs and NC NOL deductions are not modeled.", state="NC"),
     Rule("nc_taxed_pte", "nc_has_taxed_pte", UNSUPPORTED,
          "NC Taxed-PTE owner income or loss", "D-400 Schedule S A14/B38",
-         "An NC Taxed-PTE owner's deduction or loss add-back requires a manual return."),
+         "An NC Taxed-PTE owner's deduction or loss add-back requires a manual return.", state="NC"),
     Rule("nc_other_deductions", "nc_has_other_schedule_s_deductions", UNSUPPORTED,
          "NC Schedule S deductions outside lines 17-21", "D-400 Schedule S B22/B25-B33",
-         "Omitting these deductions OVER-states NC tax; record each applicable line and prepare it manually."),
+         "Omitting these deductions OVER-states NC tax; record each applicable line and prepare it manually.", state="NC"),
     Rule("nc_other_credits", "nc_has_other_credits", UNSUPPORTED,
          "NC historic rehabilitation, credit carryovers or business credits", "D-400TC Part 2 / NC-478",
-         "Only D-400TC Part 1 is computed; omitted credits OVER-state NC tax."),
+         "Only D-400TC Part 1 is computed; omitted credits OVER-state NC tax.", state="NC"),
     # --- UNSUPPORTED: the engine would produce a materially wrong return ---
     Rule("rental_income", "has_rental_income", UNSUPPORTED,
          "Rental real estate income", "Schedule E / Form 8582",
@@ -302,7 +372,7 @@ RULES: "tuple[Rule, ...]" = (
     # the covered year's instructions with the rest. The rule names the
     # worksheet and stops.
     #
-    # FOUR lines, which took a review to get right. New York's IT-215 credit
+    # FOUR federal/New York EIC lines, which took a review to get right. New York's IT-215 credit
     # (IT-201 line 65), the IT-209 noncustodial parent EIC (line 66) and the
     # New York City EIC (line 70) are inputs on exactly the same terms as the
     # federal line and land in the same refundable block. An earlier draft
@@ -318,12 +388,13 @@ RULES: "tuple[Rule, ...]" = (
     # destroys the screen this rule depends on.
     Rule("earned_income_credit", "may_qualify_for_eic", MANUAL,
          "May qualify for the Earned Income Credit (federal, New York, "
-         "New York City, or New York's noncustodial parent credit)",
+         "New York City, New York's noncustodial parent credit, or California family credits)",
          "EIC worksheet, Form 1040 instructions (Form 1040 line 27); "
          "Form IT-215 (NY IT-201 line 65); Form IT-209 (NY IT-201 line 66); "
-         "NYC EIC (NY IT-201 line 70)",
+         "NYC EIC (NY IT-201 line 70); CalEITC (CA Form 540 line 75); "
+         "Young Child Tax Credit (CA Form 540 line 76); Foster Youth Tax Credit (CA Form 540 line 77)",
          "The EIC is NOT COMPUTED anywhere in this toolkit — not federally, "
-         "not for New York, not for New York City. All four lines are INPUTS "
+         "not for New York, New York City or California family credits. All listed lines are INPUTS "
          "that default to 0 and flow into the payments total, so leaving them "
          "0 for an eligible filer UNDERSTATES the refund by the whole of the "
          "credit while every gate passes: the tie-out compares source "
@@ -591,23 +662,6 @@ def _validated_acknowledged(profile: dict, extra: "set[str] | None") -> "set[str
     return acknowledged
 
 
-# The five inhabited territories, each with its own income-tax relationship to
-# the United States (§§931-935). An address in one blocks as territory_resident
-# whatever flags.bona_fide_territory_resident says (AA18): the gate used to take
-# one with no rule at all.
-_TERRITORIES = frozenset({"PR", "VI", "GU", "AS", "MP"})
-
-# All USPS state/territory codes (50 states + DC + the five territories). A
-# 2-letter-shape check alone lets "ZZ" (corrupt) or "CN" (typo for CA) through
-# to a confident bracket-estimate note — this gate is the last validation
-# before meta.limitations, so membership is enforced.
-_USPS_STATES = frozenset(
-    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS "
-    "MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV "
-    "WI WY DC".split()
-) | _TERRITORIES
-
-
 # Explicit negatives for the legacy free-text residency answer. Anything else
 # non-empty fails closed — a recorded move must block, and an ambiguous answer
 # is resolved by re-answering the new flag, never by guessing.
@@ -856,7 +910,10 @@ def _state_note(profile: dict) -> str:
                 "worksheets are inputs. Other-state returns/credits, mixed spouses, MFS, IT-230 special ratios and IT-203 Yonkers tax remain manual. "
                 "Ordinary state projections and IT-203 withholding forecasts are not modeled.")
     if code == "CA":
-        return "State: California Form 540 computed in depth (Schedule CA, exemption credits, MHST)."
+        return ("State: California Form 540 is partially assembled from manual worksheets. "
+                "HSA adjustments, exemption-credit math and the ISO Schedule P path have engine support; "
+                "other situations are gated or marked NOT COMPUTED. FTB 5805's underpayment penalty "
+                "on line 113 is NOT COMPUTED; the FTB may figure it and send a bill.")
     if code == "NY":
         # THE DEPTH NOTE IS WRITTEN LAST, and the spec says so for a reason:
         # it is the sentence a taxpayer and a reviewer read to decide how far
@@ -1068,19 +1125,35 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
         ny_plan = ny_it203_plan(profile)
     except ValueError as exc:
         raise CapabilityError(f"NY filing plan: {exc}") from None
-    for rule in RULES:
+    state = "NY" if ny_plan else _profile_state(profile)
+    if state == "CA":
+        prior = profile.get("prior_year", {})
+        if not isinstance(prior, dict):
+            raise CapabilityError("prior_year must be an object")
+        carried = prior.get("ca_amt_credit_carryforward", 0)
+        if (isinstance(carried, bool) or not isinstance(carried, (int, float))
+                or not math.isfinite(carried) or carried < 0):
+            raise CapabilityError("prior_year.ca_amt_credit_carryforward must be finite and non-negative")
+        derived["ca_has_amt_credit"] = carried > 0
+    applicable_rules = tuple(rule for rule in RULES if rule.state is None or rule.state == state)
+    for rule in applicable_rules:
         if (ny_plan and ny_plan["fully_covered"] and rule.rule_id in
                 {"part_year_residency", "nonresident_source_income"}):
             _flag_value(flags, rule.flag)  # Still reject malformed flag values.
-            continue
-        if rule.rule_id.startswith("wa_") and _profile_state(profile) != "WA":
-            continue
-        if rule.rule_id.startswith("nc_") and _profile_state(profile) != "NC":
             continue
         # _flag_value FIRST, so a non-bool answer still hard-errors.
         if not (_flag_value(flags, rule.flag) or derived.get(rule.flag)):
             continue
         form, note = rule.form, rule.note
+        if state == "CA" and rule.rule_id == "dependent_care":
+            form += "; California FTB 3506 / Form 540 line 40"
+            note += " California FTB 3506 is NOT computed; prepare its separate covered-year eligibility and credit worksheet."
+        if state == "CA" and rule.rule_id == "earned_income_credit":
+            form = "Form 1040 line 27; California Form 540 lines 75-77 / FTB 3514"
+            note = ("Federal EIC, CalEITC, Young Child Tax Credit and Foster Youth Tax Credit "
+                    "are NOT computed. Work each covered-year eligibility worksheet separately; "
+                    "a federal no does not rule out California's credits, including ITIN filers "
+                    "and the young-child credit with zero earned income.")
         if ny_plan and rule.rule_id == "earned_income_credit":
             form = "Form 1040 line 27; IT-203 line 43 / IT-203-ATT refundable EIC and NYC EIC"
             note = ("EIC eligibility and source shares are not computed. Supply reviewed federal, "
@@ -1094,12 +1167,9 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # NULL (partially migrated profile) mean the taxpayer never answered the
     # load-bearing question — neither is 'no'. flags.get() maps both to None.
     missing_flags = [f for f in _REQUIRED_GATE_FLAGS if flags.get(f) is None]
-    if _profile_state(profile) == "NC":
-        missing_flags.extend(rule.flag for rule in RULES
-                             if rule.rule_id.startswith("nc_") and flags.get(rule.flag) is None)
-    if _profile_state(profile) == "WA":
-        missing_flags.extend(rule.flag for rule in RULES
-                             if rule.rule_id.startswith("wa_") and flags.get(rule.flag) is None)
+    missing_flags.extend(rule.flag for rule in applicable_rules
+                         if rule.state is not None and rule.level == UNSUPPORTED
+                         and flags.get(rule.flag) is None)
     if missing_flags:
         _place(Finding(
             _MIGRATION_RULE_ID, UNSUPPORTED,

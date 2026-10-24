@@ -216,7 +216,8 @@ agent cannot open.
   one that UNDER-states it degrades with a loud banner. Never guess a value that
   changes a return.
 
-**In-depth:** CA 540, NY IT-201/IT-203, NC D-400 and WA excise.
+**State scope:** CA 540 combines engine functions with manual worksheets and
+named capability gates. NY IT-201/IT-203, NC D-400 and WA excise have dedicated engines.
 IT-203/NYC IT-360.1 require a reviewed TY2025 filing plan and allocations;
 other-state returns stay gated. WA has EMPTY ordinary brackets and no wage tax.
 No-tax regimes and depth limits: `docs/contributing/state-module-playbook.md`;

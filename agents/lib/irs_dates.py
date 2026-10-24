@@ -176,7 +176,7 @@ def next_business_day_state(d: datetime.date, state: str) -> datetime.date:
     `state` is REQUIRED, and that is the whole point of this signature. The
     rule this function used to implement — weekends only, for every state at
     once — rested on the premise that a state tax authority ignores the DC
-    holiday set. For California, the one state this toolkit models in depth,
+    holiday set. For California, whose holiday rule is verified here,
     that is false: R&TC §18410 folds the federal set into CA's own (see
     above, including which half of CA's is modeled here). The old
     rule therefore published CA payment dates EARLY — TY2023 Q1 as April 17

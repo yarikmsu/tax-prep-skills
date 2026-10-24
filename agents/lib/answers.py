@@ -165,6 +165,16 @@ def _capital_loss_split_unknown(inputs: _Inputs) -> bool:
     return bool(combined) and not split
 
 
+def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    address = inputs.profile.get("address")
+    address = address if isinstance(address, dict) else {}
+    return (isinstance(address.get("state"), str) and address["state"].strip().upper() == "CA"
+            and not ny_it203_plan(inputs.profile)
+            and (inputs.flags.get("ca_has_amt_credit") is True
+                 or _amount(inputs.prior_year.get("ca_amt_credit_carryforward")) > 0))
+
+
 def _charitable_carryovers_unresolved(inputs: _Inputs) -> bool:
     ledgers = inputs.prior_year.get("charitable_carryforward_ledger") or {}
     if not isinstance(ledgers, dict):
@@ -201,6 +211,16 @@ def _crypto_disposals_lack_basis(inputs: _Inputs) -> bool:
 
 # Every registered question, with the condition that makes a workspace owe it.
 REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
+    RequiredAnswer(
+        id="ca_amt_credit_worksheet",
+        kind=FACT,
+        question="From the worked FTB 3510, what CA AMT credit is available and "
+                 "ALLOWABLE this year, including a worked zero? Preserve the "
+                 "available amount less the allowable credit plus new ISO credit for rollover.",
+        asked_by="tax-compute state-return.md",
+        required_when="a CA return has a prior-year AMT credit flag or carryforward",
+        when=_ca_amt_credit_needed,
+    ),
     RequiredAnswer(
         id="document_set_complete",
         kind=FACT,

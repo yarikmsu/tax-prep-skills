@@ -5,9 +5,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        State support is California-first today: CA Form 540 is computed in depth,
-        Florida is modeled as a no-income-tax regime, and every other state is a
-        bracket estimate only.
+        State support is California-first today: Form 540 combines engine functions
+        with manual worksheets and capability gates. NY and NC have dedicated income-tax
+        engines, WA has a capital-gains excise engine, and Florida has no income tax.
+        Other taxed states generally receive bracket estimates.
 
         Adding a state is deliberately community territory, and the path is mapped
         so you are not starting from a blank page:

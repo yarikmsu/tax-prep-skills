@@ -62,11 +62,27 @@ in a second state (`statutory_residency_second_state`), income sourced to anothe
 (`nonresident_source_income`), Schedule H (`household_employees`), kiddie tax
 (`kiddie_tax`), PFIC with a taxable event (`pfic_taxable_event`), and a digital asset
 sold, exchanged or spent because an option was exercised, or from a lot an option's
-exercise bought in any year (`digital_asset_option_exercise`). NC's and WA's own
-rules (`nc_*`, `wa_*`) block only on those states' returns, and a test holds this
+exercise bought in any year (`digital_asset_option_exercise`). CA's, NC's and WA's own
+rules block only on the state declared in each rule's state metadata, and a test holds this
 list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute
 time.
+
+California's blocking rules are `ca_blind_exemption`, `ca_us_obligation_income`,
+`ca_nonca_muni_interest`, `ca_other_schedule_ca`, `ca_state_refund`,
+`ca_noniso_amt`, `ca_distribution_taxes`, `ca_other_taxes`, `ca_ptet_credit`,
+`ca_amt_credit`, `ca_other_credit_carryover`, `ca_nonw2_payments`,
+`ca_overpayment_forward`, `ca_use_tax` and `ca_coverage_penalty`. Each has a
+specific setup question. See WHO-IT-FITS for measured subsets and bounds.
+The NC rules are `nc_business_adjustments`, `nc_recovery_deductions`, `nc_nol`,
+`nc_taxed_pte`, `nc_other_deductions` and `nc_other_credits`; WA's are
+`wa_special_gains` and `wa_separate_household`.
+An acknowledged CA AMT-credit case still requires the worked FTB 3510 answer
+and its carryforward reconciliation at tie-out. Federally taxable Social
+Security and state refunds must be subtracted on Schedule CA whatever a
+screening answer says. CA renter's credit and self-claimed special credits
+are manual notes; the dependent-care and EIC notes also name the distinct CA
+worksheets. Line 113's FTB 5805 penalty is unpriced; the FTB may bill it.
 
 **Manual-worksheet items** never block. They join the state-scope note in the
 `meta.limitations` manifest, which is copied VERBATIM into `result.json` and printed on

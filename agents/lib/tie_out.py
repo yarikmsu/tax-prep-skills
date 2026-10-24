@@ -285,11 +285,12 @@ _SECOND_READ_VALUES = {"match", "mismatch_resolved"}
 # `_NY_REFUNDABLE_CREDIT_LINES` for New York), so an eligible filer's refund is
 # short by the whole credit with this gate green and the tie-out satisfied.
 #
-# FOUR, not three. An earlier draft of this carried lines 65 and 70 and called
+# FOUR federal/New York EIC lines. An earlier draft carried lines 65 and 70 and called
 # the set complete; `tax_computations/state/ny.py` names the pair that gets
 # missed in its own comment — "the noncustodial parent EIC and the New York
 # City EIC" — and this had picked up one of the two. Line 66 is an uncomputed
 # input on identical terms.
+# California's three family-credit lines are separate inputs and use FTB 3514.
 #
 # THE THIRD ELEMENT IS A GATE SECTION, and line 70 needs one. The NYC EIC sits
 # in `refundable_credits_and_payments`, which carries no `_include_if`; only
@@ -302,6 +303,9 @@ _SECOND_READ_VALUES = {"match", "mismatch_resolved"}
 # over-reports, which is the loud direction.
 _EIC_LINES = (
     ("Form 1040 line 27", ("form_1040", "line_27_eic"), None),
+    ("CA Form 540 line 75 (CalEITC)", ("california_540", "line_75_caleitc"), None),
+    ("CA Form 540 line 76 (Young Child Tax Credit)", ("california_540", "line_76_young_child_credit"), None),
+    ("CA Form 540 line 77 (Foster Youth Tax Credit)", ("california_540", "line_77_foster_youth_credit"), None),
     ("NY IT-201 line 65 (Form IT-215)",
      ("new_york_it201", "refundable_credits_and_payments",
       "line_65_earned_income"), None),
@@ -1479,6 +1483,81 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
+def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: bool,
+                      tolerance: float) -> list[str]:
+    """CA subtractions and carried AMT credit cannot vanish behind an acknowledgement."""
+    profile = profile if isinstance(profile, dict) else {}
+    flags = profile.get("flags") if isinstance(profile.get("flags"), dict) else {}
+    prior = profile.get("prior_year") if isinstance(profile.get("prior_year"), dict) else {}
+    carried = _get_num({"prior": prior}, "prior.ca_amt_credit_carryforward")
+    expected_credit = flags.get("ca_has_amt_credit") is True or bool(carried and carried > 0)
+    ca = result.get("california_540")
+    if not isinstance(ca, dict):
+        from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+        address = profile.get("address") if isinstance(profile.get("address"), dict) else {}
+        try:
+            ca_profile = (isinstance(address.get("state"), str)
+                          and address["state"].strip().upper() == "CA" and not ny_it203_plan(profile))
+        except ValueError:
+            return ["CA return: reconcile the malformed NY filing plan before deciding whether the CA worksheets apply"]
+        if not ca_profile:
+            return []
+        # Keep checking the federal amounts even when the entire CA section was
+        # dropped. A missing section cannot waive a required subtraction.
+        ca = {}
+    errors = []
+    federal = result.get("form_1040") if isinstance(result.get("form_1040"), dict) else {}
+    ss = _get_num(result, "form_1040.line_6b_taxable_ss") or 0
+    refund = _get_num(result, "form_1040.taxable_state_refund")
+    if refund_recorded or flags.get("has_1099g_state_refund") is True or (refund and refund > 0):
+        if (refund is None or refund < 0
+                or federal.get("taxable_state_refund_worksheet_confirmed") is not True):
+            errors.append("CA state refund: record the federally taxable amount from a confirmed tax-benefit worksheet, including a worked zero")
+    expected_subtractions = 0.0
+    adjustments = ca.get("schedule_ca_adjustments")
+    for label, expected, field in (
+            ("Social Security", ss, "taxable_social_security_subtraction"),
+            ("state refund", refund or 0, "taxable_state_refund_subtraction")):
+        actual = _get_num(ca, f"schedule_ca_adjustments.{field}")
+        present = isinstance(adjustments, dict) and field in adjustments
+        # An omitted zero is harmless; a present gross benefit/refund is not.
+        # Even a worked federal zero must not become a state subtraction.
+        if (expected > 0 or present) and (actual is None or abs(actual - expected) > tolerance):
+            errors.append(f"CA {label}: Schedule CA subtraction must equal the federally taxable amount, regardless of screening answers")
+        expected_subtractions += expected
+    total_subs = _get_num(ca, "schedule_ca_adjustments.total_subtractions")
+    if expected_subtractions > 0 and (total_subs is None or total_subs + tolerance < expected_subtractions):
+        errors.append("CA Schedule CA: total_subtractions omits taxable Social Security or the taxable state refund")
+    p = ca.get("schedule_p")
+    if not expected_credit and not (isinstance(p, dict) and p.get("ftb3510_credit_available") is not None):
+        return errors
+    if not isinstance(p, dict) or p.get("ftb3510_worksheet_confirmed") is not True:
+        errors.append("CA AMT credit: a confirmed worked FTB 3510 is required, including a worked zero; acknowledgement cannot waive it")
+        return errors
+    values = {k: _get_num(p, k) for k in ("ftb3510_credit_available", "ftb3510_credit_allowable",
+              "iso_credit_generated", "carryforward_to_next_year", "ca_amt")}
+    if any(v is None or v < 0 for v in values.values()):
+        errors.append("CA AMT credit: available, allowable, ISO-generated and next-year amounts must all be finite and non-negative")
+        return errors
+    available, allowable = values["ftb3510_credit_available"], values["ftb3510_credit_allowable"]
+    generated, next_year = values["iso_credit_generated"], values["carryforward_to_next_year"]
+    if carried and carried > 0 and abs(available - carried) > tolerance:
+        errors.append("CA AMT credit: FTB 3510 opening credit does not match the prior-year carryforward; reconcile the source worksheet")
+    if allowable > available:
+        errors.append("CA AMT credit: the allowable credit exceeds the available credit")
+    amt = values["ca_amt"]
+    # FTB 3510 lines 33-38 limit the credit to regular tax above TMT.
+    # If current AMT is positive, that excess is zero, never a usable credit.
+    if allowable > 0 and amt > 0:
+        errors.append("CA AMT credit: a positive current-year CA AMT leaves no allowable prior-year credit; reconcile FTB 3510")
+    if abs(next_year - round(available - allowable + generated, 2)) > tolerance:
+        errors.append("CA AMT credit: carryforward must equal available minus ALLOWABLE credit plus new ISO credit; an unclaimed allowable credit needs an amended return")
+    if generated > 0 and (amt is None or generated > amt + tolerance
+                          or not (_get_num(p, "iso_bargain_element") or 0) > 0):
+        errors.append("CA AMT credit: new ISO credit requires a supporting ISO spread and cannot exceed current CA AMT")
+    return errors
+
+
 def evaluate(ledger: "list[LedgerRecord]", result: dict,
              document_files: "list[str]",
              tolerance: float = DEFAULT_TOLERANCE,
@@ -1494,7 +1573,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              pfic_recompute_failures: "list | None" = None,
              eic_screening: "bool | None" = False,
              profile_flags: "dict | None" = None,
-             option_exercise_answer: "bool | None" = None) -> TieOutReport:
+             option_exercise_answer: "bool | None" = None,
+             profile: "dict | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -1520,6 +1600,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sums = category_sums(ledger)
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
+    missing_targets.extend(_ca_return_checks(
+        result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))
     crypto = result.get("crypto_summary")
     form8949 = result.get("form_8949") or {}
     account_rows = (isinstance(form8949, dict) and any(
@@ -1689,9 +1771,13 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
             if any(line.startswith("NY ") for line in zero_lines):
                 where.append(
                     "each IT-201 line from the form named beside it above")
+            if any(line.startswith("CA ") for line in zero_lines):
+                where.append(
+                    "each California Form 540 line 75-77 from the covered year's "
+                    "FTB 3514 eligibility and credit worksheets")
             advisories.append(
                 opening + " Nothing in this toolkit computes the EIC — not "
-                "federally, not for New York, not for New York City — and no "
+                "federally, not for New York, New York City or California's family credits — and no "
                 "source document exists for this gate to tie it to, so a 0 "
                 "left there is a refund short by the whole credit that every "
                 "check passes. Each line named above has its OWN form and its "
@@ -2330,6 +2416,7 @@ def _main(argv: list) -> int:
         pfic_recompute_failures: list = []
         eic_screening: "bool | None" = None
         profile_flags: "dict | None" = None
+        prof: "dict | None" = None
         option_exercise_answer: "bool | None" = None
         profile_path = (workspace / "taxpayer_profile.json").resolve()
         if profile_path.exists():
@@ -2393,7 +2480,8 @@ def _main(argv: list) -> int:
                           pfic_recompute_failures=pfic_recompute_failures,
                           eic_screening=eic_screening,
                           profile_flags=profile_flags,
-                          option_exercise_answer=option_exercise_answer)
+                          option_exercise_answer=option_exercise_answer,
+                          profile=prof)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

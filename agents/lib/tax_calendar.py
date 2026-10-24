@@ -101,7 +101,7 @@ class CalendarError(Exception):
 # deadlines use next_business_day_state, which resolves the holiday set from
 # the state code it REQUIRES. This block used to give every state the
 # weekend-only roll, on the premise that a state tax authority ignores the DC
-# holiday set entirely. For the one state modeled in depth that is false — R&TC
+# holiday set entirely. For California that is false — R&TC
 # §18410 folds the federal set into California's, which is why CA dates were
 # being published up to three days EARLY. A state whose statute is unread
 # here (NY, NJ) keeps the weekend-only roll as a labelled degrade. RMD Dec 31

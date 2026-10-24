@@ -251,7 +251,7 @@ Grep-verify each of these — they are the places "state" is enumerated:
   freshness fixtures, and one end-to-end result-section shape test.
 - `tests/test_state_registry.py` goes red until a registry row with
   `evidence_fields` is wired everywhere a computed state must be: its tie-out
-  withholding category, a "computed in depth" capability note, calendar
+  withholding category, an accurate capability-scope note, calendar
   estimated-tax events, an extension event naming its form, a withholding
   true-up and a package form. That list is the minimum, not the
   table in step 5.

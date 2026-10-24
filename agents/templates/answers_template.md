@@ -26,6 +26,12 @@ Last updated: {{DATE}}
 
 ## Institutions & Accounts
 
+### From the worked FTB 3510, what CA AMT credit is available and ALLOWABLE this year, including a worked zero? Preserve the available amount less the allowable credit plus new ISO credit for rollover.
+
+*Asked by tax-compute state-return.md; required when a CA return has a prior-year AMT credit flag or carryforward.*
+
+- **[ca_amt_credit_worksheet]**
+
 ### Is the document set complete — is every W-2, 1099 and statement for the year in documents/?
 
 *Asked by tax-parse Step 2.5; required when always, before parsing.*
