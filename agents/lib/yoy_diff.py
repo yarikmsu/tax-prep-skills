@@ -103,7 +103,7 @@ LINE_MOVER_FIELDS: list[tuple[str, str]] = [
 
 # Optional sections checked for appeared/disappeared.
 OPTIONAL_SECTIONS: list[str] = [
-    "schedule_c", "schedule_d", "form_8889_hsa", "form_1116_ftc",
+    "schedule_c", "schedule_d", "schedule_e_rentals", "form_8889_hsa", "form_1116_ftc",
     "form_8938_fatca", "fbar_fincen_114", "form_1099r_401k_rollover",
     "form_8959_additional_medicare", "form_8995_qbi", "ira_contribution",
     # Every state section the registry knows (W10).

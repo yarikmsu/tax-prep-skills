@@ -502,6 +502,9 @@ def resolve_base(result: dict, base_scenario: "dict | None", year: int,
 def build_report(result: dict, profile: dict, tax_law: dict, year: int, name: str,
                  deltas: dict, base_scenario: "dict | None",
                  today: datetime.date) -> ScenarioReport:
+    from agents.lib.tax_computations.federal.rentals import rental_planning_block
+    if rental_planning_block(profile, result):
+        raise ScenarioError("Residential rental passive-loss limits and depreciation are not repriced by scenarios; recompute the return with revised inputs instead")
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)

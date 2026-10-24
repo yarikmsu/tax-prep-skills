@@ -27,9 +27,10 @@ def classify_misc_income(raw) -> dict:
                if k not in {"tax_year", "form_revision", "reviewed", "box_7"}}
     if round(sum(amounts[k] for k in ("box_3_business", "box_3_other", "box_3_unresolved")), 2) != amounts["box_3"]:
         raise ValueError("1099-MISC box3 source split must reconcile to the reported gross amount")
-    # Income boxes with no route here: a reviewed inventory must not let them
+    # Income boxes with no route here (box 1 rents go to the rental inventory):
+    # a reviewed inventory must not let them
     # pass as an informational form. Box 15 also carries the section 409A tax.
-    for box, label in (("box_1", "rents"), ("box_2", "royalties"), ("box_9", "crop insurance proceeds"),
+    for box, label in (("box_2", "royalties"), ("box_9", "crop insurance proceeds"),
                        ("box_10", "gross proceeds paid to an attorney"),
                        ("box_15", "nonqualified deferred compensation")):
         if amounts[box]:
@@ -40,6 +41,7 @@ def classify_misc_income(raw) -> dict:
         ("box_3_business", "box_5", "box_6", "box_11", "other_business_gross")), 2), "MISC business gross total")
     # Omit zero categories: a checkbox-only notice has no monetary ledger sum.
     return {k: v for k, v in {
+        "rental_reported_rents": amounts["box_1"],
         "self_employment_gross": business, MISC_OTHER: _money(amounts["box_3_other"] + amounts["box_8"], "MISC other income"),
         "federal_withholding_1099": _money(amounts["box_4"] + amounts["other_federal_withholding"], "MISC and other document withholding"),
     }.items() if v}
@@ -51,7 +53,7 @@ def validate_misc_income(raw, boxes: dict, *, skipped: bool = False) -> dict:
         raise ValueError("MISC key_boxes must be an object")
     if skipped and mapped:
         raise ValueError("a skipped MISC record cannot carry reportable income or withholding")
-    for category in ("self_employment_gross", MISC_OTHER, "federal_withholding_1099"):
+    for category in ("self_employment_gross", MISC_OTHER, "federal_withholding_1099", "rental_reported_rents"):
         if _money(boxes.get(category, 0), category) != mapped.get(category, 0):
             raise ValueError("MISC canonical income/withholding categories disagree with reviewed source boxes")
     # Copy source facts; no caller can mutate a validated record through `raw`.

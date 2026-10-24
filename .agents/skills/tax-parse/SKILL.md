@@ -350,6 +350,7 @@ Rules:
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
 - Tips and overtime need the [covered-year source review](references/tips-overtime.md), including TY2026 TP/TT and 1099 subamounts. Resolve occupation and FLSA eligibility before deduction inputs.
 - Every 1099-MISC needs the [reviewed box inventory](references/misc-income.md); preserve `misc_income`. Box 4 is withholding and box 7 is a checkbox, never receipts.
+- Rental books and MISC rent evidence require the [property source inventory](references/rental-books.md); retain every book and overlapping form without adding the same rent twice.
 - Every 1099-G, even a refund-only form, needs the [government-benefit inventory](references/government-benefits.md). Preserve `government_benefits` when deriving the ledger; an older withholding-only record cannot establish that benefit boxes were zero.
 - `key_boxes` is keyed by CANONICAL CATEGORY (unknown keys hard-error):
   | Form box | Category |
@@ -378,6 +379,8 @@ Rules:
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
   | 1099-MISC nonbusiness box 3 / box 8 substitute payments | `miscellaneous_other_income` → checked non-benefit Schedule1 workpaper, then actual Form1040 line8 |
+  | Complete reviewed rental cash books | `rental_gross_rents`, `rental_operating_expenses` → per-property ScheduleE books before computed depreciation/PAL |
+  | 1099-MISC box1 rent evidence | `rental_reported_rents` → reconcile to the complete rental books; never add overlapping reported rents to cash receipts or Schedule C |
   | 1099-G box 2 (state refund) | `state_refund_1099g` (informational — taxability depends on prior-year itemizing) |
   | 1099-G box 1, unemployment portion | `unemployment_compensation` (gross, before tax withholding; source-reviewed reductions are separate). The benefits workpaper derives its taxable amount and actual Form1040 line8 |
   | TY2025 legacy box-1 PFL / TY2026 box 10 | `government_family_leave` (gross). Identify the program and reporting route separately; family benefits do not take the old nonitemizer contribution reduction. Never classify medical or private benefits as governmental family leave by default |

@@ -424,3 +424,11 @@ for facts the new computation needs. Old acknowledgement IDs remain valid.
 Tests use hand-worked forms and synthetic law, including exemption-vs-line31,
 nonzero TMT with zero AMT, B3-before-B4, carry expiry, line45 routing, missing
 facts, nonfinite values, rebuilt checks and deliberate omission mutations.
+
+## Residential rental extension contract (AA73)
+
+The pre-implementation federal/California rental contract, questionnaire deltas,
+source-verified form ordering, law/schema, scope gates and registrations are in
+[`rental-income.md`](rental-income.md). In particular, FTB3801 uses federal
+Form8582 MAGI, while depreciation and passive-loss balances remain separate.
+Only the final allowed rental-net difference reaches ScheduleCA line5.

@@ -46,6 +46,15 @@ map goes stale in a way the schema cannot.
 
 ## The keying is not uniform, and the wrong guess reads a real number
 
+Residential rental returns opt into separate `federal.rental` and CA
+`state.rental` blocks. Recovery life/MACRS starting year, active ownership,
+special allowance, phaseout ceiling and rate are fetched; allowance/ceiling
+use all five canonical statuses. `gds_percentages` contains month/age fraction
+rows and may remain empty only for formula-method users. An established table
+user requires the complete used row. Empty optional blocks do not burden
+non-landlords. These are ordinary annual federal/state source pins, with no
+multi-period exception. Scope and source handling: [rental-income.md](rental-income.md).
+
 CA's `exemption_phaseout` is required for every return's Form 540 line 32.
 Its `threshold` and `band` use all five statuses, with a shared
 `reduction_per_step`; absent, partial or unfetched values block freshness.

@@ -70,7 +70,7 @@ def _is_commentary(key: str) -> bool:
 # Keys a planning tool reads back and no reader of the summary should: Schedule
 # A's recorded `inputs` (AA23) restate figures already on the page under other
 # meanings, and print its tax year as $2,026.00.
-_MACHINE_KEYS = frozenset({"inputs"})
+_MACHINE_KEYS = frozenset({"inputs", "related_forms_input_digest"})
 
 
 # Sections whose absence is normal and whose presence is decided by the skill
@@ -93,6 +93,7 @@ _NOT_MONEY = frozenset((
     "rate", "rates", "pct", "percent", "age", "ages", "quarter", "quarters",
     "student", "students", "number", "num", "tin", "digit", "digits", "id",
     "ids", "disposal", "disposals", "month", "months", "day", "days", "type",
+    "fraction",
 ))
 
 # An amount recorded in the payer's OWN currency. `form_1116_ftc` carries both
@@ -112,7 +113,7 @@ _AMOUNT_ANYWAY = ("carryforward", "basis", "balance", "amount", "deduction",
 
 def _is_money(key: str) -> bool:
     low = key.lower()
-    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year"):
+    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year") or low.startswith("days_"):
         return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return not any(word in low for word in ("currency",))
@@ -123,7 +124,7 @@ def _is_money(key: str) -> bool:
 def _is_amount(key: str) -> bool:
     """Money or another currency — either way, two decimal places."""
     low = key.lower()
-    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year"):
+    if low.endswith("_percentage") or low == "tax_year" or low.endswith("_tax_year") or low.startswith("days_"):
         return False
     if any(word in low for word in _AMOUNT_ANYWAY):
         return True

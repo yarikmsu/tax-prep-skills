@@ -63,7 +63,10 @@ named form unless acknowledged, an unknown id hard-errors, and every rule's flag
 exist in `taxpayer_profile_template.json` AND be asked by the `tax-setup` interview.
 
 **Blocking** (exit 2, clearable only by an explicit `acknowledged_limitations` entry
-with the decision recorded in `answers.md`): rental Schedule E (`rental_income`), Form
+with the decision recorded in `answers.md`): rental Schedule E outside the
+reviewed residential path (`rental_income`; TY2025 direct U.S. long-term
+buildings/structural improvements are computed for CA and no-income-tax
+resident regimes with required basis/at-risk and related-form review), Form
 8962 (`marketplace_insurance`), part-year residency (`part_year_residency`), a move
 abroad (`move_abroad`), residency in a US territory (`territory_resident`), residency
 in a second state (`statutory_residency_second_state`), income sourced to another state

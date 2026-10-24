@@ -216,6 +216,9 @@ CATEGORY_TARGETS = {
     "ca_1099_withholding": ("california_540", ["ca_withholding_1099"]),
     "ca_592b_593_withholding": ("california_540", ["ca_withholding_592b_593"]),
     "ca_ptet_credit": ("california_540", ["ftb_3804_cr.reported_credit_total"]),
+    "rental_gross_rents": ("schedule_e_rentals", ["gross_rents"]),
+    "rental_reported_rents": ("schedule_e_rentals", ["reported_rents"]),
+    "rental_operating_expenses": ("schedule_e_rentals", ["operating_expenses"]),
     # Form 3921 (box 4 FMV - box 3 strike) x box 5 shares, HELD-through-
     # year-end exercises only (same-year disqualifying dispositions are W-2
     # ordinary income and are recorded as skips). Ties to the input echo
@@ -580,6 +583,7 @@ class LedgerRecord:
     government_benefits: "dict | None" = None
     misc_income: "dict | None" = None
     w2g_income: "dict | None" = None
+    rental_source: "dict | None" = None
 
 
 @dataclass(frozen=True)
@@ -732,12 +736,23 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 government_benefits = validate_government_benefits(rec.get("government_benefits"), boxes)
             except ValueError as exc:
                 raise TieOutError(f"{where}: {exc}") from None
+        rental_source = None
+        from agents.lib.tax_computations.federal.rentals import validate_rental_source, RENTAL_RENTS, RENTAL_EXPENSES, RENTAL_REPORTED
+        if "rental_source" in rec or any(k in boxes for k in (RENTAL_RENTS, RENTAL_EXPENSES, RENTAL_REPORTED)):
+            try:
+                if skipped is not None:
+                    raise ValueError("a skipped rental book cannot carry income/expense source facts")
+                rental_source = validate_rental_source(rec.get("rental_source"), boxes)
+            except ValueError as exc:
+                raise TieOutError(f"{where}: {exc}") from None
         ca_investments = None
         misc_income = None
         is_misc = "1099MISC" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
         if (skipped is None and (is_misc or MISC_OTHER in boxes)) or "misc_income" in rec:
             try:
                 misc_income = validate_misc_income(rec.get("misc_income"), boxes, skipped=skipped is not None)
+                if misc_income["box_1"] and (rental_source is None or rental_source["kind"] != "information_return"):
+                    raise ValueError("1099-MISC box1 needs a reconciled rental information-return source, separate from complete property books")
             except ValueError as exc:
                 raise TieOutError(f"{where}: {exc}") from None
         if "ca_investments" in rec:
@@ -762,7 +777,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
             other_state_withholding_by_state=other_states, ca_investments=ca_investments,
-            government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income))
+            government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
+            rental_source=rental_source))
     return records
 
 
@@ -1714,7 +1730,87 @@ def _other_forms_withholding_checks(ledger: "list[LedgerRecord]", result: dict, 
         return [f"Other-form withholding: {redact(exc)}"]
 
 
-def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
+def rental_is_active(ledger, result: dict, profile: dict) -> bool:
+    # An acknowledged rental outside the reviewed scope is prepared on external
+    # worksheets, as the capability note says; deriving it would refuse forever.
+    if "rental_income" in (profile.get("acknowledged_limitations") or []):
+        from agents.lib.capabilities import _profile_state
+        from agents.lib.tax_computations import ny_it203_plan
+        from agents.lib.tax_computations.federal.rentals import rental_in_computed_scope
+        if not rental_in_computed_scope(profile, _profile_state(profile), ny_it203_plan(profile)):
+            return False
+    return (profile.get("rental_return") is not None
+        or (profile.get("flags") or {}).get("has_rental_income") is True
+        or (profile.get("prior_year") or {}).get("rental_carryforward") is not None
+        or any(rec.rental_source is not None or any(k.startswith("rental_") for k, _v in rec.key_boxes) for rec in ledger)
+        or isinstance(result.get("schedule_e_rentals"), dict) and result["schedule_e_rentals"].get("computed_tax_year") is not None)
+
+
+def derive_rental_workpaper(ledger, result: dict, profile: dict, tax_law: dict) -> "dict | None":
+    """Independent reading, without trusting stored rental net or stale AGI."""
+    if not rental_is_active(ledger, result, profile):
+        return None
+    from agents.lib.tax_computations.federal.rentals import compute_residential_rental_return
+    from agents.lib.capabilities import _NO_INCOME_TAX_STATES, _profile_state
+    from agents.lib.return_builder import ledger_income, _LINE_1Z_TERMS
+    from agents.lib.tax_computations import ny_it203_plan
+    state = _profile_state(profile)
+    law_state = tax_law.get("state") or {}
+    if ny_it203_plan(profile) or state not in _NO_INCOME_TAX_STATES | {"CA", "WA"}:
+        raise ValueError("rental_income: this computed state needs its own reviewed rental conformity worksheets")
+    expected_type = "graduated_income" if state == "CA" else "capital_gains_excise" if state == "WA" else "none"
+    if law_state.get("code") != state or law_state.get("type") != expected_type:
+        raise ValueError("rental state regime must match the covered return")
+    year = _covered_source_year(result, profile, [tax_law.get("tax_year")], "rental")
+    # A California return needs California's own basis, method and passive
+    # limits; the federal-only path would copy federal results onto Form 540.
+    if state == "CA" and not isinstance(law_state.get("rental"), dict):
+        raise ValueError("a California rental needs the covered-year state.rental block (FTB 3885A/3801); fetch it via /tax-setup")
+    other = derive_schedule1_other_workpaper(ledger, result, profile, include_rentals=False)
+    government = derive_government_workpaper(ledger, result, profile, include_rentals=False)
+    if other is None:
+        raise ValueError("confirm remaining Schedule1 income EXCLUDING rentals, including zero")
+    components = {**(result.get("form_1040") or {}), **ledger_income(ledger)}
+    components["line_1z_total_wages"] = round(sum(_num(components.get(k, 0), "rental MAGI wages") for k in _LINE_1Z_TERMS), 2)
+    records = [{"doc_id": rec.doc_id, "key_boxes": dict(rec.key_boxes), "rental_source": rec.rental_source}
+               for rec in ledger if rec.rental_source is not None and rec.skipped is None]
+    return compute_residential_rental_return(tax_year=year,
+        filing_status=profile.get("filing_status"), plan=profile.get("rental_return"), source_records=records,
+        opening=(profile.get("prior_year") or {}).get("rental_carryforward"),
+        federal_law=(tax_law.get("federal") or {}).get("rental"),
+        ca_law=law_state.get("rental") if state == "CA" else None,
+        income_components=components, nonrental_schedule1_income=government["total"] if government else other["total"])
+
+
+def rental_workpaper_differences(result: dict, built: "dict | None", *, require_review=True) -> list[str]:
+    if built is None:
+        return []
+    out = []
+    if not ca_values_agree(result.get("schedule_e_rentals"), built):
+        out.append("schedule_e_rentals")
+    if type((result.get("schedule_e_rentals") or {}).get("computed_tax_year")) is not int:
+        out.append("schedule_e_rentals.computed_tax_year")
+    if not ca_values_agree((result.get("form_1040") or {}).get("line_8_schedule1_other"), built["total_schedule1"]):
+        out.append("form_1040.line_8_schedule1_other (rental settlement)")
+    if require_review and built["related_forms_review_current"] is not True:
+        out.append("rental_return.related_forms_review (refresh QBI, NIIT and income-dependent worksheets for related_forms_input_digest)")
+    notes = (result.get("meta") or {}).get("limitations", [])
+    if not isinstance(notes, list) or built["source_note"] not in notes:
+        out.append("meta.limitations (residential rentals)")
+    if isinstance(notes, list) and any(isinstance(n, str) and n.startswith("Residential rentals:") and n != built["source_note"] for n in notes):
+        out.append("meta.limitations (stale residential rental disclosure)")
+    return out
+
+
+def _rental_checks(ledger, result: dict, profile, tax_law) -> list[str]:
+    try:
+        built = derive_rental_workpaper(ledger, result, profile or {}, tax_law or {})
+        return ["Residential rentals disagree: " + field for field in rental_workpaper_differences(result, built)]
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError, TieOutError) as exc:
+        return [f"Residential rentals: {redact(exc)}"]
+
+
+def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict, *, include_rentals=True) -> "dict | None":
     """Non-benefit income: tracked MISC plus a separately confirmed remainder."""
     records, source_years = [], []
     for rec in ledger:
@@ -1743,7 +1839,8 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
     positive = positive or any(r["w2g_income"]["box_1"] or r["w2g_income"]["schedule_1_income"]
         or r["w2g_income"]["schedule_c_gross"] or r["w2g_income"]["income_method"] == "reviewed_worksheet"
         for r in w2g_records)
-    inactive = not positive and (sheet is None or scaffold)
+    rentals = rental_is_active(ledger, result, profile)
+    inactive = not positive and not rentals and (sheet is None or scaffold)
     if not source_years and inactive:
         return None
     year = _covered_source_year(result, profile, source_years, "Schedule1")
@@ -1752,12 +1849,22 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
     if not isinstance(sheet, dict) or scaffold:
         raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC, casual W-2G and government benefits, including zero")
     stated = _schedule_c_net_stated(sheet, result, "schedule_1_other_income.remaining_income")
+    if rentals and sheet.get("rentals_excluded_from_remaining") is not True:
+        raise ValueError("reconfirm remaining Schedule1 income EXCLUDING computed rentals; do not retain an old manual rental net")
     built = compute_schedule1_other(tax_year=year, records=records,
         remaining_income=sheet.get("remaining_income"),
         remaining_income_confirmed=sheet.get("remaining_income_confirmed"),
         w2g_records=w2g_records, w2g_excluded_from_remaining=sheet.get("w2g_excluded_from_remaining", False))
     if stated is not None:  # the rebuilt sheet keeps its own statement
         built["schedule_c_net_included"] = stated
+    if rentals:
+        built["rentals_excluded_from_remaining"] = True
+        if include_rentals:
+            stored = result.get("schedule_e_rentals") or {}
+            amount = ((stored.get("federal") or {}).get("schedule_e_line26"))
+            from agents.lib.tax_computations.federal.government_benefits import _money
+            built["rental_income"] = _money(amount, "computed rental ScheduleE net", signed=True)
+            built["total"] = round(built["total"] + built["rental_income"], 2)
     return built
 
 
@@ -1797,7 +1904,7 @@ def _schedule1_other_checks(ledger: "list[LedgerRecord]", result: dict, profile)
         return [f"Schedule1 other income: {redact(exc)}"]
 
 
-def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
+def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict, *, include_rentals=True) -> "dict | None":
     """The additional Schedule1 source-to-income check; legacy no-benefit path stays manual."""
     records = []
     for rec in ledger:
@@ -1834,7 +1941,7 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # With no benefit, an unconfirmed copy of line 8 is not a figure to
     # restore: keep following line 8 rather than reverting a later edit.
     unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
-    other_sheet = derive_schedule1_other_workpaper(ledger, result, profile)
+    other_sheet = derive_schedule1_other_workpaper(ledger, result, profile, include_rentals=include_rentals)
     stated = None
     if other_sheet is not None:
         other, confirmed = other_sheet["total"], True
@@ -1988,6 +2095,7 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
     government = derive_government_workpaper(ledger, result, profile)
     w2g_records, _ = _w2g_sources(ledger, profile)
     lottery = compute_w2g_totals(tax_year=year, records=w2g_records)["ca_lottery_income"] if w2g_records else 0
+    rental = derive_rental_workpaper(ledger, result, profile, tax_law)
     built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
         fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
         taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
@@ -1996,6 +2104,8 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         taxable_ca_family_leave=government["ca_family_leave_exempt"] if government else 0,
         ca_family_line_7=government["ca_family_leave_line_7"] if government else 0,
         ca_lottery_winnings=lottery,
+        rental_addition=rental["ca_addition"] if rental else 0,
+        rental_subtraction=rental["ca_subtraction"] if rental else 0,
         **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
     for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
                        ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):
@@ -2207,6 +2317,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
+    missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))
     missing_targets.extend(_schedule1_other_checks(ledger, result, profile))
     missing_targets.extend(_government_income_checks(ledger, result, profile))
     missing_targets.extend(_ca_return_checks(

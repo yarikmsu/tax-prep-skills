@@ -245,10 +245,13 @@
     "amt_credit_carryforward": 0,
     "ca_amt_credit_carryforward": 0,
     "ca_ptet_credit_carryovers": [],
+    "rental_carryforward": null,
     "_comment_amt_credit": "Form 8801 minimum tax credit from prior-year deferral-item AMT (ISO exercises). Rolled forward by /tax-rollover from prior result.json form_6251.form_8801_carryforward_to_next_year; consumed via compute_form_8801_credit (Schedule 3 line 6b).",
     "_comment_ca_amt_credit": "CA Schedule P (540) AMT credit from prior-year deferral-item CA AMT (ISO exercises). A SEPARATE carryforward from the federal one (CA exemption/TMT differ). Rolled forward by /tax-rollover from prior result.json california_540.schedule_p.carryforward_to_next_year.",
     "_comment_ira_basis": "Individual Form 8606 line 14 balances belong in ira_basis_by_taxpayer (primary/spouse). A legacy scalar maps to primary on an individual return; MFJ requires confirmed ira_basis_owner. Conflicting scalar/map or ira_basis_unresolved blocks. Never pool spouses; see docs/contributing/individual-ira-basis.md."
   },
+  "rental_return": null,
+  "_comment_rental_return": "Select residential_rental_v1 only after reviewing docs/contributing/rental-income.md and the tax-compute rental reference. No placeholder confirmations: every scope/property/source/asset/history/MAGI fact is explicit. Review QBI, NIIT, federal/CA AMT and affected forms against the derived input digest. Outside-scope rentals retain rental_income.",
   "ca_credits": {
     "amt_opening_confirmed": false,
     "other_credits": null,

@@ -29,6 +29,11 @@ class RolloverError(Exception):
 # because lookup is by stable key, not raw path.
 
 FIELD_MAP: dict[str, dict] = {
+    "rental_carryforward": {
+        "category": "carryforwards", "source_path": "schedule_e_rentals.carryforward",
+        "target_file": "taxpayer_profile.json", "target_path": "prior_year.rental_carryforward",
+        "transform": "rental_carryforward",
+    },
     "charitable_carryforward_federal": {
         "category": "carryforwards", "source_path": "schedule_a",
         "target_file": "taxpayer_profile.json",
@@ -711,6 +716,8 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
             continue
         raw = _get_path(prior.result, entry["source_path"])
         if raw is None:
+            if entry.get("transform") == "rental_carryforward" and _get_path(prior.result, "schedule_e_rentals.computed_tax_year") is not None:
+                raise RolloverError("computed rental return has no closing carryforward; restore every property and asset balance")
             # Schema drift backward: missing source path
             continue
         if entry.get("transform") == "capital_loss_split":
@@ -721,6 +728,12 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
             try:
                 raw = validate_ca_ptet_carryovers(raw, prior.year + 1)
             except ValueError as exc:
+                raise RolloverError(str(exc)) from None
+        if entry.get("transform") == "rental_carryforward":
+            from agents.lib.tax_computations.federal.rentals import rental_carryforward_from_workpaper
+            try:
+                raw = rental_carryforward_from_workpaper(prior.result.get("schedule_e_rentals"), prior.year)
+            except (ValueError, TypeError) as exc:
                 raise RolloverError(str(exc)) from None
         transform = TRANSFORMS.get(entry.get("transform"))
         prior_value = transform(raw) if transform else raw
@@ -734,6 +747,12 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         else:
             action = "apply"
             reason = f"Pulled from {entry['source_path']}"
+        if entry.get("transform") == "rental_carryforward":
+            old_status = _status_code(_get_path(prior.result, "meta.filing_status") or prior.profile.get("filing_status"))
+            new_status = _status_code(current.profile.get("filing_status"))
+            if old_status is None or new_status is None or old_status != new_status:
+                action = "ask"
+                reason = "Changed/unknown filing status requires reviewed ownership and spouse allocation of rental basis and suspended losses"
         out.append(Change(
             category="carryforwards",
             json_path=entry["target_path"],

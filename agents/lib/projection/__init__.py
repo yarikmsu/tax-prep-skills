@@ -1096,6 +1096,9 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
 
 def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
                         requested_year: "int | None" = None) -> FederalProjection:
+    from agents.lib.tax_computations.federal.rentals import rental_planning_block
+    if rental_planning_block(profile):
+        raise ProjectionError("Residential rental passive-loss limits and depreciation are not repriced by projections; recompute the return with revised inputs instead")
     # Value-checked HERE, not only in the safe harbors. Both of those validate
     # inside their prior-year branch, which a first-year workspace never
     # reaches — `prior_tax is None` takes the degraded path — so the whole

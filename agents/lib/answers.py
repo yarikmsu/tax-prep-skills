@@ -231,6 +231,15 @@ def _misc_income_needed(inputs: _Inputs) -> bool:
             or _amount(_get_path(inputs.result, "schedule_1_other_income.miscellaneous_other_income")) > 0)
 
 
+def _rental_needed(inputs: _Inputs) -> bool:
+    from agents.lib.tax_computations.federal.rentals import rental_planning_block
+    return rental_planning_block(inputs.profile, inputs.result)
+
+
+def _rental_related_needed(inputs: _Inputs) -> bool:
+    return type(_get_path(inputs.result, "schedule_e_rentals.computed_tax_year")) is int
+
+
 def _government_benefits_needed(inputs: _Inputs) -> bool:
     return (inputs.flags.get("has_1099g_benefits") is True
             or _amount(_get_path(inputs.result, "schedule_1_government_benefits.unemployment_gross")) > 0
@@ -322,6 +331,23 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
                  "Schedule F payments rather than defaulting them to Schedule C.",
         asked_by="tax-compute income-and-agi.md", required_when="a 1099-MISC is present",
         when=_misc_income_needed,
+    ),
+    RequiredAnswer(
+        id="rental_sources_and_scope", kind=FACT,
+        question="Confirm residential rental scope, every property/book and overlapping information return, "
+                 "ownership/active-participation history, separate federal/CA basis, depreciation method and "
+                 "suspended-loss origins. Confirm basis/at-risk and other loss limits, MAGI components and "
+                 "remaining Schedule1 income excluding rentals, including zero; unresolved facts block computation.",
+        asked_by="tax-compute rental-income.md", required_when="rental income, a plan or prior rental balances are present",
+        when=_rental_needed,
+    ),
+    RequiredAnswer(
+        id="rental_related_forms_review", kind=FACT,
+        question="After rebuilding rentals, refresh QBI, NIIT, federal/CA AMT and every affected income-dependent "
+                 "worksheet. Record the reviewed input digest in rental_return.related_forms_review; "
+                 "gross rent is not the signed allowed Form8960 rental contribution.",
+        asked_by="tax-compute rental-income.md", required_when="a computed rental workpaper is present",
+        when=_rental_related_needed,
     ),
     RequiredAnswer(
         id="schedule1_remaining_income", kind=FACT,

@@ -723,8 +723,25 @@ federal credit is computed by the engine.
     False (no floor → no over-claim), so leaving it unset silently forgoes an
     otherwise-applicable floor and OVERSTATES tax for a small active business.
     Ask explicitly whenever `has_self_employment` or `has_k1_income` is set.
-- Do you have rental income? → sets `has_rental_income` (Schedule E is NOT
-  modeled — the `/tax-compute` capability gate will block; tell the user now)
+- Do you have rental real estate, including a no-rent year with continuing
+  activity, or suspended losses? → `has_rental_income`. Review the
+  [residential contract](../../../../docs/contributing/rental-income.md) before
+  selecting `rental_return.method: residential_rental_v1`: TY2025 direct U.S.
+  long-term residential buildings/structural improvements, no personal use,
+  services/self-rental, other passive activities, dispositions/grouping/credits,
+  RE-professional treatment, equipment/ADS/bonus/section179 or method corrections.
+  Ask every `RENTAL_SCOPE_FACTS` question; do not default confirmations. Other
+  cases retain `rental_income`, including NY/NC conformity pending support.
+  Collect complete per-property cash books AND overlapping MISC box1 forms,
+  addresses/type/rental days, ownership minimum and management history,
+  land-excluded federal/CA asset bases/service dates/established methods,
+  conversion FMV, independent prior allowed/allowable depreciation and losses
+  split by active/nonactive origin. Ask MFS whether spouses lived apart all
+  year. Reconcile basis/at-risk/other loss limits and source-state obligations.
+  Confirm Form8582 MAGI adjustment/exclusion components and remaining Schedule1
+  income excluding rentals; record **[rental_sources_and_scope]**. After the
+  first build, refresh QBI, NIIT, federal/CA AMT and all income-dependent forms,
+  bind the reviewed input digest and record **[rental_related_forms_review]**.
 - Do you have an HSA (Health Savings Account)? **If yes**, for the Form 8889
   return-side excess check (`hsa_detail`): what was your HDHP coverage
   (`self_only`/`family`), and for **how many months** were you an HSA-eligible

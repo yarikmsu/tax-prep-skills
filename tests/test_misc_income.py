@@ -9,9 +9,9 @@ from agents.lib.tax_computations.federal.misc_income import (
 
 def source(year=2025, **changes):
     raw = dict(tax_year=year, form_revision='04/2025' if year == 2025 else '12/2026',
-        reviewed=True, box_3=1200, box_3_business=200, box_3_other=1000,
+        reviewed=True, box_1=0, box_3=1200, box_3_business=200, box_3_other=1000,
         box_3_unresolved=0, box_4=300, box_5=400, box_6=600, box_7=True,box_8=0,other_federal_withholding=0,
-        other_business_gross=0, box_1=0, box_2=0, box_9=0, box_10=0, box_11=0, box_15=0)
+        other_business_gross=0, box_2=0, box_9=0, box_10=0, box_11=0, box_15=0)
     raw.update(changes)
     return raw
 
@@ -79,9 +79,9 @@ def test_substitute_payments_are_other_income_and_composite_withholding_stays_se
     validate_misc_income(raw,boxes)
 
 
-@pytest.mark.parametrize('box', ['box_1', 'box_2', 'box_9', 'box_10', 'box_15'])
+@pytest.mark.parametrize('box', ['box_2', 'box_9', 'box_10', 'box_15'])
 def test_an_income_box_with_no_route_refuses_instead_of_passing_as_reviewed(box):
-    # Rents and royalties are Schedule E, crop insurance Schedule F, box 15
+    # Royalties are Schedule E, crop insurance Schedule F, box 15
     # income plus the section 409A tax: none may vanish behind a review.
     with pytest.raises(ValueError, match=box):
         classify_misc_income(source(**{box: 50000}))

@@ -161,6 +161,18 @@ a figure from a prior year.
   `state.amt.phaseout_rate` from that covered-year form; unindexed rates are
   not an exception to fetching. Unfetched HARD-ERRORS at compute for a
   CA return (never a guessed exemption that would zero the CA AMT).
+- For a reviewed residential rental return, fetch every `federal.rental` field
+  and separately `state.rental` for CA: `residential_recovery_years`,
+  `macrs_first_year`, `minimum_active_ownership`, `phaseout_rate`,
+  `special_allowance` and `phaseout_ceiling` for all five canonical filing
+  statuses. Read covered-year IRS Pub527/Form8582 and FTB3885A/3801 instructions;
+  confirm separate-spouse living-apart eligibility. Existing published-table
+  depreciation users also need `gds_percentages` rows (`month`, complete
+  recovery-age `rates` as fractions) from the covered-year authority; do not
+  silently switch methods. Formula users may leave that table empty. Pin the
+  federal block to the annual federal source and CA block to `state.CA`.
+  An optional empty block is not a non-landlord's obligation; a rental return
+  must fetch every used value, never carry prior-year figures by inference.
 - For CA owner PTET credit/carryovers, fetch `state.ptet_credit.carryforward_years` and `.first_tax_year`
   from the covered-year FTB3804-CR instructions and source-pin it to CA. The first
   year includes eligible predecessor-regime carryovers; a successor statute

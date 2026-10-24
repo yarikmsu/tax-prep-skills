@@ -283,6 +283,9 @@ def build_ladder(result: dict, profile: dict, tax_law: dict, year: int, *,
                  max_amount: float, step: float, name: str,
                  today: datetime.date,
                  ira_basis=None, ira_value=None, ira_owner=None) -> LadderReport:
+    from agents.lib.tax_computations.federal.rentals import rental_planning_block
+    if rental_planning_block(profile, result):
+        raise RothLadderError("Residential rental passive-loss limits and depreciation are not repriced by Roth ladders; recompute the return with revised inputs instead")
     filing_status = ((result.get("meta", {}) or {}).get("filing_status")
                      or profile.get("filing_status"))
     rate_kwargs = _rate_kwargs(profile, tax_law, filing_status, result)

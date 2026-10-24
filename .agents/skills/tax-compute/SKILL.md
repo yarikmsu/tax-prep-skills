@@ -157,6 +157,7 @@ Read each reference file when you reach its steps; do not read them all up front
 | Steps | What they cover | Read |
 |---|---|---|
 | 1 – 5 | Load inputs, confidence check, applicable forms, income, AGI, taxable income (1040 lines 1-15) | [references/income-and-agi.md](references/income-and-agi.md) |
+| Before AGI-dependent worksheets, when rentals apply | Reviewed TY2025 residential Schedule E, depreciation, passive losses and CA difference | [references/rental-income.md](references/rental-income.md) |
 | 6 – 9.5 | Tax, AMT, credits, other taxes, payments, estimated-tax penalty (1040 lines 16-38) | [references/tax-and-credits.md](references/tax-and-credits.md) |
 | 10 | State return — California, no-income-tax states, the generic bracket estimate | [references/state-return.md](references/state-return.md) |
 | 10 | State return — **New York** (Form IT-201, full-year resident) | [references/state-return-ny.md](references/state-return-ny.md) |

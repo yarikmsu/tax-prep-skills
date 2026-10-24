@@ -792,6 +792,9 @@ at all.
   Needs AA69.
 
 - **AA73 (P2, L): Compute rental real estate on Schedule E and Schedule CA.**
+  Implementation: [PR #31](https://github.com/yarikmsu/tax-prep-skills/pull/31),
+  open; not merged. Depends on PR #30. Reviewed scope: TY2025 directly owned
+  long-term residential rentals; [maintained contract](../contributing/rental-income.md).
   `rental_income` blocks 17% of California returns above $200,000 and 7.1% of
   all of them. The figure counts rental or royalty income (`WHO-IT-FITS.md`).
   Above $200,000 it is the largest block for every persona. Across all

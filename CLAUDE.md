@@ -74,7 +74,7 @@ and what each grant is protecting: `docs/contributing/claude-automation.md`.
 
 **Acceptance before trusting either reviewer:** replay a known answer, never
 plausibility, from a FRESH session — definitions load at session start, so an edited one
-is not what a same-session replay tests. **Both PASSED 2026-10-20**; the recipe,
+is not what a same-session replay tests. **Both PASSED 2026-10-21**; the recipe,
 pre-committed criteria and traps are in `docs/ops/review-subagent-acceptance.md`. Re-run
 before the season-open runbook.
 
