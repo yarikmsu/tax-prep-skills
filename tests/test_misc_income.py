@@ -11,7 +11,7 @@ def source(year=2025, **changes):
     raw = dict(tax_year=year, form_revision='04/2025' if year == 2025 else '12/2026',
         reviewed=True, box_3=1200, box_3_business=200, box_3_other=1000,
         box_3_unresolved=0, box_4=300, box_5=400, box_6=600, box_7=True,box_8=0,other_federal_withholding=0,
-        other_business_gross=0)
+        other_business_gross=0, box_1=0, box_2=0, box_9=0, box_10=0, box_11=0, box_15=0)
     raw.update(changes)
     return raw
 
@@ -79,6 +79,24 @@ def test_substitute_payments_are_other_income_and_composite_withholding_stays_se
     validate_misc_income(raw,boxes)
 
 
+@pytest.mark.parametrize('box', ['box_1', 'box_2', 'box_9', 'box_10', 'box_15'])
+def test_an_income_box_with_no_route_refuses_instead_of_passing_as_reviewed(box):
+    # Rents and royalties are Schedule E, crop insurance Schedule F, box 15
+    # income plus the section 409A tax: none may vanish behind a review.
+    with pytest.raises(ValueError, match=box):
+        classify_misc_income(source(**{box: 50000}))
+    raw = source()
+    del raw[box]
+    with pytest.raises(ValueError, match='every reviewed income box'):
+        classify_misc_income(raw)
+
+
+def test_fish_purchased_for_resale_is_business_gross():
+    # Box 11 is paid to someone in the business of catching fish: Schedule C.
+    out = classify_misc_income(source(box_11=700))
+    assert out['self_employment_gross'] == 200 + 400 + 600 + 700
+
+
 def misc_workspace(tmp_path, *, benefits=False, remaining=-1500):
     import json
     from agents.lib import parse_records as P
@@ -144,6 +162,25 @@ def test_dropped_misc_income_cannot_hide_behind_a_large_other_component_or_scope
     ledger=T.load_ledger(json.loads((ws/'parse_ledger.json').read_text()))
     report=T.evaluate(ledger,result,[r.file for r in ledger],profile={'tax_year':2025})
     assert any('form_1040.line_8' in e for e in report.missing_result_targets)
+
+
+@pytest.mark.parametrize('stated,refuses', [(None, True), (0, True), (80000, False)])
+def test_the_remainder_must_state_the_schedule_c_net_it_includes(tmp_path, stated, refuses):
+    # A typed remainder that leaves out an 80,000 Schedule C profit becomes a
+    # derived line 8 80,000 short; --check cannot see it unless it is stated.
+    import json
+    from agents.lib import return_builder as B
+    from agents.lib.secure_fs import write_secure
+    ws = misc_workspace(tmp_path, remaining=80000)
+    result = json.loads((ws/'result.json').read_text())
+    result['schedule_c'] = {'line_31_net': 80000}
+    if stated is not None:
+        result['schedule_1_other_income']['schedule_c_net_included'] = stated
+    write_secure(ws/'result.json', json.dumps(result))
+    assert (B._main(['--workspace', str(ws)]) != 0) == refuses
+    if not refuses:  # the statement survives the rebuilt workpaper
+        assert B._main(['--workspace', str(ws)]) == 0
+        assert B._main(['--workspace', str(ws), '--check']) == 0
 
 
 def test_positive_misc_income_needs_an_explicit_remaining_answer_and_source_year(tmp_path):
@@ -249,3 +286,16 @@ def test_filing_package_cannot_ignore_an_active_workpaper_with_a_bad_year_witnes
         'form_1040':{'line_8_schedule1_other':100},key:{component:100,'total':100,'computed_tax_year':year}}
     with pytest.raises(F.FilingPackageError,match='witness'):
         F.assembly_order(result)
+
+
+def test_the_benefits_remainder_must_state_the_schedule_c_net_too():
+    from agents.lib import tie_out as T
+    from tests.test_government_benefits import source as benefit
+    ledger = T.load_ledger({'records': [benefit()]})
+    result = {'meta': {'tax_year': 2025}, 'form_1040': {'line_8_schedule1_other': 0},
+              'schedule_1_government_benefits': {'other_income': 80000, 'other_income_confirmed': True},
+              'schedule_c': {'line_31_net': 80000}}
+    with pytest.raises(ValueError, match='schedule_c_net_included'):
+        T.derive_government_workpaper(ledger, result, {'tax_year': 2025})
+    result['schedule_1_government_benefits']['schedule_c_net_included'] = 80000
+    assert T.derive_government_workpaper(ledger, result, {'tax_year': 2025})['other_income'] == 80000

@@ -8,7 +8,8 @@ box and identify the recipient/payment before classifying income.
 |---|---|
 | 3 | Generally Schedule1 other income; source-confirmed business income may go to Schedule C. Split mixed payments explicitly. Schedule F, exclusions and unknown treatment must be resolved, never guessed |
 | 4 | `federal_withholding_1099`, never receipts or an income reduction |
-| 5 / 6 | `self_employment_gross` (fishing / medical-service receipts) |
+| 1 / 2 / 9 / 10 / 15 | Rents, royalties, crop insurance, attorney gross proceeds and nonqualified deferred compensation: no route here. A positive amount refuses; prepare that income outside this toolkit |
+| 5 / 6 / 11 | `self_employment_gross` (fishing boat proceeds / medical-service receipts / fish purchased for resale) |
 | 7 | Boolean direct-sales notice. No dollar amount. Obtain actual resale books separately |
 | 8 | `miscellaneous_other_income`, ordinary Schedule1 other income; never qualified dividends or exempt interest |
 | 16 / 17 / 18 | State tax withheld / state and payer ID / state income. Route withholding by the state code using the withholding reference; neither ID nor state income is tax paid |
@@ -23,7 +24,8 @@ record/ledger validator checks the same mapping. Required fields:
 - `box_3`, `box_3_business`, `box_3_other`, `box_3_unresolved`: finite gross
   amounts, including zeros. The three components reconcile to box 3. A positive
   unresolved component blocks parsing until its treatment is resolved.
-- `box_4`, `box_5`, `box_6`, `box_8`: actual source amounts, including zero.
+- `box_1`, `box_2`, `box_4`, `box_5`, `box_6`, `box_8`, `box_9`, `box_10`,
+  `box_11`, `box_15`: actual source amounts, including zero.
 - `box_7`: actual boolean checked/unchecked, never a numeric threshold or "X".
 - `other_business_gross`: separately reviewed business receipts from other boxes
   or subforms in this physical document, including zero; never withholding.
@@ -52,10 +54,9 @@ including it in NII does not add it to Form1040 income again. Review the covered
 year's worksheet and allowable deductions; other box3 income is not automatically
 NII, and active business income/UI/PFL must not be swept into NII with it.
 
-Read other boxes separately: 1/2 rents/royalties, 9 farming, 10 attorney gross
-proceeds (not necessarily a fee), 11 fish resale, 12/15 deferred compensation.
-Use their supported source route or stop for an uncomputed form; never silently
-omit them or force them into the mapped boxes. Capture TY2026 13a/13b/14 tips,
+Box 12's section 409A deferrals are informational; box 15 is the income.
+Never force an unrouted box into the mapped ones, and do not repeat box 11
+in `other_business_gross`. Capture TY2026 13a/13b/14 tips,
 occupation and overtime labels for the separate AA64 qualification review.
 
 Sources: [TY2025 recipient instructions](https://www.irs.gov/pub/irs-prior/f1099msc--2025.pdf),

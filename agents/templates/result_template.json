@@ -115,6 +115,7 @@
     "_include_if": "nonbusiness 1099-MISC income or an explicitly adopted Schedule1 workpaper",
     "remaining_income": null,
     "remaining_income_confirmed": false,
+    "schedule_c_net_included": null,
     "miscellaneous_other_income": 0,
     "total": 0,
     "computed_tax_year": null
@@ -124,6 +125,7 @@
     "_include_if": "government benefits sources or an explicitly adopted benefits workpaper",
     "other_income": null,
     "other_income_confirmed": false,
+    "schedule_c_net_included": null,
     "computed_tax_year": null,
     "unemployment_gross": 0,
     "family_leave_gross": 0,

@@ -81,6 +81,9 @@ not its subtraction.
 `schedule_1_other_income.remaining_income` to signed Schedule1 income EXCLUDING
 both tracked MISC and UI/family benefits; confirm it explicitly, including zero.
 Include business NET profit/loss, taxable refunds and other applicable sources.
+Record the Schedule C net it includes as `schedule_c_net_included`; with a
+nonzero `schedule_c.line_31_net` the builder refuses a remainder that does
+not state exactly that amount.
 Call `compute_schedule1_other` using the covered year and source records before
 Social Security or AGI/MAGI-dependent worksheets. Persist its output; without a
 benefits workpaper, its total supplies actual Form1040 line8 programmatically.
@@ -100,7 +103,8 @@ defines `government_benefits` metadata and revision-aware withholding boxes.
 When a MISC workpaper applies, use its derived total as the following non-benefit
 input; otherwise set `schedule_1_government_benefits.other_income` to the signed total of ALL
 OTHER Schedule1 income, including refunds/business/K-1 income/losses, and set
-`other_income_confirmed: true`. Include a deliberate zero. Do not reuse an old
+`other_income_confirmed: true`, with `schedule_c_net_included` as above.
+Include a deliberate zero. Do not reuse an old
 aggregate that may already contain some benefits. Before any Social Security,
 AGI or MAGI-dependent worksheet, call `compute_government_benefits` with the
 covered year, each record's `key_boxes`/`government_benefits`, the confirmed

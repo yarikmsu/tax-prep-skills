@@ -93,7 +93,7 @@ from agents.lib.tax_computations import (  # noqa: E402
 )
 from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_input  # noqa: E402
 from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402
-    BENEFIT_CATEGORIES, compute_government_benefits, validate_government_benefits,
+    BENEFIT_CATEGORIES, _money, compute_government_benefits, validate_government_benefits,
 )
 from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
     MISC_OTHER, compute_schedule1_other, validate_misc_income,
@@ -1605,6 +1605,22 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
+def _schedule_c_net_stated(sheet: dict, result: dict, where: str) -> "float | None":
+    """A typed Schedule 1 remainder becomes a derived line 8, so it must say how
+    much Schedule C net it holds; dropping that net otherwise leaves AGI short
+    with --check green."""
+    c = result.get("schedule_c")
+    net = _money(c.get("line_31_net", 0), "schedule_c.line_31_net", signed=True) if isinstance(c, dict) else 0.0
+    stated = sheet.get("schedule_c_net_included")
+    if stated is None and not net:
+        return None
+    if stated is None:
+        raise ValueError(f"{where}: state schedule_c_net_included, the Schedule C net it includes")
+    if abs(_money(stated, f"{where}.schedule_c_net_included", signed=True) - net) > .005:
+        raise ValueError(f"{where} must include Schedule C line 31 net profit or loss exactly once")
+    return net
+
+
 def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> "dict | None":
     """Non-benefit income: tracked MISC plus a separately confirmed remainder."""
     records, source_years = [], []
@@ -1645,9 +1661,13 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
         return None
     if not isinstance(sheet, dict) or scaffold:
         raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC and government benefits, including zero")
-    return compute_schedule1_other(tax_year=year, records=records,
+    stated = _schedule_c_net_stated(sheet, result, "schedule_1_other_income.remaining_income")
+    built = compute_schedule1_other(tax_year=year, records=records,
         remaining_income=sheet.get("remaining_income"),
         remaining_income_confirmed=sheet.get("remaining_income_confirmed"))
+    if stated is not None:  # the rebuilt sheet keeps its own statement
+        built["schedule_c_net_included"] = stated
+    return built
 
 
 def schedule1_other_differences(result: dict, built: "dict | None", government: "dict | None") -> list[str]:
@@ -1713,6 +1733,7 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # restore: keep following line 8 rather than reverting a later edit.
     unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
     other_sheet = derive_schedule1_other_workpaper(ledger, result, profile)
+    stated = None
     if other_sheet is not None:
         other, confirmed = other_sheet["total"], True
     elif sheet is None or scaffold or (not positive and unconfirmed):
@@ -1721,6 +1742,7 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
         other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
         confirmed = False
     elif isinstance(sheet, dict):
+        stated = _schedule_c_net_stated(sheet, result, "schedule_1_government_benefits.other_income")
         other, confirmed = sheet.get("other_income"), sheet.get("other_income_confirmed")
     else:
         raise ValueError("schedule_1_government_benefits must be an object or absent")
@@ -1736,6 +1758,8 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # to a governmental UI program; an itemizer takes them on Schedule A.
     if built["unemployment_contribution_reduction"] and (result.get("schedule_a") or {}).get("use_itemized") is True:
         raise ValueError("an itemizer deducts UI program contributions on Schedule A, not on Schedule 1 line 7")
+    if stated is not None:  # the rebuilt sheet keeps its own statement
+        built["schedule_c_net_included"] = stated
     built["computed_tax_year"] = year
     return built
 
