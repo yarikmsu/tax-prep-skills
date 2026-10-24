@@ -755,6 +755,8 @@ at all.
   Needs AA69.
 
 - **AA72 (P2, M): Claim the California AMT credit and the PTET credit.**
+  Implementation: [PR #30](https://github.com/yarikmsu/tax-prep-skills/pull/30),
+  open; not merged. Depends on PR #29.
   AA68 leaves both credits blocked, and leaves the CA AMT credit's
   carryforward written by step 9.5 from a filer-entered FTB 3510 amount.
   Start from that state. Lines 43-45 need the two credits, their

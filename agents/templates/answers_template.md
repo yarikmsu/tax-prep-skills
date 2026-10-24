@@ -110,11 +110,17 @@ Last updated: {{DATE}}
 
 - **[ca_overpayment_election]**
 
-### From the worked FTB 3510, what CA AMT credit is available and ALLOWABLE this year, including a worked zero? Preserve the available amount less the allowable credit plus new ISO credit for rollover.
+### What qualified opening CA AMT credit is reconciled to the prior return, including a worked zero? Confirm ca_credits.amt_opening_confirmed. The engine computes FTB3510 allowable credit and the remaining carryforward.
 
 *Asked by tax-compute state-return.md; required when a CA return has a prior-year AMT credit flag or carryforward.*
 
 - **[ca_amt_credit_worksheet]**
+
+### Confirm CA PTET direct individual ownership, election/payment eligibility, spouse allocation, reported K-1 credit sources and origin-year carryovers. Record ca_credits.ptet_eligibility_confirmed and ptet_owner_type.
+
+*Asked by tax-setup interview.md / tax-compute state-return.md; required when a CA return has owner PTET credits or carryovers.*
+
+- **[ca_ptet_owner_credits]**
 
 ### Is the document set complete — is every W-2, 1099 and statement for the year in documents/?
 

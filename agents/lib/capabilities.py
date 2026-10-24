@@ -123,13 +123,14 @@ RULES: "tuple[Rule, ...]" = (
     Rule("ca_other_taxes", "ca_has_other_taxes", UNSUPPORTED,
          "CA early-distribution and other additional taxes", "Form 540 line 63 / FTB 3805P",
          "California's additional taxes are not copied from federal forms and are not computed.", state="CA"),
-    Rule("ca_ptet_credit", "ca_has_ptet_credit", UNSUPPORTED,
+    Rule("ca_ptet_credit", "ca_has_ptet_credit", MANUAL,
          "CA electing-entity PTET credit or carryover", "FTB 3804-CR / Form 540 lines 43-45",
          "The K-1 credit and any unused carryover need FTB 3804-CR. This is a nonrefundable "
-         "special credit with a limited carryover, never a payment.", state="CA"),
-    Rule("ca_amt_credit", "ca_has_amt_credit", UNSUPPORTED,
+         "special credit with vintage carryovers, computed for direct individual owners. "
+         "Disregarded SMLLC tax-difference limits require separate reviewed support. Never a payment.", state="CA"),
+    Rule("ca_amt_credit", "ca_has_amt_credit", MANUAL,
          "CA prior-year AMT credit", "FTB 3510 / Schedule P credit code 188",
-         "Work FTB 3510 to claim the allowable credit. Acknowledgement must preserve the "
+         "Reconcile the qualified opening balance; the checked builder computes FTB3510 Part II. Preserve the "
          "opening credit less the credit ALLOWABLE this year plus new ISO credit. An unclaimed "
          "allowable credit requires an amended return, not an inflated carryforward.", state="CA"),
     Rule("ca_other_credit_carryover", "ca_has_other_credit_carryover", UNSUPPORTED,
@@ -148,7 +149,7 @@ RULES: "tuple[Rule, ...]" = (
     Rule("ca_special_credits", "ca_claims_special_credits", MANUAL,
          "CA special credits claimed from a separate worksheet", "Form 540 lines 43-45 / Schedule P Part III",
          "Prepare each credit's own covered-year worksheet and Schedule P limitation. Carryovers and "
-         "the K-1 PTET credit have separate blocking rules.", state="CA"),
+         "owner PTET/AMT credits have their own checked computations and intake facts.", state="CA"),
     Rule("wa_special_gains", "wa_has_special_gain_rules", UNSUPPORTED, "WA special federal gain rules", "RCW 82.87.020 normalization", "Section 1256/QOF and other special rules require a WA gain worksheet not modeled here.", state="WA"),
     Rule("wa_separate_household", "wa_has_separate_household", UNSUPPORTED, "WA separate spouse/RDP household", "RCW 82.87.120 allocation", "One household shares all WA deductions and credits; separate allocations are not modeled.", state="WA"),
     Rule("nc_business_adjustments", "nc_has_business_adjustments", UNSUPPORTED,
@@ -305,8 +306,8 @@ RULES: "tuple[Rule, ...]" = (
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
          "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",
          "Federal Form 6251 AMT (incl. the ISO bargain element and the Form "
-         "8801 credit carryforward) AND CA Schedule P (540) AMT (7% flat TMT, "
-         "25% exemption phase-out, the CA Schedule P AMT credit carryforward) "
+         "8801 credit carryforward) AND CA Schedule P (540) AMT (fetched CA rates, "
+         "the CA Schedule P AMT credit carryforward) "
          "ARE both computed by /tax-compute from the fetched federal.amt and "
          "state.amt tables. Scope: the ISO-exerciser path — other Form 6251 / "
          "Schedule P preference and adjustment items (depreciation, NOL, "
@@ -911,7 +912,7 @@ def _state_note(profile: dict) -> str:
     if code == "CA":
         return ("State: California Form 540 arithmetic and Schedule P are computed by a checked builder "
                 "for the reviewed form year, from separately worked Schedule CA, deduction, credit and tax components. "
-                "HSA adjustments and exemption-credit math have engine support; "
+                "HSA adjustments, exemption-credit math, FTB3510 PartII and direct-owner PTET credits have engine support; "
                 "other situations are gated or marked NOT COMPUTED. FTB5805's regular-method penalty "
                 "on line113 is rebuilt from reviewed tax and payment facts; special methods require "
                 "a confirmed external worksheet or an explicit eligible FTB-billing election.")
@@ -1170,7 +1171,7 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # load-bearing question — neither is 'no'. flags.get() maps both to None.
     missing_flags = [f for f in _REQUIRED_GATE_FLAGS if flags.get(f) is None]
     missing_flags.extend(rule.flag for rule in applicable_rules
-                         if rule.state is not None and rule.level == UNSUPPORTED
+                         if rule.state is not None and (rule.level == UNSUPPORTED or rule.rule_id in {"ca_amt_credit", "ca_ptet_credit"})
                          and flags.get(rule.flag) is None)
     if missing_flags:
         _place(Finding(

@@ -91,6 +91,8 @@ _TRIGGERS = {
     "ca_state_payments": dict(profile={"address": {"state": "CA"}}),
     "ca_penalty_method": dict(profile={"address": {"state": "CA"}}),
     "ca_overpayment_election": dict(profile={"address": {"state": "CA"}}),
+    "ca_ptet_owner_credits": dict(profile={"address": {"state": "CA"},
+        "flags": {"ca_has_ptet_credit": True}}),
     "ca_amt_credit_worksheet": dict(profile={"address": {"state": "CA"},
         "flags": {"ca_has_amt_credit": True}}),
     "document_set_complete": dict(),

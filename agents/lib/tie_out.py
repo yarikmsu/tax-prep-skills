@@ -215,6 +215,7 @@ CATEGORY_TARGETS = {
     "state_withholding_ca": ("california_540", ["ca_withholding_box17"]),
     "ca_1099_withholding": ("california_540", ["ca_withholding_1099"]),
     "ca_592b_593_withholding": ("california_540", ["ca_withholding_592b_593"]),
+    "ca_ptet_credit": ("california_540", ["ftb_3804_cr.reported_credit_total"]),
     # Form 3921 (box 4 FMV - box 3 strike) x box 5 shares, HELD-through-
     # year-end exercises only (same-year disqualifying dispositions are W-2
     # ordinary income and are recorded as skips). Ties to the input echo
@@ -2051,6 +2052,40 @@ def _ca_5805_checks(ledger, result: dict, profile, tax_law) -> list[str]:
     return []
 
 
+def _ca_owner_credit_checks(ledger, result: dict, profile, tax_law) -> list[str]:
+    """Recompute allowable credits even when the checked builder was omitted."""
+    from agents.lib.return_builder import ca_credit_inputs, ca_values_agree, _tax_year, ReturnBuilderError
+    from agents.lib.tax_computations.state.ca_credits import compute_ca_credit_order
+    if not isinstance(profile, dict):
+        return []
+    from agents.lib.tax_computations.state.ny_nonresident import ny_it203_plan
+    try:
+        address = profile.get("address") or {}
+        if str(address.get("state", "")).strip().upper() != "CA":
+            return []
+        if ny_it203_plan(profile):
+            return []
+        year = (result.get("meta") or {}).get("tax_year") or profile.get("tax_year")
+        inputs = ca_credit_inputs(profile, ledger, (tax_law or {}).get("state") or {}, year)
+        if inputs is None:
+            return []
+        ca = result.get("california_540") or {}
+        p = ca.get("schedule_p") or {}
+        expected = compute_ca_credit_order(regular_tax=ca.get("line_31"),
+            exemption_credits=ca.get("line_32"), form540_line35=ca.get("line_35"),
+            tentative_minimum_tax=p.get("ca_tmt"), dependent_care=ca.get("line_40"),
+            renters_credit=ca.get("line_46"), tax_year=_tax_year(result, profile),
+            new_deferral_credit=p.get("iso_credit_generated"), **inputs)
+        if (not ca_values_agree(ca.get("credit_workpaper"), expected)
+                or not ca_values_agree(ca.get("ftb_3804_cr"), expected["ftb_3804_cr"])
+                or not ca_values_agree(p.get("ftb_3510"), expected["ftb_3510"])
+                or any(not ca_values_agree(ca.get(key), expected[key]) for key in ("line_43", "line_44", "line_45"))):
+            raise ValueError("FTB3510/3804-CR, Schedule P order, claimed credits or vintage carryovers disagree; rebuild the return")
+    except (ValueError, TypeError, KeyError, AttributeError, ReturnBuilderError) as exc:
+        return [f"CA owner credits: {redact(exc)}"]
+    return []
+
+
 def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: bool,
                       tolerance: float) -> list[str]:
     """CA subtractions and carried AMT credit cannot vanish behind an acknowledgement."""
@@ -2109,7 +2144,7 @@ def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: boo
         return errors
     available, allowable = values["ftb3510_credit_available"], values["ftb3510_credit_allowable"]
     generated, next_year = values["iso_credit_generated"], values["carryforward_to_next_year"]
-    if carried and carried > 0 and abs(available - carried) > tolerance:
+    if abs(available - (carried or 0)) > tolerance:
         errors.append("CA AMT credit: FTB 3510 opening credit does not match the prior-year carryforward; reconcile the source worksheet")
     if allowable > available:
         errors.append("CA AMT credit: the allowable credit exceeds the available credit")
@@ -2178,6 +2213,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         result, profile, sums.get("state_refund_1099g", 0) > 0, tolerance))
     missing_targets.extend(_ca_schedule_checks(ledger, result, profile, tax_law))
     missing_targets.extend(_ca_5805_checks(ledger, result, profile, tax_law))
+    missing_targets.extend(_ca_owner_credit_checks(ledger, result, profile, tax_law))
     crypto = result.get("crypto_summary")
     form8949 = result.get("form_8949") or {}
     account_rows = (isinstance(form8949, dict) and any(

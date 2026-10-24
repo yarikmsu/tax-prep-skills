@@ -80,15 +80,17 @@ computed, not blocked; a City resident for only part of the year is refused at c
 time.
 
 California's blocking rules are `ca_other_schedule_ca`,
-`ca_distribution_taxes`, `ca_other_taxes`, `ca_ptet_credit`,
-`ca_amt_credit`, `ca_other_credit_carryover`, `ca_use_tax` and
+`ca_distribution_taxes`, `ca_other_taxes`,
+`ca_other_credit_carryover`, `ca_use_tax` and
 `ca_coverage_penalty`. Each has a
 specific setup question. See WHO-IT-FITS for measured subsets and bounds.
 The NC rules are `nc_business_adjustments`, `nc_recovery_deductions`, `nc_nol`,
 `nc_taxed_pte`, `nc_other_deductions` and `nc_other_credits`; WA's are
 `wa_special_gains` and `wa_separate_household`.
-An acknowledged CA AMT-credit case still requires the worked FTB 3510 answer
-and its carryforward reconciliation at tie-out. Federally taxable Social
+The checked builder computes FTB3510 PartII from a reconciled qualified opening
+balance and FTB3804-CR for reviewed direct individual owners, with ordered
+Schedule P limits and vintage carryovers. Prior exclusion refigures and other
+credit eligibility worksheets remain manual. Federally taxable Social
 Security and state refunds must be subtracted on Schedule CA whatever a
 screening answer says. CA renter's credit and self-claimed special credits
 are manual notes; the dependent-care and EIC notes also name the distinct CA
@@ -107,6 +109,11 @@ page 1 of the generated PDF: Forms 8863, 2441, 5695/8936, gambling, FEIE, and th
 life-event set — marriage or divorce year, §121 home sale with its 1099-S rule,
 inheritance basis step-up, pre-2019-decree alimony (post-2018 decrees carry the CA
 nonconformity: CA still taxes and deducts via Schedule CA), and Form 8839 adoption.
+
+CA's retained `ca_amt_credit` and `ca_ptet_credit` IDs are worksheet notes,
+with required-present screening flags. The checked builder derives the current
+allowable credits, while prior-return reconciliation and PTET eligibility
+remain explicit intake facts; old acknowledgements do not waive them.
 
 **The Earned Income Credit needed a rule because it had none**, and that — not
 being uncomputed — is what was distinctive about it. Half the manual-worksheet

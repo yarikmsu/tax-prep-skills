@@ -548,7 +548,7 @@
     "ca_mental_health_surcharge": 0,
     "schedule_p": {
       "_include_if": "state is CA; computed on every CA return",
-      "_note": "CA Schedule P (540) AMT \u2014 compute_ca_schedule_p (7% TMT, 25% exemption phase-out per R&TC \u00a717062, exemption/phaseout_start from state.amt). ca_amt is ADDED to ca_total_tax. carryforward_to_next_year is the deferral-attributable (ISO) CA AMT credit rolled forward by /tax-rollover (a SEPARATE carryforward from the federal Form 8801).",
+      "_note": "CA Schedule P uses covered-year fetched AMT law; ca_amt is ADDED to ca_total_tax. FTB3510 Part II allowable credit is derived from the qualified opening balance. carryforward_to_next_year is unused opening credit plus current ISO deferral AMT; other deferrals require a separate worksheet.",
       "ca_amti": 0,
       "ca_exemption_allowed": 0,
       "ca_tmt": 0,
@@ -557,11 +557,18 @@
       "ftb3510_credit_available": null,
       "ftb3510_credit_allowable": null,
       "ftb3510_worksheet_confirmed": false,
+      "ftb_3510": null,
       "iso_credit_generated": 0,
       "carryforward_to_next_year": 0,
       "ca_regular_tax": 0,
       "schedule_p_carryforward": 0,
       "notes": []
+    },
+    "credit_workpaper": null,
+    "ftb_3804_cr": {
+      "reported_credit_total": 0,
+      "current_credits": [],
+      "carryovers_to_next_year": []
     },
     "ca_total_tax": 0,
     "ca_withholding_box17": 0,

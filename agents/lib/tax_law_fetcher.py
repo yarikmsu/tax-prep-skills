@@ -509,18 +509,14 @@ def create_state_template(state: str, tax_year: "int | None" = None) -> dict:
             # None until fetched — compute_ca_itemized then SKIPS the
             # phase-out with a loud overstatement note.
             "itemized_phaseout": {"single": None, "mfj": None, "hoh": None},
-            # CA Schedule P (540) AMT (N1). The 7% TMT rate and 25% exemption
-            # phase-out are statutory (R&TC §17062) and live in
-            # compute_ca_schedule_p; ONLY the indexed exemption amounts and
-            # phase-out-start thresholds are fetched here (per filing status —
-            # map MFS to its own key). None until fetched: compute_ca_schedule_p
-            # hard-errors when a CA ISO exerciser needs it, so a guessed value
-            # can't silently zero CA AMT. REQUIRED for every CA return,
-            # including one without an ISO exercise.
+            # Covered-year Schedule P law, all fetched and source-pinned.
             "amt": {
                 "exemption": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "phaseout_start": {"single": None, "mfj": None, "mfs": None, "hoh": None},
+                "tmt_rate": None,
+                "phaseout_rate": None,
             },
+            "ptet_credit": {"carryforward_years": None, "first_tax_year": None},
             "no_city_income_tax": True,
         },
         "NY": {
@@ -1565,6 +1561,11 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
         if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
                 and path == "state.amt_screening"):
             return
+        # The PTET credit's carryover period matters only to an owner with a
+        # credit; ca_credit_inputs refuses that return while it is unfetched.
+        if (isinstance(data.get("state"), dict) and data["state"].get("code") == "CA"
+                and path == "state.ptet_credit"):
+            return
         # These optional tagged blocks have their own complete validators;
         # empty confirmed lists and inactive null parameters are valid data.
         if path in ("state.modifications", "state.local"):
@@ -1591,7 +1592,9 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # it would nag INCOMPLETE forever (the underpayment_rates /
                 # sdi_wage_limit precedent). A non-null corrupt value still
                 # hard-errors at compute time (_resolve_amt_phaseout_rate).
-                if k == "phaseout_rate" and v is None:
+                # Scoped to federal.amt: CA's state.amt.phaseout_rate is a
+                # required fetched figure that compute_ca_540 refuses unfetched.
+                if k == "phaseout_rate" and v is None and path == "federal.amt":
                     continue
                 # federal.schedule_1a is OPT-IN per taxpayer (tips/overtime/
                 # car-loan/senior) — a null block is the DEFAULT, not a gap.

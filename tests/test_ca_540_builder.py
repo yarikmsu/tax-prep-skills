@@ -27,7 +27,8 @@ def law():
         "personal_exemption": {"amount": 10}, "dependent_exemption": {"amount": 30},
         "exemption_phaseout": {"threshold": dict.fromkeys(STATUSES, 1000000),
             "band": dict.fromkeys(STATUSES, 1000), "reduction_per_step": 1},
-        "amt": {"exemption": dict.fromkeys(STATUSES[:-1], 100000),
+        "ptet_credit": {"carryforward_years": 5, "first_tax_year": 2021},
+        "amt": {"tmt_rate": .07, "phaseout_rate": .25, "exemption": dict.fromkeys(STATUSES[:-1], 100000),
                 "phaseout_start": dict.fromkeys(STATUSES[:-1], 1000000)},
         "underpayment_screen": {"minimum_balance": dict.fromkeys(STATUSES, 500), "tax_fraction": .1},
         "estimated_tax_safe_harbor": {
@@ -106,7 +107,7 @@ def test_schedule_p_uses_unfloored_taxable_income():
 def test_mfs_schedule_p_recapture_worksheet():
     # TY2025 worksheet structure, synthetic indexed amounts: elimination
     # ceiling=1,000+100/.25=1,400. At1,500, add min(100,.25*100)=25.
-    out = compute_ca_schedule_p(1500, 0, "MFS", 100, 1000)
+    out = compute_ca_schedule_p(1500, 0, "MFS", 100, 1000, tmt_rate=.07, phaseout_rate=.25)
     assert out["ca_amti"] == 1525
     assert out["ca_tmt"] == 106.75
 

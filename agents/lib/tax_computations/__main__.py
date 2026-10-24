@@ -179,7 +179,7 @@ print(f"Partial (only Q2 cached): ${_part['interest']:,.2f} through "
 print("\n=== CA Schedule P (540) AMT Test (N1) ===")
 _cap = compute_ca_schedule_p(
     ca_taxable_income=300000, ca_regular_tax=25000, filing_status="Single",
-    exemption=92749, phaseout_start=347808, iso_bargain_element=200000)
+    exemption=92749, phaseout_start=347808, iso_bargain_element=200000, tmt_rate=.07, phaseout_rate=.25)
 print(f"CA taxable $300K, ISO spread $200K, CA regular tax $25K: "
       f"CA AMT ${_cap['ca_amt']:,.2f}, carryforward "
       f"${_cap['schedule_p_carryforward']:,.2f}")

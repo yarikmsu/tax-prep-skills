@@ -46,7 +46,7 @@ def test_missing_ca_answer_is_not_no_and_cannot_be_acknowledged():
 def test_nonzero_prior_credit_overrides_a_false_screening_answer():
     p = _profile({"ca_has_amt_credit": False})
     p["prior_year"] = {"ca_amt_credit_carryforward": 1000}
-    assert "ca_amt_credit" in {f.rule_id for f in C.evaluate(p).blocking}
+    assert "ca_amt_credit" in {f.rule_id for f in C.evaluate(p).manual}
 
 
 @pytest.mark.parametrize("bad", [True, -1, "1000", float("nan"), float("inf")])
@@ -88,7 +88,26 @@ def _credit_case():
         "ftb3510_worksheet_confirmed": True, "iso_credit_generated": 0,
         "ca_amt": 0, "iso_bargain_element": 0,
         "carryforward_to_next_year": 800}}}
+    profile["ca_credits"] = {"amt_opening_confirmed": True, "other_credits": []}
+    result["california_540"].update(line_31=1000, line_32=0, line_35=1000, line_40=0, line_46=0)
+    result["california_540"]["schedule_p"]["ca_tmt"] = 800
+    _refresh_credit(profile, result)
     return profile, result
+
+
+def _refresh_credit(profile, result):
+    from agents.lib.tax_computations import compute_ca_credit_order
+    ca = result["california_540"]
+    p = ca["schedule_p"]
+    paper = compute_ca_credit_order(regular_tax=ca["line_31"], exemption_credits=ca["line_32"],
+        form540_line35=ca["line_35"], tentative_minimum_tax=p["ca_tmt"],
+        dependent_care=ca["line_40"], renters_credit=ca["line_46"],
+        other_credits=[], opening_amt_credit=profile["prior_year"]["ca_amt_credit_carryforward"],
+        new_deferral_credit=p["iso_credit_generated"], tax_year=2025,
+        ptet_current=[], ptet_carryovers=[], ptet_carryforward_years=None, ptet_first_tax_year=None)
+    ca.update({key: paper[key] for key in ("line_43", "line_44", "line_45")})
+    ca.update(credit_workpaper=paper, ftb_3804_cr=paper["ftb_3804_cr"])
+    p["ftb_3510"] = paper["ftb_3510"]
 
 
 def test_acknowledged_credit_has_a_complete_arithmetic_chain():
@@ -147,7 +166,8 @@ def test_worked_zero_allowable_preserves_the_entire_opening_credit_without_iso()
     profile, result = _credit_case()
     p = result["california_540"]["schedule_p"]
     p.update(ftb3510_credit_allowable=0, iso_credit_generated=0, ca_amt=0,
-             iso_bargain_element=0, carryforward_to_next_year=1000)
+             iso_bargain_element=0, carryforward_to_next_year=1000, ca_tmt=1000)
+    _refresh_credit(profile, result)
     assert not tie_out.evaluate([], result, [], profile=profile).failed
 
 
@@ -157,7 +177,8 @@ def test_current_amt_can_generate_a_credit_but_cannot_use_the_prior_credit():
     # FTB 3510 lines 33-38: TMT exceeds regular tax, so no old credit is
     # allowable; 1,000 opening + 100 new ISO AMT = 1,100 for next year.
     p.update(ftb3510_credit_allowable=0, iso_credit_generated=100, ca_amt=100,
-             iso_bargain_element=20000, carryforward_to_next_year=1100)
+             iso_bargain_element=20000, carryforward_to_next_year=1100, ca_tmt=1100)
+    _refresh_credit(profile, result)
     assert not tie_out.evaluate([], result, [], profile=profile).failed
     p.update(ftb3510_credit_allowable=200, carryforward_to_next_year=900)
     assert tie_out.evaluate([], result, [], profile=profile).failed

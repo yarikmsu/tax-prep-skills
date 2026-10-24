@@ -3722,6 +3722,12 @@ from agents.lib.tax_computations.state.generic import (  # noqa: E402,F401
     state_rules_for_year,
 )
 
+from agents.lib.tax_computations.state.ca_credits import (  # noqa: E402,F401
+    compute_ca_amt_credit,
+    compute_ca_ptet_owner,
+    compute_ca_credit_order,
+)
+
 from agents.lib.tax_computations.state.nc import (  # noqa: E402,F401
     compute_nc_child_deduction,
     compute_nc_d400,

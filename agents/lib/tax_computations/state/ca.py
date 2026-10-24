@@ -12,13 +12,8 @@ itemized next to federal Schedule A, and Schedule P (540) next to Form 6251.
 Each sat beside the FEDERAL form it mirrors rather than beside the other two,
 which is exactly why the file read as one subject and was three.
 
-Every figure is an argument. What is inline is statutory and unindexed with its
-citation, which is the narrow exception AGENTS.md §2 names: the 7% CA
-tentative-minimum-tax rate and the 25% exemption phase-out (R&TC conformity
-fixed at 2015-01-01), the $1M mortgage limit California kept, the 50% cash
-charitable cap it never raised to the federal 60%, and the R&TC §17077 6%/80%
-itemized phase-out. Indexed CA figures — the phase-out THRESHOLD, the AMT
-exemption and its own threshold, the SDI rate and ceiling — are all parameters.
+Tax law comes from covered-year fetched parameters. Statutory-fixed amounts
+are not exempt from fetching unless AGENTS.md §2 explicitly enumerates them.
 """
 
 import math
@@ -540,6 +535,10 @@ def validate_ca_return_law(state: dict) -> None:
                     raise ValueError(f"{name}.{field}.{status} must be positive")
     if not isinstance(screen, dict):
         raise ValueError("state.underpayment_screen is required")
+    assert isinstance(amt, dict)  # validated with its per-status fields above
+    for field in ("tmt_rate", "phaseout_rate"):
+        if not 0 < _ca_input(amt.get(field), f"state.amt.{field}", fraction=True) <= 1:
+            raise ValueError(f"state.amt.{field} must be fetched and positive")
     fraction = _amount(screen.get("tax_fraction"), "state.underpayment_screen.tax_fraction")
     if not 0 < fraction <= 1:
         raise ValueError("state.underpayment_screen.tax_fraction must be in (0, 1]")
@@ -1176,16 +1175,6 @@ def compute_ca_itemized(
     }
 
 
-# CA Schedule P (540) statutory-structural constants (R&TC §17062, §17062.1
-# conforming to IRC §§55-59 as of 2015-01-01). The 7% tentative-minimum-tax
-# rate and the 25% exemption phase-out are set in statute and NOT indexed —
-# inline with citation, like the 1% mental-health surcharge. CA does NOT adopt
-# OBBBA §70107 (the federal 50% phase-out from TY2026) — its conformity date is
-# fixed at 2015, so CA stays 25% in every year.
-_CA_AMT_TMT_RATE = 0.07
-_CA_AMT_PHASEOUT_RATE = 0.25
-
-
 def compute_ca_schedule_p(
     ca_taxable_income: float,
     ca_regular_tax: float,
@@ -1194,18 +1183,17 @@ def compute_ca_schedule_p(
     phaseout_start: float,
     ca_preference_adjustments: float = 0.0,
     iso_bargain_element: float = 0.0,
-    tmt_rate: float = _CA_AMT_TMT_RATE,
-    phaseout_rate: float = _CA_AMT_PHASEOUT_RATE,
+    tmt_rate: float | None = None,
+    phaseout_rate: float | None = None,
 ) -> dict:
     """California Schedule P (540) alternative minimum tax (N1).
 
     The CA analogue of federal Form 6251, taking the signed net of the
     separately worked Part I adjustments. ISO spread stays separate so its
     deferral-attributable credit can be tracked. CA differs from the federal computation in three ways,
-    all reflected here: a FLAT 7% tentative-minimum-tax rate (no 26/28 tiers, so
-    no rate_28 breakpoint), NO Part III capital-gains coordination (CA taxes
-    capital gains as ordinary income), and a fixed 25% exemption phase-out that
-    does NOT follow OBBBA §70107 (CA's conformity date is 2015).
+    all reflected here: a flat tentative-minimum-tax rate, no federal-style
+    capital-gains coordination, and CA's own exemption phaseout. Rates and
+    indexed amounts must come from the covered-year CA cache, never federal law.
 
     Args:
         ca_taxable_income: Form 540 line 19 (CA regular taxable income) — the
@@ -1249,6 +1237,7 @@ def compute_ca_schedule_p(
         if isinstance(r, bool) or not isinstance(r, (int, float)) \
                 or not math.isfinite(float(r)) or not (0 < float(r) <= 1):
             raise ValueError(f"{what} must be a finite fraction in (0, 1], got {r!r}")
+    assert tmt_rate is not None and phaseout_rate is not None
     tmt_rate = float(tmt_rate)
     phaseout_rate = float(phaseout_rate)
 
@@ -1285,7 +1274,7 @@ def compute_ca_schedule_p(
     exemption_allowed = max(0.0, ex - phaseout_rate * max(0.0, amti_full - ph_start))
     notes = [
         "CA Schedule P uses the supplied signed Part I preferences and adjustments "
-        "(7% flat TMT, 25% exemption phase-out per R&TC §17062). Source worksheets "
+        "and the fetched CA AMT rates. Source worksheets "
         "are the caller's to supply; deferral-credit attribution is ISO-only. "
         "CA taxes capital gains as ordinary income, so there is no "
         "federal-style Part III coordination.",
@@ -1314,7 +1303,7 @@ def compute_ca_540(
     deduction: float, deduction_method: str, personal_count: int, blind_count: int,
     senior_count: int, dependent_count: int, ca_preference_adjustments: float,
     lump_sum_tax: float,
-    iso_bargain_element: float, components: dict,
+    iso_bargain_element: float, components: dict, credits: dict | None = None,
 ) -> dict:
     """Derive the reviewed Form 540 from separately worked components.
 
@@ -1390,15 +1379,32 @@ def compute_ca_540(
     out["line_32"] = exemption["exemption_credit"]
     out["line_33"] = round(max(0.0, out["line_31"] - out["line_32"]), 2)
     out["line_35"] = round(out["line_33"] + out["line_34"], 2)
-    out["line_47"] = round(sum(out[f"line_{n}"] for n in (40, 43, 44, 45, 46)), 2)
-    out["line_48"] = round(max(0.0, out["line_35"] - out["line_47"]), 2)
     adj = _amount(ca_preference_adjustments, "ca_preference_adjustments", allow_negative=True)
     if deduction_method in ("standard", "dependent_worksheet"):
         adj += elected
     key = "mfj" if status == "qss" else status
     amt = state_law["amt"]
     schedule_p = compute_ca_schedule_p(signed_taxable, out["line_31"], filing_status,
-        amt["exemption"][key], amt["phaseout_start"][key], adj, iso_bargain_element)
+        amt["exemption"][key], amt["phaseout_start"][key], adj, iso_bargain_element,
+        tmt_rate=amt["tmt_rate"], phaseout_rate=amt["phaseout_rate"])
+    if credits is not None:
+        from agents.lib.tax_computations.state.ca_credits import compute_ca_credit_order
+        paper = compute_ca_credit_order(regular_tax=out["line_31"],
+            exemption_credits=out["line_32"], tentative_minimum_tax=schedule_p["ca_tmt"],
+            form540_line35=out["line_35"],
+            dependent_care=out["line_40"], renters_credit=out["line_46"], tax_year=tax_year,
+            new_deferral_credit=schedule_p["schedule_p_carryforward"], **credits)
+        out.update({key: paper[key] for key in ("line_43", "line_44", "line_45")})
+        out["credit_workpaper"] = paper
+        out["ftb_3804_cr"] = paper["ftb_3804_cr"]
+        schedule_p.update({key: value for key, value in paper["ftb_3510"].items()
+                           if not key.startswith("line_")})
+        schedule_p["ftb_3510"] = paper["ftb_3510"]
+    else:
+        out.update(credit_workpaper=None, ftb_3804_cr=None)
+        schedule_p["ftb_3510"] = None
+    out["line_47"] = round(sum(out[f"line_{n}"] for n in (40, 43, 44, 45, 46)), 2)
+    out["line_48"] = round(max(0.0, out["line_35"] - out["line_47"]), 2)
     out["line_61"] = schedule_p["ca_amt"]
     surcharge = state_law.get("mental_health_surcharge")
     if not isinstance(surcharge, dict):

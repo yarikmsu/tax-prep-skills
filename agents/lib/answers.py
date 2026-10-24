@@ -180,6 +180,13 @@ def _ca_amt_credit_needed(inputs: _Inputs) -> bool:
                  or _amount(inputs.prior_year.get("ca_amt_credit_carryforward")) > 0))
 
 
+def _ca_ptet_credit_needed(inputs: _Inputs) -> bool:
+    facts = inputs.profile.get("ca_credits") or {}
+    return _ca_return_needed(inputs) and bool(
+        inputs.flags.get("ca_has_ptet_credit") or inputs.prior_year.get("ca_ptet_credit_carryovers")
+        or (isinstance(facts, dict) and facts.get("ptet_current")))
+
+
 def _ca_refund_worksheet_needed(inputs: _Inputs) -> bool:
     return (_ca_return_needed(inputs) and (inputs.flags.get("has_1099g_state_refund") is True
             or _get_path(inputs.result, "form_1040.taxable_state_refund") is not None))
@@ -383,12 +390,21 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
     RequiredAnswer(
         id="ca_amt_credit_worksheet",
         kind=FACT,
-        question="From the worked FTB 3510, what CA AMT credit is available and "
-                 "ALLOWABLE this year, including a worked zero? Preserve the "
-                 "available amount less the allowable credit plus new ISO credit for rollover.",
+        question="What qualified opening CA AMT credit is reconciled to the prior return, "
+                 "including a worked zero? Confirm ca_credits.amt_opening_confirmed. "
+                 "The engine computes FTB3510 allowable credit and the remaining carryforward.",
         asked_by="tax-compute state-return.md",
         required_when="a CA return has a prior-year AMT credit flag or carryforward",
         when=_ca_amt_credit_needed,
+    ),
+    RequiredAnswer(
+        id="ca_ptet_owner_credits", kind=FACT,
+        question="Confirm CA PTET direct individual ownership, election/payment eligibility, "
+                 "spouse allocation, reported K-1 credit sources and origin-year carryovers. "
+                 "Record ca_credits.ptet_eligibility_confirmed and ptet_owner_type.",
+        asked_by="tax-setup interview.md / tax-compute state-return.md",
+        required_when="a CA return has owner PTET credits or carryovers",
+        when=_ca_ptet_credit_needed,
     ),
     RequiredAnswer(
         id="document_set_complete",
