@@ -14,6 +14,11 @@ rule visible; the modifying-templates section links here.
 a renamed field shows up in `tests/test_pdf_render.py`, not on a return.
 
 ## The suite
+- State withholding (`test_state_withholding_routes.py`) ties CA W-2,
+  1099/W-2G and Forms 592-B/593 components separately, and NY State/NYC/Yonkers
+  totals under either return variant. Other-state breakdowns survive record
+  assembly, must sum, and cannot hide a computed state's payment. Generic
+  estimates and genuinely external returns remain advisory.
 - California scope (`test_ca_scope.py`) checks each blocking situation, state
   applicability, unanswered screening and explicit acknowledgements. Tie-out
   checks protect taxable Social Security/refund subtractions even if the CA

@@ -33,13 +33,13 @@ below; they are not included in those totals, and some remain unmeasured.
   by someone who does not live there, whose Yonkers tax (Form Y-203) is not
   modeled on a joint return. Accepting a limitation at the gate clears none of
   them.
-- **A California or New York return with that state's tax withheld on a 1099
-  or W-2G is refused at the tie-out**, a pension's 1099-R among them, and so is
-  New York City or Yonkers tax withheld on a 1099-R or W-2G. The toolkit does
-  not route that withholding to Form 540 or IT-201 yet, and nothing waives it:
-  the whole return, federal included, has to be prepared elsewhere until it
-  does. So is a Form 1099-DA reporting a creator's first sale of an NFT (box
-  11c). Neither is counted in the figures below.
+- **A Form 1099-DA reporting a creator's first sale of an NFT (box 11c)
+  is refused at tie-out.** It is not counted in the figures below. California
+  and New York 1099/W-2G withholding now has routes, including NYC/Yonkers
+  locality totals and CA Forms 592-B/593. An old unresolved withholding
+  record must be re-read and routed before the gate can pass. Other-state
+  payments carry a state-by-state breakdown and an advisory; a computed
+  state's payment placed there fails the gate.
 
 ## The blocks, measured
 
@@ -141,7 +141,7 @@ prepared elsewhere; acknowledgement does not compute the line:
 - PTET credits/carryovers (`ca_ptet_credit`), the AMT credit (`ca_amt_credit`),
   and other credit carryovers (`ca_other_credit_carryover`). An acknowledged
   AMT-credit case still needs a worked FTB 3510 and a preserved carryforward.
-- Payments beyond W-2 withholding (`ca_nonw2_payments`), an overpayment applied
+- Estimated, extension and applied CA payments (`ca_nonw2_payments`), an overpayment applied
   forward (`ca_overpayment_forward`), use tax (`ca_use_tax`), and a coverage
   penalty (`ca_coverage_penalty`).
 

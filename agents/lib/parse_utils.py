@@ -616,13 +616,23 @@ def classify_document(text: str) -> str:
               If None or empty, returns "unknown".
 
     Returns one of: w2, 1099-int, 1099-div, 1099-b, 1099-r, 1099-sa,
-    1099-nec, 1099-misc, 1099-k, 3921, 3922, brokerage_statement, foreign_bank,
+    1099-nec, 1099-misc, 1099-k, ca-592b, ca-593, 3921, 3922, brokerage_statement, foreign_bank,
     tax_return, unknown.
     """
     if not text:
         return "unknown"
 
     text_upper = text.upper()
+
+    # These statements can refer to one another. Prefer the statement's own
+    # title over a form number appearing in its instructions or attachments.
+    ca_statement_titles = {
+        "ca-592b": "RESIDENT AND NONRESIDENT WITHHOLDING TAX STATEMENT",
+        "ca-593": "REAL ESTATE WITHHOLDING STATEMENT",
+    }
+    for doc_type, title in ca_statement_titles.items():
+        if title in text_upper:
+            return doc_type
 
     patterns = {
         # Forms 3921/3922 FIRST: their keywords are maximally specific, while
@@ -636,6 +646,8 @@ def classify_document(text: str) -> str:
                  "TRANSFER OF STOCK ACQUIRED THROUGH AN EMPLOYEE STOCK PURCHASE",
                  "FORM 3922"],
         "w2": ["WAGE AND TAX STATEMENT", "FORM W-2"],
+        "ca-592b": ["FORM 592-B"],
+        "ca-593": ["FORM 593"],
         "1099-int": ["INTEREST INCOME", "FORM 1099-INT"],
         "1099-div": ["DIVIDENDS AND DISTRIBUTIONS", "FORM 1099-DIV"],
         "1099-b": ["PROCEEDS FROM BROKER", "FORM 1099-B", "COST BASIS"],

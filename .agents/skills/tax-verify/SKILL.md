@@ -292,8 +292,9 @@ including 47-58:
 | 58 | **Total city / Yonkers / MCTMT** | new_york_it201.line_58_total_city_and_yonkers |
 | 59 | Sales or use tax | new_york_it201.line_59_sales_or_use_tax |
 | 60 | Total taxes | new_york_it201.line_60_total_taxes |
-| 72 | NYS withholding (W-2 box 17) | new_york_it201.refundable_credits_and_payments.line_72_state_withholding |
-| 73 | NYC withholding (W-2 box 19) | new_york_it201.refundable_credits_and_payments.line_73_city_withholding |
+| 72 | NYS withholding (W-2 and 1099/W-2G) | new_york_it201.refundable_credits_and_payments.line_72_state_withholding |
+| 73 | NYC withholding (W-2 and 1099/W-2G local tax) | new_york_it201.refundable_credits_and_payments.line_73_city_withholding |
+| 74 | Yonkers withholding (W-2 and 1099/W-2G local tax) | new_york_it201.refundable_credits_and_payments.line_74_yonkers_withholding |
 | 76 | Total payments | new_york_it201.line_76_total_payments |
 | 78 | Refund | new_york_it201.line_78_refund |
 | 80 | Amount owed | new_york_it201.line_80_amount_owed |

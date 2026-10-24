@@ -251,6 +251,8 @@ AA57 finds why.
   quarters is the only guard. Found by the review that recorded Y2 as shipped.
 
 - **AA60 (P1, S): Route CA and NY 1099 state withholding.**
+  Implementation: [PR #18](https://github.com/yarikmsu/tax-prep-skills/pull/18),
+  open for review; not merged. Depends on AA68 ([PR #17](https://github.com/yarikmsu/tax-prep-skills/pull/17)).
   Only NC's 1099 state withholding has a ledger category. The CA and NY
   categories carry W-2 box 17: `/tax-compute`'s state reference takes CA
   withholding from box 17 (`references/state-return.md`, step 10), and

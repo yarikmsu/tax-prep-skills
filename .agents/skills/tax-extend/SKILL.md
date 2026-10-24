@@ -66,7 +66,8 @@ Work down this ladder and TELL the user which rung was used:
    - Federal extension payment = line 37 amount owed (line 24 total tax −
      line 33 total payments), floored at $0.
    - CA payment (if `california_540` computed) = `ca_total_tax` −
-     (`ca_withholding_box17` + CA estimates paid), floored at $0.
+     (`ca_withholding_box17` + `ca_withholding_1099` +
+     `ca_withholding_592b_593` + CA estimates paid), floored at $0.
    - NY payment (if `new_york_it201` computed) = `line_80_amount_owed`, which
      is already line 60's total taxes less line 76's total payments. **Line 60,
      not line 46** — the New York balance a taxpayer must pay to hold the

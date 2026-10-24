@@ -344,7 +344,7 @@ def attachment_checklist(result: dict) -> list:
             "the payment and refund addresses are DIFFERENT PO boxes; "
             "confirm the current addresses on ftb.ca.gov.")
         lines.append(
-            "CA 540 attachments: W-2s (Copy 2), Schedule CA (540) when "
+            "CA 540 attachments: W-2s (Copy 2) and W-2G/1099/592-B/593 forms showing CA withholding, Schedule CA (540) when "
             "present, and a COMPLETE copy of the federal return whenever "
             "any federal schedule other than A or B was filed — for this "
             "toolkit's returns that is almost always.")
@@ -352,6 +352,8 @@ def attachment_checklist(result: dict) -> list:
             ca = result.get("california_540") or {}
             ca_tax = _field_num(ca, "ca_total_tax", "ca_total_tax")
             ca_paid = (_field_num(ca, "ca_withholding_box17", "ca_wh")
+                       + _field_num(ca, "ca_withholding_1099", "ca_1099_wh")
+                       + _field_num(ca, "ca_withholding_592b_593", "ca_other_wh")
                        + _field_num(ca, "ca_excess_sdi_credit", "ca_sdi"))
             if ca_tax > ca_paid:
                 lines.append(

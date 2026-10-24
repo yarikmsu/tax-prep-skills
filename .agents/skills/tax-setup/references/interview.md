@@ -528,7 +528,7 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
 - For each CA entity in `flags.k1_states`, did it elect PTET and report a credit? Also ask about unused FTB 3804-CR carryovers even without a current CA K-1/election → `ca_has_ptet_credit` if either applies. The credit is not a payment.
 - A CA AMT credit from an earlier return, including one prepared elsewhere? → `ca_has_amt_credit`. A nonzero `prior_year.ca_amt_credit_carryforward` sets the situation at the gate even if this answer is false. If acknowledged, work FTB 3510 and record its available and allowable amounts; preserve the remainder for rollover.
 - Any other unused California credit carryover? → `ca_has_other_credit_carryover`.
-- Any CA estimated or extension payment, prior overpayment applied to this year, payment allocated by an estate/trust/S corporation on K-1, or Forms 592-B/593 withholding? → `ca_has_nonw2_payments`.
+- Any CA estimated or extension payment, prior overpayment applied to this year, payment allocated by an estate/trust/S corporation on K-1? → `ca_has_nonw2_payments`. W-2/1099/W-2G and Forms 592-B/593 withholding have supported parse routes and do not trigger this flag; ask for those statements separately. Re-answer an older true flag if withholding alone set it.
 - Will any California overpayment be applied to next year? → `ca_applies_overpayment_forward`.
 - Any California use tax due on untaxed purchases? Work the covered-year use-tax instructions to determine the answer → `ca_owes_use_tax`.
 - Any health-coverage penalty after working FTB 3853's coverage and exemption rules? → `ca_has_coverage_penalty`.
