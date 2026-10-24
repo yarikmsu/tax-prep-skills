@@ -1646,6 +1646,17 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
         raise ValueError("other CA adjustments contradict their screening answer")
     if other_flag and not confirmed:
         raise ValueError("confirm the separately worked other CA adjustments, including a worked zero")
+    # CA does not conform to section 223: the federal deduction (Form 8889
+    # line 13) comes back in full, and the employer add-back is line 9's
+    # W-2 box 12 code W amount, so the typed figure must agree with it.
+    hsa = result.get("form_8889_hsa")
+    if hsa is not None and not isinstance(hsa, dict):
+        raise ValueError("form_8889_hsa must be an object")
+    hsa_deduction = _ca_input((hsa or {}).get("line_13_hsa_deduction", 0), "Form 8889 line 13 HSA deduction")
+    if hsa:
+        employer = _ca_input(hsa.get("line_9_employer_contributions", 0), "Form 8889 line 9")
+        if abs(_ca_input(adjustments.get("hsa_employer_addback"), "HSA employer addback") - employer) > .005:
+            raise ValueError("hsa_employer_addback must equal Form 8889 line 9 employer contributions")
     state = tax_law.get("state") or {}
     law_year = tax_law.get("tax_year", year)
     if state.get("code") != "CA" or type(law_year) is not int or law_year != year:
@@ -1654,6 +1665,7 @@ def derive_ca_schedule_ca(ledger: "list[LedgerRecord]", result: dict, profile: d
     built = compute_ca_schedule_ca(tax_year=year, investment_records=investment_records,
         fund_asset_minimum=schedule.get("fund_asset_minimum"), taxable_social_security=ss,
         taxable_state_refund=refund, other_additions=other_add, other_subtractions=other_sub,
+        hsa_deduction_addback=hsa_deduction,
         **{k: adjustments.get(k) for k in ("hsa_employer_addback", "hsa_interest_addback", "hsa_dividend_addback")})
     for key, field in (("ca_has_us_obligation_income", "has_us_obligation_income"),
                        ("ca_has_nonca_muni_interest", "has_nonca_muni_interest")):

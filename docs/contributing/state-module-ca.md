@@ -181,7 +181,10 @@ workpaper preserves the qualification route, and special-issuer worksheets or
 provider certifications also produce a checked disclosure on the return.
 
 The builder replaces `schedule_ca_adjustments`' derived common fields and
-totals. Existing HSA components remain separately worked inputs;
+totals. The employer and earnings HSA components remain separately worked
+inputs, the employer one held to Form 8889 line 9; the federal HSA deduction
+(Form 8889 line 13) is derived as `hsa_deduction_addback` (Section C line 13,
+column B), and HSA earnings join line 2 column C;
 `other_additions`/`other_subtractions` hold other acknowledged worksheets and
 require `other_adjustments_confirmed` for a positive amount or a positive
 other-adjustment screen. Never migrate an old aggregate total by subtraction.

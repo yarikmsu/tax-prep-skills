@@ -72,7 +72,11 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
      nonexempt municipal interest/DIV box 12 add on line 2 column C. Fund asset
      qualification uses fetched `state.schedule_ca.fund_asset_minimum` for each
      quarter, independently of the income percentage. Never type these totals.
-   - HSA add-backs (employer contributions + HSA earnings) — CA non-conformity
+   - HSA add-backs (employer contributions + HSA earnings) — CA non-conformity.
+     The employer add-back must equal Form 8889 line 9 (W-2 box 12 code W).
+     The builder also adds back the federal HSA deduction from Form 8889
+     line 13 (Section C line 13, column B) and puts HSA earnings in line 2
+     column C; never type either.
    - Subtract the federally taxable Social Security on Form 1040 line 6b,
      recording `schedule_ca_adjustments.taxable_social_security_subtraction`.
      Do not subtract the gross SSA-1099 benefits.

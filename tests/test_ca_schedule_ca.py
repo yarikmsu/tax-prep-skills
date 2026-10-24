@@ -39,8 +39,8 @@ def inputs(record=None, **changes):
     row = investment() if record is None else record
     data = dict(tax_year=2025, investment_records=[{k:row[k] for k in ('key_boxes','ca_investments')}],
         fund_asset_minimum=.5, taxable_social_security=1700, taxable_state_refund=300,
-        hsa_employer_addback=10, hsa_interest_addback=20, hsa_dividend_addback=30,
-        other_additions=40, other_subtractions=50)
+        hsa_employer_addback=10, hsa_deduction_addback=0, hsa_interest_addback=20,
+        hsa_dividend_addback=30, other_additions=40, other_subtractions=50)
     data.update(changes)
     return data
 
@@ -48,11 +48,11 @@ def inputs(record=None, **changes):
 def test_printed_schedule_ca_columns_and_totals():
     # Line2B: Treasury200 + eligible fund1000*.8 =1000. The second
     # fund misses a single quarter and contributes no subtraction.
-    # Line2C: NY400 + eligible600*.25 + ineligible400 =950.
-    # Additions950+HSA60+other40=1050; subtractions1000+SS1700+refund300+other50=3050.
+    # Line2C: NY400 + eligible600*.25 + ineligible400 + HSA earnings 20+30 =1000.
+    # Additions1000+HSA employer10+other40=1050; subtractions1000+SS1700+refund300+other50=3050.
     out = compute_ca_schedule_ca(**inputs())
     assert out['line_2_column_b'] == 1000
-    assert out['line_2_column_c'] == 950
+    assert out['line_2_column_c'] == 1000
     assert out['total_additions'] == 1050 and out['total_subtractions'] == 3050
     assert [r['qualified'] for r in out['investment_workpaper']] == [True, False]
 
@@ -165,6 +165,19 @@ def prepared():
         other_additions=40,other_subtractions=50,other_adjustments_confirmed=True)
     ledger = T.load_ledger({'records':[investment()]})
     return p, result, ledger
+
+
+def test_the_federal_hsa_deduction_is_added_back_from_form_8889():
+    # Schedule CA Section C line 13: CA does not conform, so Form 8889 line 13's
+    # 4,000 deduction goes to column B in full; 1050 + 4000 = 5050 additions.
+    p, result, ledger = prepared()
+    result['form_8889_hsa'] = {'line_9_employer_contributions': 10, 'line_13_hsa_deduction': 4000}
+    built = B.build_california(result, {'state': law()}, ledger, p)
+    assert built['line_16'] == 5050
+    # Line 9 is the W-2 box 12 code W amount the employer add-back restates.
+    result['form_8889_hsa']['line_9_employer_contributions'] = 3000
+    with pytest.raises(B.Blocked, match='line 9'):
+        B.build_california(result, {'state': law()}, ledger, p)
 
 
 def test_builder_derives_common_adjustments_and_checks_the_workpaper():

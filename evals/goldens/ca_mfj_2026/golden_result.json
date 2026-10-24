@@ -219,6 +219,7 @@
       "hsa_employer_addback": 0,
       "hsa_interest_addback": 0,
       "hsa_dividend_addback": 0,
+      "hsa_deduction_addback": 0,
       "total_additions": 0,
       "total_subtractions": 0,
       "taxable_social_security_subtraction": 0,

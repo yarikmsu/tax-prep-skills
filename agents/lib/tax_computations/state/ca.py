@@ -151,7 +151,8 @@ def validate_ca_investments(raw, boxes: dict) -> dict:
 def compute_ca_schedule_ca(
     *, tax_year: int, investment_records: list, fund_asset_minimum,
     taxable_social_security: float, taxable_state_refund: float,
-    hsa_employer_addback: float, hsa_interest_addback: float, hsa_dividend_addback: float,
+    hsa_employer_addback: float, hsa_deduction_addback: float,
+    hsa_interest_addback: float, hsa_dividend_addback: float,
     other_additions: float, other_subtractions: float,
 ) -> dict:
     """TY2025 ScheduleCA Part I lines2/6 and SectionB line1, without defaults."""
@@ -209,6 +210,7 @@ def compute_ca_schedule_ca(
             workpaper.append({"fund_id": row["fund_id"], "qualified": qualified, "qualification_method": method,
                               "us_subtraction": subtraction, "municipal_addition": addition})
     out: dict = {"hsa_employer_addback": _ca_input(hsa_employer_addback, "HSA employer addback"),
+           "hsa_deduction_addback": _ca_input(hsa_deduction_addback, "HSA deduction addback"),
            "hsa_interest_addback": _ca_input(hsa_interest_addback, "HSA interest addback"),
            "hsa_dividend_addback": _ca_input(hsa_dividend_addback, "HSA dividend addback"),
            "us_obligation_interest_subtraction": round(us, 2),
@@ -225,9 +227,12 @@ def compute_ca_schedule_ca(
            "has_us_obligation_income": us + raw_us > 0,
            "has_nonca_muni_interest": muni_add + fund_add > 0}
     out["line_2_column_b"] = round(us + fund_sub, 2)
-    out["line_2_column_c"] = round(muni_add + fund_add, 2)
-    out["total_additions"] = round(sum(out[k] for k in ("hsa_employer_addback", "hsa_interest_addback",
-        "hsa_dividend_addback", "other_additions")) + out["line_2_column_c"], 2)
+    # Line 2 column C also takes "interest or other earnings earned from an
+    # HSA"; Section C line 13 column B adds back the federal HSA deduction.
+    out["line_2_column_c"] = round(muni_add + fund_add + out["hsa_interest_addback"]
+                                   + out["hsa_dividend_addback"], 2)
+    out["total_additions"] = round(sum(out[k] for k in ("hsa_employer_addback", "hsa_deduction_addback",
+        "other_additions")) + out["line_2_column_c"], 2)
     out["total_subtractions"] = round(sum(out[k] for k in ("taxable_social_security_subtraction",
         "taxable_state_refund_subtraction", "other_subtractions")) + out["line_2_column_b"], 2)
     for key in ("line_2_column_b", "line_2_column_c", "total_additions", "total_subtractions"):
