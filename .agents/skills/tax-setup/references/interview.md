@@ -570,7 +570,17 @@ work the federal tax-benefit worksheet before subtracting the taxable part.
   distinct; never infer jurisdiction from the mailing address. Store opening
   CA applied credit only in `prior_year.ca_estimated_payments_applied`, not in
   this list. Confirm allocations when filing status/account ownership changed,
-  including FTB notification or the required joint-return explanation. Set
+  including FTB notification or the required joint-return explanation. Before
+  asking for reconciliation, run
+  `sh agents/lib/run.sh -m agents.lib.return_builder --review-ca-payments`.
+  Present its CA payment count and total for the credited tax year, showing
+  new payments and the opening applied credit separately; exclude other
+  states/years. Record the figures under **[ca_state_payments]** in `answers.md`.
+  For every `matching_record_groups` entry (zero-based list positions), record
+  a question in `answers.md` about whether those rows are distinct payments,
+  and the source-confirmed resolution. Matching state, credited year, kind,
+  person, date and amount is a prompt, not a refusal or permission to delete
+  either row: two identical payments can both be real. Set
   `estimated_payments.ca_verified: true` only after reviewing the claimable
   amount and destination of each source. An explicit no must agree with zero
   CA records and zero opening credit. Document **[ca_state_payments]**.

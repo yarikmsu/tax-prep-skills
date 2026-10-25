@@ -99,6 +99,19 @@ has reconciled the claimable amounts, tax-year allocation and ownership with
 source confirmations/MyFTB. A no must agree with the source amounts. Neither
 an unknown flag nor an unverified payment is zero.
 
+Before asking for that confirmation, run
+`sh agents/lib/run.sh -m agents.lib.return_builder --review-ca-payments`.
+It reads only the profile and shows the credited tax year, positive CA payment
+count and total claimed, including the separately displayed opening applied
+credit. Other states/years do not enter that count or total. It uses the same
+source validation and summation as the builder, without setting `ca_verified`
+or recording a validation receipt. Record the figures in `answers.md` under
+`[ca_state_payments]`. Its matching-row groups use zero-based list positions,
+not source/account identifiers. For positive rows sharing state, credited
+year, kind, person, date and cent-rounded amount, record a question and the
+source-confirmed resolution there. Equal payments can both be real; matching
+rows alone neither refuse the return nor justify dropping a payment.
+
 `prior_year.ca_estimated_payments_applied` carries the prior Form 540 line 98
 and is added once, outside the payment list. It is distinct from the federal
 applied credit and from new cash payments. Line 72 sums only current-year CA

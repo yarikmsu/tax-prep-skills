@@ -87,6 +87,80 @@ def test_positive_payments_require_source_and_ownership_confirmation(field, bad)
         B.build_california(result, {"state": law()}, [], p)
 
 
+def test_review_shows_the_credited_year_claim_before_confirmation():
+    # 3 new payments: 1,000 + 200 + 300 = 1,500; opening 500 gives 2,000.
+    # NY700, CA2024's900 and a zero row contribute neither count nor dollars.
+    p, _ = paying([payment(), payment('extension', kind='extension', amount=200),
+        payment('k1', kind='k1_estimate', amount=300, date=None),
+        payment('ny', state='NY', amount=700), payment('old', tax_year=2024, amount=900),
+        payment('zero', amount=0)], opening=500)
+    p.update(tax_year=2025, filing_status='Single')
+    p['estimated_payments']['ca_verified'] = False
+    before = copy.deepcopy(p)
+    report = B.ca_payment_review(p)
+    assert report['tax_year'] == 2025 and report['payment_count'] == 3
+    assert report['estimates'] + report['extension'] + report['k1_allocations'] == 1500
+    assert report['prior_applied'] == 500 and report['total'] == 2000
+    assert report['external_record_count'] == 2
+    assert p == before
+    with pytest.raises(ValueError, match='ca_verified'):
+        B._ca_payments(p, 2025, 'single')
+    p['estimated_payments']['ca_verified'] = True
+    assert B._ca_payments(p, 2025, 'single')[0]['total'] == report['total']
+
+
+def test_matching_rows_raise_questions_without_rejecting_legitimate_equal_payments():
+    records = [payment('a', amount=1000.001), payment('b', amount=1000.002)]
+    # One change in any matching field means a distinct group, including rows
+    # for another state/year. Unknown dates still prompt a question.
+    for field, value in [('state', 'NY'), ('tax_year', 2024), ('kind', 'extension'),
+                         ('person', 'joint'), ('date', None), ('amount', 1001)]:
+        records.append(payment(field, **{field: value}))
+    records.append(payment('unknown', date=None))
+    # Two zero rows match each other on every field and still claim nothing.
+    records += [payment('zero-a', amount=0), payment('zero-b', amount=0)]
+    p, _ = paying(records)
+    p.update(tax_year=2025, filing_status='Single')
+    report = B.ca_payment_review(p)
+    assert report['matching_record_groups'] == [[0, 1], [6, 8]]
+    assert len(report['questions']) == 2
+    assert all('answers.md' in q and '[ca_state_payments]' in q for q in report['questions'])
+    # All legitimate equal payments remain claimable after account reconciliation.
+    assert B._ca_payments(p, 2025, 'single')[0]['total'] == 7001
+
+
+def test_review_cli_needs_only_profile_and_never_certifies_or_changes_the_return(tmp_path, capsys):
+    p, _ = paying([payment('opaque-source-a'), payment('opaque-source-b')], opening=500)
+    p.update(tax_year=2025, filing_status='Single')
+    p['estimated_payments']['ca_verified'] = None
+    write_secure(tmp_path / 'taxpayer_profile.json', json.dumps(p))
+    before = (tmp_path / 'taxpayer_profile.json').read_bytes()
+    assert B._main(['--workspace', str(tmp_path), '--review-ca-payments']) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    assert report['payment_count'] == 2 and report['total'] == 2500
+    assert report['matching_record_groups'] == [[0, 1]]
+    assert 'opaque-source' not in output
+    assert (tmp_path / 'taxpayer_profile.json').read_bytes() == before
+    assert not (tmp_path / 'result.json').exists()
+    assert not (tmp_path / 'validation_receipt.json').exists()
+    # The same readable workspace, so only the mode conflict can refuse it.
+    assert B._main(['--workspace', str(tmp_path), '--review-ca-payments', '--check']) == 1
+    assert 'not allowed with' in capsys.readouterr().err
+    assert not (tmp_path / 'validation_receipt.json').exists()
+
+
+def test_review_keeps_source_validation_and_explicit_zero(tmp_path, capsys):
+    p, _ = paying([], opening=0)
+    p.update(tax_year=2025, filing_status='Single')
+    p['flags']['ca_has_nonw2_payments'] = False
+    assert B.ca_payment_review(p)['total'] == 0
+    p['estimated_payments']['state'] = [payment(amount=float('nan'))]
+    write_secure(tmp_path / 'taxpayer_profile.json', json.dumps(p))
+    assert B._main(['--workspace', str(tmp_path), '--review-ca-payments']) == 1
+    assert 'finite nonnegative' in capsys.readouterr().err
+
+
 def test_screens_cannot_silently_erase_known_payments_or_invent_an_unanswered_zero():
     p, result = paying()
     for value in (None, False, "yes"):
