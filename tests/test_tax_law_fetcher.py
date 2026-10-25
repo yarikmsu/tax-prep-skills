@@ -1481,11 +1481,72 @@ class TestSetFigureValidatesBrackets:
 
     def test_irmaa_tiers_need_ascending_thresholds(self, tmp_path):
         _fresh_cache(tmp_path)
-        good = [{"magi_threshold": 106000, "annual_surcharge_per_person": 888},
-                {"magi_threshold": 133000, "annual_surcharge_per_person": 2220}]
+        good = _synthetic_irmaa_tiers(5)
         _set(tmp_path, "federal.irmaa.tiers.single", good)
         with pytest.raises(TaxLawSetError, match="ascending"):
             _set(tmp_path, "federal.irmaa.tiers.single", list(reversed(good)))
+
+
+def _synthetic_irmaa_tiers(count):
+    # Synthetic boundaries/premiums, not a published year's amounts.
+    return [{"magi_threshold": 100000 + i * 50000,
+             "annual_surcharge_per_person": (i + 1) * 1000}
+            for i in range(count)]
+
+
+class TestSetFigureUsesThePlanningIrmaaValidator:
+
+    @pytest.mark.parametrize("year,status,count", [
+        (2017, "single", 4), (2018, "single", 4), (2018, "mfs", 1),
+        (2019, "single", 5), (2019, "mfs", 2), (2026, "mfj", 5),
+    ])
+    def test_uses_the_cache_premium_year_and_status(self, tmp_path, year, status, count):
+        _fresh_cache(tmp_path, year=year)
+        tiers = _synthetic_irmaa_tiers(count)
+        _set(tmp_path, f"federal.irmaa.tiers.{status}", tiers, year=year)
+        assert _read(tmp_path, year)["federal"]["irmaa"]["tiers"][status] == tiers
+
+    @pytest.mark.parametrize("year", [2018, 2019, 2028])
+    def test_accepts_the_years_half_thousand_boundary(self, tmp_path, year):
+        _fresh_cache(tmp_path, year=year)
+        tiers = _synthetic_irmaa_tiers(4 if year == 2018 else 5)
+        tiers[-1]["magi_threshold"] += 500
+        _set(tmp_path, "federal.irmaa.tiers.mfj", tiers, year=year)
+
+    @pytest.mark.parametrize("path", [
+        "federal.irmaa.tiers.single", "federal.irmaa.tiers", "federal.irmaa",
+    ])
+    @pytest.mark.parametrize("defect,match", [
+        ("missing_row", "complete statutory"), ("first_dollar", "printed rounded"),
+        ("flat_surcharge", "increase strictly"), ("zero_surcharge", "nonpositive"),
+    ])
+    def test_rejects_malformed_leaf_and_block_writes_without_changes(
+            self, tmp_path, path, defect, match):
+        cache = _fresh_cache(tmp_path)
+        before = cache.read_bytes()
+        data = _read(tmp_path)
+        tiers = _synthetic_irmaa_tiers(5)
+        if defect == "missing_row":
+            tiers.pop()
+        elif defect == "first_dollar":
+            tiers[0]["magi_threshold"] += 1
+        elif defect == "flat_surcharge":
+            tiers[1]["annual_surcharge_per_person"] = tiers[0]["annual_surcharge_per_person"]
+        else:
+            tiers[0]["annual_surcharge_per_person"] = 0
+        data["federal"]["irmaa"]["tiers"]["single"] = tiers
+        value = data
+        for part in path.split("."):
+            value = value[part]
+        with pytest.raises(TaxLawSetError, match=match):
+            _set(tmp_path, path, value)
+        assert cache.read_bytes() == before
+
+    def test_freshness_audit_catches_a_hand_edited_incomplete_table(self):
+        from agents.lib.tax_law_fetcher import validate_cache
+        data = create_empty_tax_law(2026)
+        data["federal"]["irmaa"]["tiers"]["mfs"] = _synthetic_irmaa_tiers(1)
+        assert any("complete statutory 2-tier" in p for p in validate_cache(data, 2026))
 
 
 class TestSetFigureCrossChecksTheStatuses:

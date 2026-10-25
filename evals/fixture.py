@@ -209,9 +209,13 @@ def tax_law() -> dict:
     # anything. Invented like the rest, and none of it moves the golden.
     fed["child_tax_credit"].update({"amount_per_child": 2200, "refundable_limit": 1700})
     fed["child_tax_credit"]["phase_out_start"] = {"single": 200000, "mfj": 400000}
+    # Complete synthetic tables: the freshness gate also checks planning's
+    # statutory row counts. These amounts do not claim to be CMS's table.
     fed["irmaa"]["tiers"] = {
-        "single": [{"magi_threshold": 106000, "annual_surcharge_per_person": 1000}],
-        "mfj": [{"magi_threshold": 212000, "annual_surcharge_per_person": 1000}]}
+        status: [{"magi_threshold": base + i * 50000,
+                  "annual_surcharge_per_person": (i + 1) * 1000}
+                 for i in range(2 if status == "mfs" else 5)]
+        for status, base in (("single", 106000), ("mfj", 212000), ("mfs", 106000))}
     fed["ira_limits"].update({"contribution_limit": 7500, "catch_up_50_plus": 1100})
     fed["ira_limits"]["traditional_deduction_phaseout"] = {
         "mfj_covered": {"start": 129000, "end": 149000},

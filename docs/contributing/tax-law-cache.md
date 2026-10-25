@@ -22,7 +22,9 @@ map goes stale in a way the schema cannot.
   half-thousand boundaries are valid; indexed years use whole thousands.
   HOH/QSS use `single`; MFS requires explicit lived-apart evidence and otherwise
   uses `mfs`, never an unexamined unmarried default. The cache year names the
-  premium year. Projection loads its income-year-plus-two cache separately;
+  premium year. `set` and the freshness audit apply the same year- and
+  status-aware validator as the planning reader, including inside block writes.
+  Projection loads its income-year-plus-two cache separately;
   current law is not a verified future-year estimate.
 - `federal.salt_cap` — `{amount, mfs_amount}`
 - `state.{brackets,standard_deduction}`
