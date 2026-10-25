@@ -307,11 +307,12 @@ If one broker sale covers several imported partial fills, use the optional
 `fill_groups` links in that contract and point its form at the group ID. Obtain
 the single-sale confirmation; do not combine similar-looking trades. Matching
 still runs on the original events, and group-level resolutions are refused.
-A form with box 11a checked for qualifying stablecoins reports a year of one
-coin's sales: list them from the broker's annual statement in
-`optional_aggregates` and point the form at that group, copying box 11b as
-`transactions` (`docs/contributing/crypto-accounts.md`, Optional aggregate
-forms). A specified-NFT aggregate form is prepared externally.
+A form with box 11a checked reports a year of sales: one qualifying
+stablecoin's, or every specified NFT's (box 1b "Specified NFTs"). List them
+from the broker's annual statement in `optional_aggregates` with the same
+method and point the form at that group, copying box 11b as `transactions`
+(`docs/contributing/crypto-accounts.md`, Optional aggregate forms). A
+first-sale NFT form (box 11c) is prepared externally.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
 

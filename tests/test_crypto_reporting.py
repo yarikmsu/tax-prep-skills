@@ -2379,7 +2379,7 @@ def test_an_aggregate_form_may_print_a_date_sold_without_it_being_compared():
 
 
 @pytest.mark.parametrize('change,refusal', [
-    (lambda b: b['optional_aggregates'][0].update(method='specified_nfts'), 'specified-NFT aggregate'),
+    (lambda b: b['optional_aggregates'][0].update(method='specified_nfts'), "box 11a must be 'specified_nfts'"),
     (lambda b: b['optional_aggregates'][0].update(txn_ids=[]), 'must list its disposals'),
     (lambda b: b['optional_aggregates'][0].update(txn_ids=['u1', 'usdc-old']), 'member must be a filing-year'),
     (lambda b: b['optional_aggregates'][0].update(group_id='u1'), 'must not collide'),
@@ -2460,11 +2460,11 @@ def test_a_years_rounding_moves_no_sale_more_than_a_cent(price, count, big, form
     assert (not big or sold['big'] == big) and round(sum(sold.values()), 2) == float(form_total)
 
 
-@pytest.mark.parametrize('method', [None, ['qualifying_stablecoins'], 'specified_nfts'])
+@pytest.mark.parametrize('method', [None, ['qualifying_stablecoins'], 'qualifying_stablecoin', 'collectibles'])
 def test_an_optional_aggregate_must_name_a_supported_method(method):
     block = aggregate_reporting()
     block['optional_aggregates'][0]['method'] = method
-    with pytest.raises(C.CryptoImportError, match='qualifying_stablecoins forms only'):
+    with pytest.raises(C.CryptoImportError, match='names its box 11a method'):
         run(block, USDC)
 
 
@@ -2543,3 +2543,38 @@ def test_a_manual_fill_group_whose_rows_add_to_nothing_does_not_divide_by_zero()
              'manual_disposals': [dict(account_id='A', txn_id='grp', evidence='w')]}
     entry, = resolved(run(block, tx))['broker_reporting']['manual_disposals']
     assert [r['broker_proceeds'] for r in entry['fifo_rows']] == [0.01, 0.01]
+
+
+
+# Specified NFTs: one form reports every NFT sale, box 1b reading "Specified
+# NFTs" (TY2025 Form 1099-DA instructions, box 1b); first-sale proceeds go in
+# box 11c on a form of their own, which still refuses.
+NFTS = [{**event('A', 'ape-buy', 'buy', '2024-02-01', usd=500), 'asset': 'APE1'},
+        {**event('A', 'punk-buy', 'buy', '2025-01-10', usd=300), 'asset': 'PUNK2'},
+        {**event('A', 'ape-sale', 'sell', '2025-05-01', usd=650), 'asset': 'APE1'},
+        {**event('A', 'punk-sale', 'sell', '2025-06-01', usd=280), 'asset': 'PUNK2'}]
+
+
+def nft_aggregate(**changes):
+    nft = form(form_id='da-nft', txn_id='nfts-2025', asset='Specified NFTs', quantity='2', date_sold=None,
+               proceeds=930, optional_method='specified_nfts', transactions=2)
+    block = reporting({**nft, **changes})
+    block['optional_aggregates'] = [dict(account_id='A', group_id='nfts-2025', method='specified_nfts',
+                                         txn_ids=['ape-sale', 'punk-sale'], evidence='nft-annual-statement')]
+    return block
+
+
+def test_a_specified_nft_aggregate_form_reconciles_every_nft_sale():
+    result = resolved(run(nft_aggregate(), NFTS))
+    assert [(r['txn_id'], r['box'], r['proceeds'], r['broker_proceeds']) for r in rows(result)] == [
+        ('punk-sale', 'H', 280, 280), ('ape-sale', 'K', 650, 650)]
+
+
+def test_a_specified_nft_aggregate_form_names_the_method_not_an_asset():
+    result = run(nft_aggregate(asset='APE1'), NFTS)
+    assert any('asset differs' in issue['reason'] for issue in result['broker_reporting']['unresolved'])
+
+
+def test_a_first_sale_nft_aggregate_form_still_refuses():
+    with pytest.raises(C.CryptoImportError, match=r"fills \['primary_sale_proceeds'\]"):
+        run(nft_aggregate(proceeds=0, primary_sale_proceeds=930), NFTS)

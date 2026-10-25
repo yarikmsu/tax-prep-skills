@@ -1448,10 +1448,12 @@ def _stray_evidence(forms_by_txn, accounts, by_txn) -> 'list[dict]':
     return issues
 
 
-# The §1.6045-1(d)(10) optional methods this engine reconciles. A specified-NFT
-# aggregate joins different assets on one form, and its first-sale proceeds go
-# in box 11c, so it is prepared externally.
-_AGGREGATE_METHODS = {'qualifying_stablecoins'}
+# The §1.6045-1(d)(10) optional methods, as box 11a names them. A
+# qualifying-stablecoin form reports one coin; a specified-NFT form reports
+# every NFT sale, so its box 1b names the method rather than one asset. Box
+# 11c's first-sale NFT proceeds still refuse wherever they appear.
+_AGGREGATE_METHODS = {'qualifying_stablecoins', 'specified_nfts'}
+_NFT_AGGREGATE_ASSET = 'SPECIFIED NFTS'
 
 
 def _group_entries(reporting, field: str, keys: 'tuple[str, ...]', kind: str) -> list:
@@ -1484,8 +1486,8 @@ def _fill_group_rows(reporting, by_txn, events):
                                                                        for entry in aggregates]:
         method = entry.get('method')
         if kind == 'optional aggregate' and (not isinstance(method, str) or method not in _AGGREGATE_METHODS):
-            raise CryptoImportError('An optional aggregate reconciles qualifying_stablecoins forms only; a '
-                                    'specified-NFT aggregate form needs external preparation')
+            raise CryptoImportError('An optional aggregate names its box 11a method: qualifying_stablecoins or '
+                                    'specified_nfts')
         account = _account_id(entry['account_id'], f'{kind} account_id')
         group = _account_id(entry['group_id'], f'{kind} group_id')
         evidence = _account_id(entry['evidence'], f'{kind} evidence')
@@ -1502,12 +1504,14 @@ def _fill_group_rows(reporting, by_txn, events):
         if any(member not in by_txn for member in keys):
             raise CryptoImportError(f'Every {kind} member must be a filing-year disposal in that account')
         source = [events[member] for member in keys]
-        if len({e['asset'] for e in source}) != 1 or (method is None and len({e['date'] for e in source}) != 1):
+        if ((method != 'specified_nfts' and len({e['asset'] for e in source}) != 1)
+                or (method is None and len({e['date'] for e in source}) != 1)):
             raise CryptoImportError('A fill group must be one same-asset, same-day broker sale' if method is None
                                     else 'An optional aggregate reports one stablecoin')
         grouped[key] = [row for member in keys for row in by_txn[member]]
         nets = [e['net'] for e in source]
         expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source),
+                         **({'asset': _NFT_AGGREGATE_ASSET} if method == 'specified_nfts' else {}),
                          'net': None if None in nets else sum(nets),
                          'member_nets': {txn: e['net'] for (_, txn), e in zip(keys, source)},
                          **({} if method is None else {'aggregate': method, 'transactions': len(keys)})}
