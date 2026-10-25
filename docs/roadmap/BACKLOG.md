@@ -259,7 +259,13 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   assumptions and basis carry between years, preserve each year's computation
   inputs, and distinguish fetched covered-year law from hypothetical future-law
   assumptions. Show tax, Medicare premiums and distribution effects separately;
-  a future-year forecast must not masquerade as a filing computation.
+  a future-year forecast must not masquerade as a filing computation. A design
+  is proposed in its own pull request and awaits the owner's approval (owner,
+  2026-10-25): a reviewed plan file of up to ten years, the filing year priced
+  by the existing anchored ladder and later years by the same keystone under
+  each year's fetched or explicitly named hypothetical law, Form 8606 basis and
+  balances carried year to year, IRMAA from each premium year's own tiers, and
+  RMDs out of scope.
   Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 - **AA46 (P3, M): Extend YoY reports to multi-year, saved and PDF outputs.**
