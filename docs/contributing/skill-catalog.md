@@ -76,7 +76,11 @@ sold, exchanged or spent because an option was exercised, or from a lot an optio
 exercise bought in any year (`digital_asset_option_exercise`), and specific
 identification of digital-asset lots at any broker or wallet, including standing
 instructions (`crypto_specific_identification`). Acknowledgement does not enable
-FIFO pricing for selected lots. CA's, NC's and WA's own
+FIFO pricing for selected lots. For option exercises, acknowledgement still
+requires the externally reviewed plain USD premium path in
+`crypto-accounts.md`; tie-out rebuilds the normalized source and checks merged
+Form 8949 and Schedule D amounts. Other option treatments remain refused.
+CA's, NC's and WA's own
 rules block only on the state declared in each rule's state metadata, and a test holds this
 list to the registry. New York City's full-year resident tax is
 computed, not blocked; a City resident for only part of the year is refused at compute

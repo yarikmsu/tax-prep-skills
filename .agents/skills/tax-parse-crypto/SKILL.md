@@ -271,6 +271,19 @@ reported: show it to the user and offer `/tax-amend` for that year. A
 `YEAR MOVE` caveat means every import covering the named years must carry the
 same review and corrections; record that in `answers.md` for the next year.
 
+If the option-exercise answer is true, follow the contract's
+**Reviewed option premiums (AA47)** section. Obtain the external scope and
+exercise workpapers before entering `broker_reporting.option_exercise_review`.
+Confirm every account and prior option-acquired lot, the premium's inclusion
+in each source USD amount, and that fees exclude that premium. Never fill
+those answers from a proceeds mismatch. Compensation, section 1256,
+straddles, holding-period adjustments and non-USD premiums refuse this path.
+Record the review and any capability acknowledgement in `answers.md`, and
+immediately run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md`.
+Keep the original normalized source in `crypto_transactions.json`; preserve
+the complete reviewed workpaper in secured `summaries/`. Acknowledgement
+alone cannot complete a return with option-affected gains.
+
 Add `broker_reporting` from the parsed broker forms — the schema, the year
 table and every treatment are in `docs/contributing/crypto-accounts.md`
 (Broker-form reconciliation). Ask the user, for EVERY account with a filing-year
@@ -352,6 +365,8 @@ Update `result.json` from the main session only — never from a delegated sub-t
 4. **`crypto_summary`** ← the result's COMPLETE `crypto_summary` + `needs_basis`.
    Preserve `basis_mode`, `complete`, `unresolved_inputs` and every `reporting_*`
    field; tie-out blocks unresolved account metadata and unrouted reporting. Retain
+   `crypto_summary.option_exercise_review` whenever present; tie-out rebuilds
+   `crypto_transactions.json` and checks the merged rows and amounts. Retain
    the full `account_fifo` and `broker_reporting` workpapers in secured `summaries/`,
    including transfer slices, broker-form figures, evidence and remaining lots.
 5. **Ordinary income**: add `ordinary_income.total` to `form_1040.line_8_schedule1_other`

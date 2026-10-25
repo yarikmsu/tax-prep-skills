@@ -921,6 +921,95 @@ def _digital_asset_rows(result: dict) -> "list[tuple[str, dict]]":
     return rows
 
 
+def _crypto_option_checks(result, source, answer, profile=None):
+    """An acknowledgement is not evidence that option premiums were priced.
+
+    Rebuild the normalized source, then compare actual Form 8949 and Schedule D
+    dollars. A copied completeness flag or a current workpaper over stale gains
+    cannot pass. These are cent figures, never subject to the ledger tolerance.
+    """
+    summary = result.get('crypto_summary') or {}
+    summary = summary if isinstance(summary, dict) else {}
+    broker = source.get('broker_reporting') if isinstance(source, dict) else None
+    review_present = ('option_exercise_review' in summary or
+                      isinstance(broker, dict) and 'option_exercise_review' in broker)
+    if answer is not True and not review_present:
+        return []
+    if answer is not True:
+        return ['crypto option review contradicts flags.has_digital_asset_option_exercise; reconfirm the answer']
+    if (not isinstance(source, dict) or not isinstance(broker, dict)
+            or not isinstance(broker.get('option_exercise_review'), dict)):
+        return ['crypto option exercises require reviewed premium source events in crypto_transactions.json; acknowledgement alone cannot price them']
+    from collections import Counter
+    from agents.lib.crypto_importer import CryptoImportError, build_crypto_import
+    try:
+        if {'source_corrections', 'tax_calendar_review', 'option_exercise_review'} & set(source):
+            raise ValueError('review metadata must be inside broker_reporting')
+        meta = result.get('meta') or {}
+        year = meta.get('tax_year') if isinstance(meta, dict) else None
+        if year is None and isinstance(profile, dict):
+            year = profile.get('tax_year')
+        built = build_crypto_import(source.get('transactions'), tax_year=year,
+            specific_identification=source.get('specific_identification'),
+            account_aware=True, transfer_links=source.get('transfer_links'), broker_reporting=broker)
+        if (built['crypto_summary'].get('complete') is not True
+                or built['crypto_summary'].get('reporting_complete') is not True):
+            raise ValueError('source inventory or broker reporting remains unresolved')
+        failures = []
+        if any(summary.get(key) != value for key, value in built['crypto_summary'].items()):
+            failures.append('crypto option pricing: crypto_summary disagrees with the rebuilt source/workpaper')
+        columns = ('description', 'date_acquired', 'date_sold', 'proceeds', 'cost_basis', 'gain_loss',
+                   'box', 'needs_basis', 'account_id', 'txn_id', 'origin_account_id', 'origin_txn_id',
+                   'adjustment_code', 'adjustment', 'fifo_cost_basis', 'form_id')
+        money = ('proceeds', 'cost_basis', 'gain_loss', 'adjustment', 'fifo_cost_basis')
+        def row_key(row):
+            values = {key: row.get(key) for key in columns}
+            for key in money:
+                value = values[key]
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError('Form 8949 option rows need finite numeric amounts')
+                values[key] = float(value)
+            return json.dumps(values, sort_keys=True)
+        form = result.get('form_8949') or {}
+        if not isinstance(form, dict):
+            raise ValueError('missing Form 8949 option rows')
+        for part in ('part_i_short_term', 'part_ii_long_term'):
+            actual = form.get(part) or []
+            if not isinstance(actual, list):
+                raise ValueError('Form 8949 rows must be lists')
+            actual_rows = [row for row in actual if isinstance(row, dict) and 'account_id' in row]
+            if Counter(map(row_key, actual_rows)) != Counter(map(row_key, built['form_8949'][part])):
+                failures.append(f'crypto option pricing: {part} Form 8949 rows disagree with the rebuilt source')
+        expected = {(route['part'], route['row']): route
+                    for route in built['broker_reporting']['schedule_d_routing'].values()}
+        schedule = result.get('schedule_d') or {}
+        if not isinstance(schedule, dict):
+            raise ValueError('missing Schedule D option rows')
+        actual_rows = {}
+        for part in ('part_i_short_term', 'part_ii_long_term'):
+            section = schedule.get(part) or {}
+            if not isinstance(section, dict):
+                raise ValueError('Schedule D parts must be objects')
+            for name, row in section.items():
+                if name.endswith(_DIGITAL_ASSET_ROW_SUFFIX):
+                    if not isinstance(row, dict):
+                        raise ValueError('Schedule D digital-asset rows must be objects')
+                    actual_rows[(part, name)] = row
+        for name in set(expected) | set(actual_rows):
+            actual, wanted = actual_rows.get(name, {}), expected.get(name, {})
+            for field in ('proceeds', 'cost', 'adjustment', 'gain'):
+                value = actual.get(field, 0)
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or value != wanted.get(field, 0)):
+                    failures.append('crypto option pricing: Schedule D digital-asset amounts disagree with the rebuilt source')
+                    break
+            if wanted and actual.get('adjustment_code') != wanted['adjustment_code']:
+                failures.append('crypto option pricing: Schedule D adjustment codes disagree with the rebuilt source')
+        return list(dict.fromkeys(failures))
+    except (CryptoImportError, ValueError, TypeError, KeyError, OverflowError) as exc:
+        return [f'crypto option pricing cannot be verified: {redact(exc)}']
+
+
 def _result_total(result: dict, category: str) -> "float | None":
     """Sum the mapped result-side fields. None ONLY when the section itself
     is absent, or for capital_proceeds without non-zero detail rows — the
@@ -2335,6 +2424,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              profile_flags: "dict | None" = None,
              option_exercise_answer: "bool | None" = None,
              specific_identification_answer: "bool | None" = None,
+             crypto_source: "dict | None" = None,
              profile: "dict | None" = None,
              tax_law: "dict | None" = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
@@ -2390,6 +2480,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # non-zero `disposals` count — or one that dropped the keys, or merged
     # digital-asset rows with no summary at all, still owes the reconciliation.
     digital_rows = _digital_asset_rows(result)
+    missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):
         missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "
                                "is never employer stock")
@@ -3179,6 +3270,8 @@ def _main(argv: list) -> int:
         gate_inputs = receipt.gate_inputs(workspace, "tie_out")
         ledger = load_ledger(_read_json(ledger_path, "parse_ledger.json"))
         result = _read_json(result_path, "result.json")
+        crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
+        crypto_source = _read_json(crypto_path, 'crypto_transactions.json') if crypto_path.exists() else None
         # A PFIC taxable event acknowledged in the profile REQUIRES a computed
         # §1291 result — read the flag so the gate can fail an event that reached
         # compute (gate acknowledged) but produced no fund. Also count the
@@ -3267,6 +3360,7 @@ def _main(argv: list) -> int:
                           profile_flags=profile_flags,
                           option_exercise_answer=option_exercise_answer,
                           specific_identification_answer=specific_identification_answer,
+                          crypto_source=crypto_source,
                           profile=prof, tax_law=ca_law)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:

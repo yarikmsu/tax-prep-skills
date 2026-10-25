@@ -244,7 +244,9 @@ an earlier year: [TY2025 Pub. 550, Options](https://www.irs.gov/pub/irs-prior/p5
 adjusts acquired basis for the option premium, and the
 [IRS digital-asset guidance](https://www.irs.gov/filing/digital-assets) treats
 exchanges and spending as dispositions too. A yes blocks at the capability gate
-unless explicitly acknowledged; tie-out verifies the answer exists.
+unless explicitly acknowledged. Acknowledgement alone cannot complete the
+return: the [reviewed option-premium path](#reviewed-option-premiums-aa47)
+requires source-bound evidence and tie-out recomputation of the merged gains.
 
 `/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
 `capital_proceeds`. The tie sums the form-backed digital-asset rows with the
@@ -378,7 +380,7 @@ with no key cannot change the row.
 | `accrued_market_discount` | 1h | 1h | Accrued market discount for covered digital assets that are debt instruments; a nonzero amount refuses the import. |
 | `wash_sale_loss_disallowed` | 1i | 1i | Disallowed wash-sale loss for tokenized stock or securities; a nonzero amount refuses the import. |
 | `loss_not_allowed` | 5 | 5 | Loss not allowed based on box 1f; checked, refuses the import. |
-| `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums, which the import does not price; checked, refuses the import, and a blank 3a is false. "Gross proceeds" is no key, because it cannot clear a sale either way. The instructions complete box 3a "if the digital assets were sold because of the exercise of an option" yet leave it off the boxes "completed only if applicable", and box 1f says "Otherwise, check 'Gross proceeds' in box 3a", so a broker may check it on every sale; and on an option's sale it means the premium was NOT netted, which §1.6045-1(m) does not require for an option granted or acquired before 2026, or held outside the broker's account. Refusing it would refuse ordinary forms, and accepting it as "no option" would pass that unadjusted sale. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, blocks at the capability gate instead (`digital_asset_option_exercise`), whichever box shows. |
+| `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums. Refuses without a source-bound purchased-put exercise under the reviewed option-premium path below; a blank 3a is false. "Gross proceeds" is no key, because it cannot clear a sale either way. The instructions complete box 3a "if the digital assets were sold because of the exercise of an option" yet leave it off the boxes "completed only if applicable", and box 1f says "Otherwise, check 'Gross proceeds' in box 3a", so a broker may check it on every sale; and on an option's sale it means the premium was NOT netted, which §1.6045-1(m) does not require for an option granted or acquired before 2026, or held outside the broker's account. Refusing it would refuse ordinary forms, and accepting it as "no option" would pass that unadjusted sale. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, requires the capability review (`digital_asset_option_exercise`), whichever box shows. |
 | `qof` | 3b | 3b | Disposition of an interest in a qualified opportunity fund; checked, refuses the import, since gain previously deferred into the fund needs its own code-Y row and Form 8997. |
 | `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying units (§1.6045-1(d)(2)(ii)(B)(4)). Copy a boolean or null, retaining the field when blank. It can supply dates for FIFO or support specific identification; the form cannot establish the method. A checked box is accepted only after the import's explicit FIFO confirmation. Specific identification at any broker or wallet blocks FIFO pricing, whether this box is checked or blank. |
 | `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method; either box checked refuses the import, since an aggregate is not one disposal's figures (AA47). |
@@ -470,8 +472,9 @@ years carry the same basis.
 Review and preserve `source_corrections` with the import's secured workpaper in
 `summaries/`. Account identities, fees, lot selection and special form
 treatments are outside this correction path. It does not clear the option
-exercise screen or unsupported boxes. Those cases and
-optional annual reporting remain AA47 follow-ups.
+exercise screen or unsupported boxes. The separate option review below handles
+plain USD premiums; other manual treatments and optional annual reporting
+remain AA47 follow-ups.
 Corrections live inside the broker-review object so an older engine's closed
 key set refuses them instead of silently ignoring a new top-level input.
 
@@ -546,3 +549,85 @@ requires a reviewed allocation, not continued universal matching. See
 [IRS digital assets guidance](https://www.irs.gov/filing/digital-assets).
 Sources verified by live primary-authority HTTPS on 2026-10-07. This contract
 contains no annual rates or indexed thresholds.
+
+
+## Reviewed option premiums (AA47)
+
+The exercise rules in Pub. 550 Table 4-3 were reviewed for
+[TY2023](https://www.irs.gov/pub/irs-prior/p550--2023.pdf),
+[TY2024](https://www.irs.gov/pub/irs-prior/p550--2024.pdf) and
+[TY2025](https://www.irs.gov/pub/irs-prior/p550--2025.pdf). The input below
+handles an externally confirmed plain USD premium on the underlying asset:
+
+| `treatment` | Source event | Effect before FIFO |
+|---|---|---|
+| `purchased_call` | `buy` | Add the call's cost to acquisition basis. |
+| `written_put` | `buy` | Reduce acquisition basis by the premium received. |
+| `written_call` | `sell` | Add the premium received to proceeds. |
+| `purchased_put` | `sell` | Reduce proceeds by the put's cost. |
+
+Obtain an external workpaper establishing that this treatment applies to every
+option-affected source event, including prior-year acquisitions supplying any
+current or remaining lot. It must review compensation, section 1256, straddles,
+short sales, holding-period changes, deferred losses, non-USD premiums and
+other special treatments. This path requires that none applies; a nonempty
+`unsupported_items` list refuses. Do not infer that scope from a broker checkbox.
+The engine does not classify an option, price option contracts themselves, or
+allocate one exercise's premium across source events. Normalize the original
+exercise confirmation into one event with its reviewed whole-cent premium.
+Cash premium receipts are not separate digital-asset ordinary-income receipts.
+
+Put this object inside `broker_reporting`:
+
+```json
+{"option_exercise_review": {
+  "scope": "plain_usd_premiums_no_other_tax_effects",
+  "all_accounts_and_prior_lots_reviewed": true,
+  "unsupported_items": [], "evidence": "option-scope-workpaper",
+  "events": [{"account_id": "exchange-A", "txn_id": "exercise-buy",
+    "expected": {"date": "2024-07-01", "asset": "BTC", "kind": "buy",
+      "quantity": "1", "usd_amount": "100", "fee_usd": "0"},
+    "treatment": "purchased_call", "option_opened": "2024-06-01",
+    "premium_usd": "10", "source_includes_premium": false,
+    "fees_exclude_premium": true, "evidence": "exercise-confirmation"}]
+}}
+```
+
+Every key is required. Copy `expected` from the normalized source after any
+separately reviewed source/date corrections; use zero for an absent `fee_usd`.
+Context, exact quantities, USD values and fees must agree. A repeated event,
+stale snapshot, unsupported kind, missing evidence or negative adjusted amount
+refuses. `source_includes_premium` must explicitly establish whether the source
+USD amount already incorporates that premium; true preserves that amount.
+`fees_exclude_premium: true` separately confirms the premium is not charged
+again in `fee_usd`. Preserve the source export and record both answers with
+their evidence. Do not change an inclusion answer to clear a mismatch.
+
+The adjustment precedes FIFO across all years. Acquired basis follows partial
+sales, spending, exchanges, transfers and remaining inventory. An option-caused
+disposal itself must be a direct USD `sell`; a `trade` also creates a new asset's
+basis and is outside this path. A purchased put additionally requires every
+sold lot to have been held long-term already on `option_opened`; otherwise its
+holding-period treatment requires external preparation. Opening inventory with
+an externally supplied basis still needs the original exercise and transfer
+history to use this review path.
+
+Broker forms, lot selection and missing-inventory checks remain in force.
+A direct purchased-put sale can reconcile a form's `net_proceeds: true`.
+That form cannot deduct the put cost again through code E. A gross-proceeds
+form can use the evidenced put cost plus separately recorded commissions to
+explain code E; the existing resolution and evidence are still required.
+Other unsupported filled boxes refuse. Grouped option-caused disposals refuse
+pending external premium allocation; ordinary later sales from an
+option-acquired lot may use reviewed fill groups.
+
+Keep `crypto_summary.option_exercise_review` with the merged summary and save
+the complete JSON workpaper in secured `summaries/`. Keep normalized inputs in
+`crypto_transactions.json`. Tie-out rebuilds that source, verifies the review,
+compares each account-tagged Form 8949 row, and checks each Schedule D digital
+row's part, amounts and adjustment codes at exact cents. A true option flag
+without this evidence fails, as does a false flag contradicting a review.
+The validation receipt binds the normalized source so later edits require a
+new tie-out. The default capability block still requires explicit
+acknowledgement and its decision in secured `answers.md`; it never substitutes
+for the review. TY2026 remains unreviewed for both routing and option pricing.

@@ -89,7 +89,10 @@ def _num(value, label: str, *, allow_negative: bool = False) -> float:
     if isinstance(value, bool):
         raise CryptoImportError(f"{label} must be a number, got bool: {value!r}")
     if isinstance(value, (int, float)):
-        v = float(value)
+        try:
+            v = float(value)
+        except OverflowError:
+            raise CryptoImportError(f'{label} must be finite') from None
     elif isinstance(value, str):
         cleaned = value.replace(",", "").replace("$", "").strip()
         try:
@@ -989,6 +992,13 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
         raise CryptoImportError(f'{label}.customer_acquisition_info must be boolean or null')
     unsupported = _FORM_UNSUPPORTED | _FORM_UNSUPPORTED_BY_TYPE[regime['form_type']]
     filled = sorted(key for key in unsupported & set(form) if form[key] not in (None, False, 0))
+    option = (events.get((form['account_id'], form['txn_id']), {})
+              if isinstance(form.get('account_id'), str) and isinstance(form.get('txn_id'), str) else {})
+    if ('net_proceeds' in filled and form.get('net_proceeds') is True and option.get('option_treatment') == 'purchased_put'
+            and option.get('option_txn_id') == form.get('txn_id')):
+        # An evidenced put cost is already in this disposal's source proceeds.
+        # A group alias must not borrow the first member's option evidence.
+        filled.remove('net_proceeds')
     if filled:
         raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; '
                                 'report that disposal manually (a blank box is copied as null, false or 0)')
@@ -1024,6 +1034,7 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
             'proceeds': _form_cents(form['proceeds'], f'{label}.proceeds'),
             'cost_basis': None if shown is None else _form_cents(shown, f'{label}.cost_basis'),
             'reported': reported, 'term': term,
+            'net_proceeds': form.get('net_proceeds') is True,
             'customer_acquisition_info': form.get('customer_acquisition_info')}
 
 
@@ -1184,7 +1195,9 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
     # The only costs a form can leave unreflected are the fee the import
     # recorded; a larger gap is a wrong price or valuation, never code E.
-    fee_left = event['fee']
+    if event.get('option_cost') and len({form['net_proceeds'] for form in forms}) > 1:
+        return _unpaired(rows, forms, 'mixed gross/net option forms require external preparation')
+    fee_left = event['fee'] + (event.get('option_cost', 0) if not any(form['net_proceeds'] for form in forms) else 0)
     routed: 'dict[int, Form8949Row]' = {}
     records: 'list[dict]' = []
     problems: 'list[tuple]' = []
@@ -1422,6 +1435,113 @@ def _schedule_d_routing(rows) -> 'dict[str, dict]':
 # --------------------------------------------------------------------------
 # Aggregator
 # --------------------------------------------------------------------------
+
+_OPTION_SOURCES = {year: f'https://www.irs.gov/pub/irs-prior/p550--{year}.pdf'
+                   for year in (2023, 2024, 2025)}
+
+
+def _apply_option_premiums(transactions, raw_review, account_mode, tax_year):
+    """Price only externally reviewed plain USD premiums, before any FIFO use.
+
+    This is not an option classifier. The workpaper must exclude compensation,
+    section 1256, straddles, holding-period adjustments and other special rules.
+    Original source values are bound explicitly, including premiums already in
+    the export, so the same cost cannot silently be applied a second time.
+    """
+    if raw_review is None:
+        return transactions, None
+    required = {'scope', 'all_accounts_and_prior_lots_reviewed', 'unsupported_items', 'evidence', 'events'}
+    if (not isinstance(raw_review, dict) or set(raw_review) != required
+            or raw_review['scope'] != 'plain_usd_premiums_no_other_tax_effects'
+            or raw_review['all_accounts_and_prior_lots_reviewed'] is not True
+            or raw_review['unsupported_items'] != []
+            or not isinstance(raw_review['events'], list) or not raw_review['events']):
+        raise CryptoImportError('Option review requires all accounts/prior lots reviewed, empty unsupported_items, evidence and events')
+    evidence = _account_id(raw_review['evidence'], 'option scope evidence')
+    if not account_mode or tax_year not in _REPORTING_REGIMES or tax_year not in _OPTION_SOURCES:
+        raise CryptoImportError('Option review requires explicit account/transaction IDs and a reviewed filing year')
+    indices = {}
+    for index, raw in enumerate(transactions):
+        if not isinstance(raw, dict):
+            raise CryptoImportError('Option review requires transaction objects')
+        key = (_account_id(raw.get('account_id'), 'source account_id'),
+               _account_id(raw.get('txn_id'), 'source txn_id'))
+        if key in indices:
+            raise CryptoImportError('Option review requires unique account/transaction IDs')
+        indices[key] = index
+    # Table 4-3, Pub. 550 (reviewed TY2023-2025). These are signs, not rates.
+    directions = {'purchased_call': ('buy', 1), 'written_put': ('buy', -1),
+                  'written_call': ('sell', 1), 'purchased_put': ('sell', -1)}
+    fields = {'account_id', 'txn_id', 'expected', 'treatment', 'premium_usd',
+              'source_includes_premium', 'fees_exclude_premium', 'option_opened', 'evidence'}
+    updated, records, used = list(transactions), [], set()
+    for entry in raw_review['events']:
+        if not isinstance(entry, dict) or set(entry) != fields:
+            raise CryptoImportError('Option event needs source context, treatment, premium, inclusion answer, option_opened and evidence')
+        key = (_account_id(entry['account_id'], 'option account_id'),
+               _account_id(entry['txn_id'], 'option txn_id'))
+        if key not in indices:
+            raise CryptoImportError('Option event names no source transaction in that account')
+        if key in used:
+            raise CryptoImportError('Option events must not repeat a transaction')
+        original, expected = transactions[indices[key]], entry['expected']
+        context = {'date', 'asset', 'kind', 'quantity', 'usd_amount', 'fee_usd'}
+        if not isinstance(expected, dict) or set(expected) != context:
+            raise CryptoImportError('Option expected context must include date, asset, kind, quantity, usd_amount and fee_usd')
+        for name in context:
+            actual = original.get(name, 0) if name == 'fee_usd' else original.get(name)
+            if name in {'date', 'asset', 'kind'}:
+                agrees = expected[name] == actual
+            else:
+                agrees = _exact(expected[name], 'expected option value') == _exact(actual, 'source option value')
+            if not agrees:
+                raise CryptoImportError('Option source context is stale; re-read the original record')
+        treatment = entry['treatment']
+        if not isinstance(treatment, str) or treatment not in directions:
+            raise CryptoImportError('Option treatment must be a reviewed purchased/written put/call exercise')
+        kind, sign = directions[treatment]
+        if original['kind'] != kind or _exact(original['quantity'], 'option quantity') <= 0:
+            raise CryptoImportError('Option exercise requires a positive-quantity buy or direct USD sell of the underlying')
+        included = entry['source_includes_premium']
+        if type(included) is not bool:
+            raise CryptoImportError('source_includes_premium must be an explicit boolean')
+        if entry['fees_exclude_premium'] is not True:
+            raise CryptoImportError('Confirm fees_exclude_premium true so the premium is not counted twice')
+        premium = Fraction(_form_cents(entry['premium_usd'], 'option premium'), 100)
+        if premium <= 0:
+            raise CryptoImportError('Option premium must be positive')
+        amount = _exact(original['usd_amount'], 'option source USD amount')
+        base = amount - sign * premium if included else amount
+        applied = amount if included else amount + sign * premium
+        if base < 0 or applied < 0:
+            raise CryptoImportError('Option premium leaves a negative underlying or adjusted amount')
+        try:
+            opened = datetime.date.fromisoformat(entry['option_opened'])
+        except (ValueError, TypeError):
+            raise CryptoImportError('option_opened must be YYYY-MM-DD') from None
+        if entry['option_opened'] != opened.isoformat() or opened > _parse_dt(original['date'], 'option exercise date').date():
+            raise CryptoImportError('option_opened must be an exact date no later than exercise')
+        event_evidence = _account_id(entry['evidence'], 'option event evidence')
+        updated[indices[key]] = {**original, 'usd_amount': _quantity_text(applied)}
+        records.append({**entry, 'expected': dict(expected), 'evidence': event_evidence,
+                        'applied_usd_amount': _quantity_text(applied)})
+        used.add(key)
+    return updated, dict(scope=raw_review['scope'], all_accounts_and_prior_lots_reviewed=True,
+                         unsupported_items=[], source_url=_OPTION_SOURCES[tax_year], evidence=evidence, events=records)
+
+
+def _check_put_holding_periods(rows, review):
+    if review is None:
+        return
+    for event in review['events']:
+        if event['treatment'] != 'purchased_put':
+            continue
+        selected = [row for row in rows if (row.account_id, row.txn_id) == (event['account_id'], event['txn_id'])]
+        opened = datetime.date.fromisoformat(event['option_opened'])
+        if not selected or any(row.needs_basis or row.date_acquired == 'UNKNOWN' or
+                _holding_period(datetime.date.fromisoformat(row.date_acquired), opened) != 'long' for row in selected):
+            raise CryptoImportError('Purchased put needs external holding-period treatment: every disposed lot must already be long-term when the put was bought')
+
 
 def _tax_calendar_review(raw):
     if raw is None:
@@ -1677,10 +1797,23 @@ def build_crypto_import(transactions: 'list[dict]', *,
                        if isinstance(broker_reporting, dict) else None)
     transactions, correction_records, reviewed_calendar, date_moves = _apply_source_corrections(
         transactions, corrections, account_mode, calendar_review)
-    if isinstance(broker_reporting, dict) and ('source_corrections' in broker_reporting or 'tax_calendar_review' in broker_reporting):
+    option_review = broker_reporting.get('option_exercise_review') if isinstance(broker_reporting, dict) else None
+    if isinstance(broker_reporting, dict) and 'option_exercise_review' in broker_reporting and option_review is None:
+        raise CryptoImportError('option_exercise_review must be a complete reviewed object, never null')
+    transactions, reviewed_options = _apply_option_premiums(transactions, option_review, account_mode, tax_year)
+    if reviewed_options and isinstance(broker_reporting.get('fill_groups'), list):
+        sales = {(event['account_id'], event['txn_id']) for event in reviewed_options['events']
+                 if event['treatment'] in {'written_call', 'purchased_put'}}
+        for group in broker_reporting['fill_groups']:
+            if isinstance(group, dict) and isinstance(group.get('txn_ids'), list) and any(
+                    (group.get('account_id'), txn) in sales for txn in group['txn_ids']
+                    if isinstance(group.get('account_id'), str) and isinstance(txn, str)):
+                raise CryptoImportError('Grouped option-caused disposals require external premium allocation; use individual forms')
+    if isinstance(broker_reporting, dict) and {'source_corrections', 'tax_calendar_review', 'option_exercise_review'} & set(broker_reporting):
         broker_reporting = dict(broker_reporting)
         broker_reporting.pop('source_corrections', None)  # Consumed before the broker-form validator.
         broker_reporting.pop('tax_calendar_review', None)
+        broker_reporting.pop('option_exercise_review', None)
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
     if specific_identification is not None and not isinstance(specific_identification, bool):
         raise CryptoImportError('specific_identification must be boolean or null')
@@ -1721,6 +1854,7 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
     else:
         rows_all = match_lots(acquisitions, disposals)
+    _check_put_holding_periods(rows_all, reviewed_options)
     # FIFO orders by instant while each row's dates are read in its own
     # record's offset, so records exported in different offsets can fund a
     # sale from a lot whose printed acquisition date is later than the sale's.
@@ -1761,6 +1895,11 @@ def build_crypto_import(transactions: 'list[dict]', *,
         events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
                                                         'date': _parse_dt(raw['date'], 'date').date()}
                   for raw, txn in zip(transactions, txns)}
+        for event in reviewed_options['events'] if reviewed_options else []:
+            record = events[(event['account_id'], event['txn_id'])]
+            record.update(option_treatment=event['treatment'], option_txn_id=event['txn_id'])
+            if event['treatment'] == 'purchased_put':
+                record['option_cost'] = _form_cents(event['premium_usd'], 'reviewed put cost')
         rows, reporting = _reconcile_broker_reporting(rows, tax_year, events, broker_reporting)
     else:
         if broker_reporting is not None:
@@ -1874,6 +2013,10 @@ def build_crypto_import(transactions: 'list[dict]', *,
                                     f'event(s) from {pairs}. Every import covering those years must carry the '
                                     'same tax_calendar_review and source_corrections, or one year reports the '
                                     'event again; review a filed return among them for /tax-amend.')
+    if reviewed_options:
+        result['crypto_summary']['option_exercise_review'] = reviewed_options
+        result['caveats'].append('Plain USD option premiums follow the external scope/exercise review; '
+                                 'preserve option_exercise_review and the normalized source for tie-out recomputation.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
@@ -2594,8 +2737,8 @@ def _cli_compute(argv: 'list[str]') -> int:
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
         raise CryptoImportError(f"{redact(path)} is not valid JSON: {redact(e)}")
     txns = data.get("transactions", data) if isinstance(data, dict) else data
-    if isinstance(data, dict) and {'source_corrections', 'tax_calendar_review'} & set(data):
-        raise CryptoImportError('Put source_corrections and tax_calendar_review inside broker_reporting; top-level fields are not applied')
+    if isinstance(data, dict) and {'source_corrections', 'tax_calendar_review', 'option_exercise_review'} & set(data):
+        raise CryptoImportError('Put source_corrections, tax_calendar_review and option_exercise_review inside broker_reporting; top-level fields are not applied')
     year = None
     if "--year" in argv:
         raw_year = _flag_value(argv, "--year")
