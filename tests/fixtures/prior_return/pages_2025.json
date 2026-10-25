@@ -1,0 +1,9 @@
+{
+  "0": "Form 1040 U.S. Individual Income Tax Return 2025\nSYNTHETIC OFFICIAL-LINE FIXTURE - NOT A RETURN\n7a Capital gain or (loss) 7a (3,000)\n9 Total income 9 50,000\n10 Adjustments to income 10 0\n11a Subtract line 10 from line 9 11a 50,000\n11b Amount from line 11a 11b 50,000\n12e Deduction 12e 20,000\n13a QBI deduction 13a 0\n13b Additional deductions 13b 0\n14 Add lines 12e, 13a, 13b 14 20,000\n15 Taxable income 15 30,000\n24 Total tax 24 4,000\n34 Overpayment 34 1,000\n35a Refunded to you 35a 600\n36 Applied to next year 36 400",
+  "1": "SCHEDULE D (Form 1040) 2025\n7 Net short-term capital gain or (loss) 7 (5,000)\n15 Net long-term capital gain or (loss) 15 (7,000)\n16 Combine lines 7 and 15 16 (12,000)\n21 Loss deduction 21 (3,000)",
+  "2": "Form 8606 2025\n1 Nondeductible contributions 1 2,000\n2 Total basis 2 8,000\n3 Add lines 1 and 2 3 10,000\n13 Nontaxable portion of distributions 13 1,000\n14 Subtract line 13 from line 3 14 9,000",
+  "3": "Form 8801 (2025) Page 2\n21 Combine lines 18 through 20 21 8,000\n25 Minimum tax credit 25 2,000\n26 Credit carryforward 26 6,000",
+  "4": "Form 8995 2025\n2 Total qualified business income or (loss) 2 (2,000)\n3 Prior loss 3 (1,000)\n6 REIT dividends and PTP income or (loss) 6 (400)\n7 Prior REIT/PTP loss 7 (100)\n16 Total qualified business loss carryforward 16 (3,000)\n17 Total REIT/PTP loss carryforward 17 (500)",
+  "5": "Form 540 2025 Side 4\n97 Overpaid tax 97 700\n98 Applied to next year 98 200\n99 Available this year 99 500",
+  "6": "FTB 3510 2025\n32 Combine line 30 and line 31 32 2,000\n38 Prior year AMT credit 38 300\n39 AMT credit carryover 39 1,700"
+}

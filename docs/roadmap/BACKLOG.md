@@ -85,9 +85,9 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | Nothing: AA47, the last item here, shipped in #66. | Every remaining California item waits on a publication (tier 2) or on the owner's approval of a design (tier 3). |
+| **1. California filers: ready now** | Nothing: AA47, the last item here, shipped in #66. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
-| **3. California filers: larger extensions** | AA44 and AA45 — prior-return import and multi-year Roth planning. | Larger product extensions. Each has a design PR awaiting the owner's approval (#59 and #58), with the decisions it needs listed. |
+| **3. California filers: larger extensions** | AA44 and AA45 — prior-return import and multi-year Roth planning. | Larger product extensions. The owner approved designs #59 and #58 on 2026-10-25, accepting their recommended choices. Implement them one at a time; leave PRs unmerged for review. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
@@ -208,6 +208,12 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   masked identity and user-reviewed provenance. Missing carryover worksheets
   stay unresolved instead of being reconstructed from summary lines. Proprietary
   software formats require a separate supported-format decision.
+  Design #59 approved 2026-10-25: any text-bearing official-form PDF, reviewed
+  derived capital carryovers and California included. The first implementation
+  adds checked TY2025 line readers, pending seeds, digest-bound review, rollover
+  and manual-resolution gates. Remaining automated readers: Form 8995-A
+  Schedule C, Form 1116 Schedule B baskets/vintages, Schedule P credit columns,
+  and page-1 identity/dependent proposals; these remain explicit manual questions.
   Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
 
 - **AA45 (P3, L): Model multi-year Roth conversion plans.**
@@ -216,6 +222,8 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   inputs, and distinguish fetched covered-year law from hypothetical future-law
   assumptions. Show tax, Medicare premiums and distribution effects separately;
   a future-year forecast must not masquerade as a filing computation.
+  Design #58 approved 2026-10-25: ten-year cap, both held/indexed hypothetical
+  law options and bracket/IRMAA fill targets. Implementation follows AA44.
   Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 

@@ -1284,3 +1284,15 @@ ordinary projections, scenarios/Roth state effects and withholding forecasts
 carry a named limitation. Rollover reads qualified credits, PTET vintages and
 line102 from the selected CA form. Use tax is a separate CDTFA obligation.
 The maintained scope is `docs/contributing/state-module-ca-part-year.md`.
+
+## Prior-return PDF import (AA44)
+
+`agents/lib/prior_return.py` is the local official-line reader and reviewed
+archive-seed writer for `/tax-rollover`. Its `import-pdf`, `report` and `confirm`
+commands run through `sh agents/lib/run.sh -m agents.lib.prior_return`.
+A pending seed cannot roll; confirmed fields retain file/page/form/line
+provenance and require allocation review. Unreadable/missing worksheets stay
+unresolved and block computation through `prior_year.import_unresolved`.
+The seed is not a complete return baseline for projections or YoY comparisons.
+The skill's [import reference](../../.agents/skills/tax-rollover/references/prior-return-import.md)
+states the initial covered-year/reader scope and manual follow-ups.
