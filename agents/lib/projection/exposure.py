@@ -63,6 +63,22 @@ def _unmodeled_credit_screen(profile: dict, *, foreign_credit_reviewed: bool = F
             "A positive prior AMT credit still requires amt_projection.")
 
 
+def review_frame(federal: FederalProjection) -> dict:
+    """The income and tax a reviewed regular FTC worksheet is bound to."""
+    return {"federal_agi_at_review": round(federal.gross_income - federal.adjustments, 2),
+            "taxable_income_at_review": federal.taxable_income,
+            "regular_tax_at_review": federal.tax_before_credits}
+
+
+def _require_foreign_tax_flag(profile: dict, *credits: float) -> None:
+    """A credit on a profile that records no foreign tax paid would lower this
+    estimate below the return the same profile prepares without Form 1116."""
+    flags = profile.get("flags")
+    if any(credits) and (not isinstance(flags, dict) or flags.get("has_foreign_tax_paid") is not True):
+        raise ProjectionError("A positive foreign tax credit requires flags.has_foreign_tax_paid: true; "
+                              "resolve the profile before projecting the credit")
+
+
 def _regular_foreign_tax_credit(raw, federal: FederalProjection,
                                 profile: dict, fs: str, year: int | None) -> float:
     """Accept an allowed regular credit, never infer it from foreign taxes paid.
@@ -83,16 +99,14 @@ def _regular_foreign_tax_credit(raw, federal: FederalProjection,
     _year(profile.get("tax_year"), year, "taxpayer profile tax_year")
     if raw.get("filing_status") != fs or raw.get("full_year_inputs_confirmed") is not True:
         raise ProjectionError("Confirm the regular FTC worksheet's filing status and full-year inputs")
-    frame = {"federal_agi_at_review": round(federal.gross_income - federal.adjustments, 2),
-             "taxable_income_at_review": federal.taxable_income,
-             "regular_tax_at_review": federal.tax_before_credits}
-    for key, expected in frame.items():
+    for key, expected in review_frame(federal).items():
         value = _number(raw.get(key), f"{name}.{key}", signed=key == "federal_agi_at_review")
         if round(value, 2) != expected:
             raise ProjectionError(f"Rework the regular foreign tax credit at the projected {key}")
     credit = round(_number(raw.get("regular_foreign_tax_credit"), f"{name}.regular_foreign_tax_credit"), 2)
     if credit > federal.tax_before_credits:
         raise ProjectionError("Reviewed regular foreign tax credit cannot exceed regular income tax")
+    _require_foreign_tax_flag(profile, credit)
     return credit
 
 
@@ -155,6 +169,7 @@ def apply_projected_amt(federal: FederalProjection, proj: ProjectedInputs,
     ftc = amounts["regular_foreign_tax_credit"]
     if ftc > federal.tax_before_credits:
         raise ProjectionError("Reviewed regular foreign tax credit cannot exceed regular income tax")
+    _require_foreign_tax_flag(profile, ftc, amounts["amt_foreign_tax_credit"])
     prior = profile.get("prior_year") or {}
     if not isinstance(prior, dict):
         raise ProjectionError("The profile prior_year credit record must be an object")

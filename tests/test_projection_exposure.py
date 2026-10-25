@@ -184,6 +184,91 @@ def test_regular_foreign_credit_requires_every_review_field(field):
         price(dataclasses.replace(proj, foreign_tax_credit_projection=raw), profile, law)
 
 
+def test_regular_foreign_credit_is_applied_after_the_child_tax_credit():
+    proj, profile, law = regular_credit_case(regular_foreign_tax_credit=1000)
+    f = dataclasses.replace(price(*regular_credit_case()), ctc=4000)
+    # 32,000 regular tax - 4,000 CTC - 1,000 FTC = 27,000, still above zero.
+    out = apply_projected_amt(f, proj, profile, law, 'MFJ', 2026, 0, None, None, None)
+    assert out.total_tax == 27000
+
+
+@pytest.mark.parametrize('flags', [{'has_foreign_tax_paid': False}, {}, None])
+@pytest.mark.parametrize('worksheet', ['regular', 'amt', 'amt_ftc_only'])
+def test_a_positive_foreign_credit_needs_the_profiles_foreign_tax_flag(flags, worksheet):
+    # The return prepares Form 1116 only under has_foreign_tax_paid; a credit
+    # the projection takes without it would disagree with that return.
+    if worksheet == 'regular':
+        proj, profile, law = regular_credit_case()
+    else:
+        proj, profile, law = amt_case(iso_bargain_element=0, amt_foreign_tax_credit=500,
+                                      regular_foreign_tax_credit=500 if worksheet == 'amt' else 0)
+    if flags is None:
+        profile.pop('flags', None)
+    else:
+        profile['flags'] = flags
+    with pytest.raises(P.ProjectionError, match='requires flags.has_foreign_tax_paid'):
+        price(proj, profile, law)
+    profile['flags'] = {'has_foreign_tax_paid': False}
+    zero = ({'regular_foreign_tax_credit': 0} if worksheet == 'regular'
+            else {'regular_foreign_tax_credit': 0, 'amt_foreign_tax_credit': 0})
+    if worksheet == 'regular':
+        raw = {**proj.foreign_tax_credit_projection, **zero}
+        assert price(dataclasses.replace(proj, foreign_tax_credit_projection=raw), profile, law).foreign_tax_credit == 0
+    else:
+        raw = {**proj.amt_projection, **zero}
+        assert price(dataclasses.replace(proj, amt_projection=raw), profile, law).foreign_tax_credit == 0
+
+
+def test_regular_foreign_credit_review_names_the_profile_year():
+    proj, profile, law = regular_credit_case()
+    profile['tax_year'] = 2025
+    with pytest.raises(P.ProjectionError, match='taxpayer profile tax_year'):
+        price(proj, profile, law)
+
+
+def test_a_regular_credit_alone_still_validates_the_forecast_profile():
+    # Without that validation a dependent's missing ctc_eligible silently
+    # prices no child tax credit beside the reviewed foreign credit.
+    proj, profile, law = regular_credit_case()
+    profile['dependents'] = [{'name_ref': 'child'}]
+    inputs = old._declared_standard({'tax_year': 2026,
+        'foreign_tax_credit_projection': proj.foreign_tax_credit_projection,
+        'ytd': {'wages': 200000, 'federal_withholding': 12000}})
+    with pytest.raises(P.ProjectionError, match='ctc_eligible'):
+        P.build_report(inputs, profile, law, None, 2026, datetime.date(2026, 12, 31))
+
+
+def test_review_frame_gives_a_foreign_tax_filer_the_figures_to_work_form_1116_at(tmp_path, capsys):
+    # A foreign-tax profile refuses the report until its credit is reviewed,
+    # and the review must match figures only the projection computes. The
+    # frame mode prints those figures alone; a worksheet copied from them is
+    # then accepted. Uneven wages keep the frame from being guessable.
+    secure_path(tmp_path)
+    proj, profile, law = regular_credit_case()
+    inputs = old._declared_standard({'tax_year': 2026, 'as_of_date': '12-31',
+                                     'ytd': {'wages': 187654.32, 'federal_withholding': 12000}})
+    for name, data in [('projection_inputs.json', inputs), ('taxpayer_profile.json', profile),
+                       ('tax_law_2026.json', law)]:
+        write_secure(tmp_path / name, json.dumps(data))
+    argv = ['--inputs', 'projection_inputs.json', '--workspace', str(tmp_path),
+            '--year', '2026', '--today', '2026-12-31']
+    assert P._main(argv + ['--json']) == 1
+    assert 'foreign_tax_credit_projection' in capsys.readouterr().err
+    assert P._main(argv + ['--review-frame']) == 0
+    frame = json.loads(capsys.readouterr().out)
+    assert set(frame) == {'tax_year', 'filing_status', 'federal_agi_at_review',
+                          'taxable_income_at_review', 'regular_tax_at_review'}
+    assert frame['federal_agi_at_review'] == 187654.32
+    inputs['foreign_tax_credit_projection'] = {**frame, 'full_year_inputs_confirmed': True,
+                                               'regular_foreign_tax_credit': 500}
+    write_secure(tmp_path / 'projection_inputs.json', json.dumps(inputs))
+    assert P._main(argv + ['--json']) == 0
+    federal = json.loads(capsys.readouterr().out)['federal']
+    assert federal['foreign_tax_credit'] == 500
+    assert federal['taxable_income'] == frame['taxable_income_at_review']
+    assert federal['tax_before_credits'] == frame['regular_tax_at_review']
+
+
 @pytest.mark.parametrize("bad",[None,"true",1,0,[],{}])
 def test_unmodeled_amt_foreign_credit_screen_rejects_unresolved_or_bad_flag(bad):
     proj,profile,law=amt_case()
@@ -231,6 +316,7 @@ def test_credits_are_reflected_without_overstating_current_payment_target():
     proj, profile, law = amt_case(iso_bargain_element=0,
         regular_foreign_tax_credit=500,amt_foreign_tax_credit=500,prior_minimum_tax_credit=1000)
     profile["prior_year"] = {"amt_credit_carryforward":1000}
+    profile["flags"] = {"has_foreign_tax_paid": True}
     law["federal"]["amt"]["exemption"]["mfj"] = 150000
     f = price(proj,profile,law)
     # TMT=26%*(200K-150K)-500=12.5K; regular32K-FTC.5K, AMT0;8801credit1K.

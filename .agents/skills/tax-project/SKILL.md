@@ -259,7 +259,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      **`federal.foreign_tax_credit`** also enters those figures when supplied
      through `foreign_tax_credit_projection` without an AMT worksheet. Follow
      the [regular-credit interview](references/amt-irmaa.md); show the reviewed
-     credit and preserve the AMT caveat together.
+     credit and preserve the AMT caveat together. The same command with
+     `--review-frame` in place of `--json` prints only the figures that
+     worksheet must match.
    - **`irmaa`** — read `modeled`, `note`, income/premium years, MAGI and beneficiary
      count. Report modeled annual surcharges per beneficiary and household separately
      from income tax. An unavailable premium-year cache gives no verified future

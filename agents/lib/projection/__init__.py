@@ -1096,7 +1096,8 @@ def annualize(ytd: dict, as_of: datetime.date, pay_frequency: str,
 
 
 def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
-                        requested_year: "int | None" = None) -> FederalProjection:
+                        requested_year: "int | None" = None, *,
+                        frame_only: bool = False) -> FederalProjection:
     from agents.lib.tax_computations.federal.rentals import rental_planning_block
     if rental_planning_block(profile):
         raise ProjectionError("Residential rental passive-loss limits and depreciation are not repriced by projections; recompute the return with revised inputs instead")
@@ -1333,6 +1334,10 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
         schedule_a_repriced=schedule_a is not None,
         schedule_a_notes=[] if schedule_a is None else schedule_a["notes"],
     )
+    if frame_only:
+        # Before AMT and the reviewed credits: the frame a Form 1116 review
+        # is worked at, never a figure to pay from.
+        return federal
     from agents.lib.projection.exposure import apply_projected_amt
     return apply_projected_amt(federal, proj, profile, tax_law, fs, proj_year,
                                net_ltcg, cg_zero, cg_fifteen, schedule_a)
@@ -2284,17 +2289,9 @@ def _validate_tax_law_year(tax_law: dict, year: int) -> None:
         )
 
 
-def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
-                 year: int, as_of: datetime.date,
-                 today: "datetime.date | None" = None,
-                 irmaa_tax_law: dict | None = None) -> ProjectionReport:
-    """Build the report. `today` is the real date, NOT the as-of date.
-
-    Optional because calendar notes and payment-lever availability need it;
-    annualization remains a function of `as_of`. Omitting it omits the notes
-    and keeps the as-of-derived paycheck count rather than guessing at the
-    clock: the CLI already carries a `--today` override the tests drive.
-    """
+def _report_inputs(inputs: dict, profile: dict, tax_law: dict, year: int,
+                   as_of: datetime.date, today: "datetime.date | None"):
+    """The annualized inputs and status every report and review frame prices."""
     _validate_tax_law_year(tax_law, year)
     if any(inputs.get(key) is not None for key in ("state_projection", "amt_projection", "irmaa_projection",
                                                  "foreign_tax_credit_projection")):
@@ -2327,6 +2324,37 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     # state half computed on a status the federal half rejected is the worse
     # failure of the two.
     fs = _canonical_status(profile.get("filing_status"), "projection")
+    return proj, pay_frequency, fs
+
+
+def foreign_tax_review_frame(inputs: dict, profile: dict, tax_law: dict, year: int,
+                             as_of: datetime.date,
+                             today: "datetime.date | None" = None) -> dict:
+    """The figures `foreign_tax_credit_projection` must match, and no payment.
+
+    A foreign-tax profile refuses the full report until its reviewed credit
+    exists, while Form 1116 needs this projection's taxable income and tax to
+    be worked at all. The frame breaks that circle without printing a total
+    or payment that omits the credit.
+    """
+    proj, _, fs = _report_inputs(inputs, profile, tax_law, year, as_of, today)
+    federal = project_federal_tax(proj, profile, tax_law, requested_year=year, frame_only=True)
+    from agents.lib.projection.exposure import review_frame
+    return {"tax_year": year, "filing_status": fs, **review_frame(federal)}
+
+
+def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
+                 year: int, as_of: datetime.date,
+                 today: "datetime.date | None" = None,
+                 irmaa_tax_law: dict | None = None) -> ProjectionReport:
+    """Build the report. `today` is the real date, NOT the as-of date.
+
+    Optional because calendar notes and payment-lever availability need it;
+    annualization remains a function of `as_of`. Omitting it omits the notes
+    and keeps the as-of-derived paycheck count rather than guessing at the
+    clock: the CLI already carries a `--today` override the tests drive.
+    """
+    proj, pay_frequency, fs = _report_inputs(inputs, profile, tax_law, year, as_of, today)
     federal = project_federal_tax(proj, profile, tax_law, requested_year=year)
     from agents.lib.projection.exposure import project_irmaa
     irmaa = project_irmaa(inputs.get("irmaa_projection"), federal, fs, year, irmaa_tax_law)
@@ -3661,6 +3689,10 @@ def _main(argv: list) -> int:
     parser.add_argument("--today", default=None,
                         help="override today's date as YYYY-MM-DD (testing only)")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
+    parser.add_argument("--review-frame", action="store_true",
+                        help="print only the AGI, taxable income and regular tax a "
+                             "reviewed foreign_tax_credit_projection must match, as "
+                             "JSON; no total or payment")
     args = parser.parse_args(argv)
 
     try:
@@ -3697,6 +3729,10 @@ def _main(argv: list) -> int:
         return 1
 
     try:
+        if args.review_frame:
+            print(json.dumps(foreign_tax_review_frame(inputs, profile, tax_law, year, as_of,
+                                                      today=today), indent=2))
+            return 0
         report = build_report(inputs, profile, tax_law, prior, year, as_of,
                               today=today, irmaa_tax_law=irmaa_law)
     except (ProjectionError, ValueError) as e:

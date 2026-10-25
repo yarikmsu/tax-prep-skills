@@ -78,6 +78,13 @@ and tax frame must match this projection to cents; rework the worksheet after
 income or deductions change. Incomplete, stale, nonfinite or excessive credits
 refuse instead of silently dropping them.
 
+Get that frame from the compute command with `--review-frame` in place of
+`--json`. It prints only the tax year, status and the three `*_at_review`
+figures, with no total or payment, and runs while the missing credit still
+blocks the full report. Work Form 1116 at those figures; never clear the flag
+to see them. A positive credit, here or in `amt_projection`, requires
+`flags.has_foreign_tax_paid: true`, the flag the return's Form 1116 keys on.
+
 Use this object only when `amt_projection` is null. With a full AMT worksheet,
 enter the regular credit there instead; supplying both refuses to prevent two
 sources for the same credit. A positive prior-year AMT credit still requires
