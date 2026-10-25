@@ -1592,21 +1592,26 @@ def _check_reviewed_calendar(rows_all, transactions, records, calendar) -> None:
     """A corrected date moves one record to another calendar. Near the
     one-year line, a row whose two dates are read in different calendars can
     flip between short and long term while each date is individually right.
-    Within two days of it, both dates must carry one offset."""
+    Within three days of it, both dates must carry one offset: two offsets put
+    one instant at most two calendar days apart, and a February 29
+    anniversary adds a third."""
     corrected = {(r['account_id'], r['txn_id']) for r in records if 'date' in r['corrected']}
     by_key = {(t['account_id'], t['txn_id']): t for t in transactions}
     naive_utc = calendar.get('naive_timestamps_are_utc', False)
-    two_days = datetime.timedelta(days=2)
+    window = datetime.timedelta(days=3)
     for row in rows_all:
         sale, origin = (row.account_id, row.txn_id), (row.origin_account_id, row.origin_txn_id)
         if row.date_acquired == 'UNKNOWN' or not ({sale, origin} & corrected):
             continue
         acquired, sold = (datetime.date.fromisoformat(row.date_acquired),
                           datetime.date.fromisoformat(row.date_sold))
-        if _holding_period(acquired, sold - two_days) == _holding_period(acquired, sold + two_days):
+        if _holding_period(acquired, sold - window) == _holding_period(acquired, sold + window):
             continue
         source = by_key.get(origin, {})
-        acquired_raw = source.get('acquired') if str(source.get('kind', '')).lower() == 'receive' else source.get('date')
+        # The importer strips and lowercases kinds; read them the same way or
+        # a padded ' receive' compares its transfer date, not its acquisition.
+        receive = str(source.get('kind', '')).strip().lower() == 'receive'
+        acquired_raw = source.get('acquired') if receive else source.get('date')
         offsets = {_timestamp_offset(by_key.get(sale, {}).get('date'), naive_utc),
                    _timestamp_offset(acquired_raw, naive_utc)}
         if None in offsets or len(offsets) != 1:
@@ -1721,13 +1726,15 @@ def build_crypto_import(transactions: 'list[dict]', *,
         taxable_keys = ({(r.account_id, r.txn_id) for r in rows_all}
                         | {(e.account_id, e.txn_id) for e in all_incomes})
         year_moves = [move for move in date_moves if move[0] in taxable_keys]
-        if tax_year is not None and any(old == tax_year and new > tax_year for _, old, new in year_moves):
-            # TY{new}'s import would have to carry this same correction to
-            # report the event; without it, it re-dates back into this year,
-            # which already excluded it, and no return reports it at all.
-            raise CryptoImportError(f'A reviewed tax date cannot move a TY{tax_year} disposal or income event '
-                                    'into a later year; report it in this year under its import date, or '
-                                    'prepare the year-end case externally')
+        if any(new > old for _, old, new in year_moves):
+            # The earlier year's import dates the event in that year. Without
+            # this correction it reports it there, so the later return would
+            # report it again; with it, the earlier return excludes it while
+            # the later import, which cannot carry it, re-dates it back:
+            # reported twice or not at all.
+            raise CryptoImportError('A reviewed tax date cannot move a disposal or income event into a later '
+                                    'year; report it in the year its import dates it, or prepare the '
+                                    'year-end case externally')
     taxable_disposals = [d for d in disposals if d.taxable]  # excludes non-taxable `send`
     if tax_year is not None:
         rows = [r for r in rows_all if int(r.date_sold[:4]) == tax_year]

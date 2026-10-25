@@ -512,21 +512,23 @@ review, a changed instant, an unconfirmed UTC assumption, an offset outside
 secured import workpaper. Source arrays and exports remain unchanged.
 
 A correction re-reads one record in another calendar, and a row's two dates
-can then come from different calendars. Within two days of the one-year line
+can then come from different calendars. Within three days of the one-year line
 that can flip a sale between short and long term, so a corrected row there
 must have both its acquisition and sale timestamps in one offset: correct the
 other date too. A bare date, an unconfirmed naive time or a receive's
 `acquired` (which this path cannot correct) has no calendar to compare, so
 such a row refuses; prepare it externally.
 
-A correction that moves a disposal or income event across a year boundary
-opens the output with a `YEAR MOVE` caveat naming both years. Every import
-covering either year must carry the same review and corrections, or one year
-reports the event again; a filed return among them may need `/tax-amend`.
-Moving a filing-year event into a later year refuses outright: that later
-import, without the correction, would re-date it back into this year, which
-already excluded it, and no return would report it. Report it in the year its
-import dates it, or prepare that case externally.
+A correction may move a disposal or income event back a year, the AA47 case:
+the import dates a sale January 1, the broker December 31. The output then
+opens with a `YEAR MOVE` caveat naming both years. Every import covering
+either year must carry the same review and corrections, or the later year
+reports the event again; until AA48 adds TY2026, a TY2026 import cannot carry
+`broker_reporting` at all, so record the move in `answers.md`. A move into a
+later year refuses outright: the earlier import dates the event in its own
+year, so the event would be reported twice, or not at all if that import
+carried the correction. Report it in the year its import dates it, or prepare
+that case externally.
 
 ## Primary authorities
 

@@ -1538,6 +1538,29 @@ def test_a_bare_date_purchase_near_the_one_year_line_cannot_be_read_in_the_sales
         source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block)
 
 
+def test_a_padded_receive_kind_is_still_read_by_its_acquisition_date():
+    # The importer reads ' receive' as a receive, so the calendar check must
+    # compare its acquisition date, not its transfer date.
+    receive = event('A', 'in', ' receive', '2025-01-05T00:00:00Z', basis_usd='100',
+                    acquired='2024-12-31T01:00:00+08:00', external_transfer_confirmed=True)
+    tx = [receive, event('A', 'sale', 'sell', '2026-01-01T01:00:00+08:00', usd=150)]
+    block = {**reporting(received=False), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='different calendars'):
+        source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block)
+
+
+def test_the_window_covers_a_february_29_anniversary_across_a_day_of_offsets():
+    # Bought 2023-02-27 at -11:00, sold 2024-02-29T04:00-11:00, re-read as
+    # 2024-03-01 at +14:00. The purchase reads 2023-02-28 or 2023-03-01 in
+    # other offsets, so the hold is long or short by calendar alone.
+    tx = [event('A', 'buy', 'buy', '2023-02-27T23:30:00-11:00', usd=100),
+          event('A', 'sale', 'sell', '2024-02-29T04:00:00-11:00', usd=150)]
+    block = {**reporting(form(date_sold='2024-03-01')), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='different calendars'):
+        C.build_crypto_import(tx, tax_year=2024, specific_identification=False, broker_reporting={
+            **block, 'source_corrections': [source_correction(tx[1], date='2024-03-01T05:00:00+14:00')]})
+
+
 def test_a_hold_far_from_the_one_year_line_needs_no_second_correction():
     # The purchase is a bare date, so it has no calendar to re-read, but no
     # reading of 2023-01-01 against 2025-12-31 is within a year.
@@ -1553,16 +1576,27 @@ def test_a_reviewed_date_cannot_move_a_filing_year_sale_into_a_later_year():
     tx = [BASE[0], {**BASE[1], 'date': '2025-12-31T11:00:00Z'}]
     correction = source_correction(tx[1], date='2026-01-01T01:00:00+14:00')
     block = {**reporting(received=False), 'tax_calendar_review': calendar_review()}
-    with pytest.raises(C.CryptoImportError, match='cannot move a TY2025 disposal or income event into a later year'):
+    with pytest.raises(C.CryptoImportError, match='cannot move a disposal or income event into a later year'):
         source_run([correction], tx, block)
     income = event('A', 'reward', 'income', '2025-12-31T11:00:00Z', usd=10, income_type='staking')
     with pytest.raises(C.CryptoImportError, match='into a later year'):
         source_run([source_correction(income, date='2026-01-01T01:00:00+14:00')], [income], block)
 
 
-def test_a_later_years_import_may_carry_a_move_into_the_earlier_year():
-    # TY2026's run of the AA47 case: the carried correction leaves its sale
-    # in TY2025, and the caveat says which return holds it.
+def test_a_forward_move_into_the_filing_year_refuses_too():
+    # A Pacific export dates the sale 2024-12-31, where TY2024's return
+    # reports it; the broker's TY2025 form dates it 2025-01-01. Moving it
+    # forward would report it on TY2025 as well.
+    tx = [BASE[0], {**BASE[1], 'date': '2024-12-31T20:00:00-08:00'}]
+    correction = source_correction(tx[1], date='2025-01-01T04:00:00Z')
+    block = {**reporting(form(date_sold='2025-01-01')), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='into a later year'):
+        source_run([correction], tx, block)
+
+
+def test_an_import_for_a_third_year_still_names_a_carried_year_move():
+    # Every import covering either year carries the correction; a TY2024 run
+    # reports neither year's sale but still names the move.
     tx, correction, block = tax_date_case()
     block['accounts']['A']['forms_received'] = False
     block['forms'] = []
