@@ -162,8 +162,9 @@ from a form's absence in the import. `broker_reporting` sits beside
   Four boxes this engine does not model are likewise REQUIRED,
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
-  and `loss_not_allowed` (box 7). Filled in, each refuses: report that
-  transaction manually. Each form carries additional required keys under the
+  and `loss_not_allowed` (box 7). Filled in, each refuses the import unless
+  that disposal is listed under [manual disposals](#manual-disposals-aa47),
+  which leaves it to be prepared by hand. Each form carries additional required keys under the
   same rule, listed in its reviewed table below. A form naming a key outside
   its type's set is refused.
   Backup and state withholding (both forms' boxes 4 and 16) belong to the parse
@@ -326,6 +327,34 @@ Optional annual stablecoin/NFT reports, manual special treatments and
 cross-year date corrections remain AA47 follow-ups. An optional-method box
 still refuses; this grouping cannot clear an unreviewed reporting year.
 
+### Manual disposals (AA47)
+
+A broker form that fills a box this engine does not model refuses the whole
+import, though only its own disposal needs the special treatment. List that
+disposal instead in the optional `broker_reporting.manual_disposals`:
+
+```json
+{"account_id": "exchange-A", "txn_id": "nft-sale-1", "evidence": "first-sale-nft-workpaper"}
+```
+
+Each entry names a filing-year disposal (or a fill group's `group_id`), and at
+least one of its forms must fill an unmodeled box: the path never stands in
+for reconciling a form the engine can model. FIFO still consumes the
+disposal's lots, so later sales and inventory are right. Its rows leave the
+import's Form 8949 rows, its Schedule D totals and its box routing, and
+`broker_reporting.manual_disposals` records its form ids, the unmodeled boxes,
+the forms' proceeds and the FIFO slices to start the preparation from. The
+output opens with a `MANUAL` caveat, and `crypto_summary.manual_disposals`
+lists the disposals.
+
+Prepare each by hand under the form's own instructions, then merge its Form
+8949 row with its `account_id`, `txn_id`, `box` and `broker_proceeds` (the
+form's proceeds), adding the same amounts into that box's Schedule D digital
+row. Tie-out fails until every listed disposal is merged that way, whether or
+not the parse ledger still holds its form. An option-reviewed import cannot
+also leave a disposal manual, since its tie-out rebuilds every account row from
+the source.
+
 ### Reviewed Form 1099-B inputs (AA61)
 
 Live review on 2026-10-24 compared every box of the
@@ -337,7 +366,8 @@ The numbered meanings agree; box 9 names the preceding year-end and box 10
 the covered year-end. This is the spot-crypto import contract, not a general
 securities or barter importer. Required unsupported keys must be copied as
 null, false or 0 when blank; a filled value refuses the import, including a
-negative contract amount. An older summary cannot establish those blanks.
+negative contract amount, unless its disposal is a
+[manual disposal](#manual-disposals-aa47). An older summary cannot establish those blanks.
 
 | Input key | TY2023 box | TY2024 box | Reviewed meaning and treatment |
 |---|---|---|---|
@@ -398,8 +428,9 @@ relief, and the box 1g and box 9 changes are below. A later year's box change
 needs a per-year input map, preserving TY2025.
 
 The table has a row for every box, numbered or not, keyed or not. Each says
-how the box is copied, that a filled box refuses the import, or why a box
-with no key cannot change the row.
+how the box is copied, that a filled box refuses the import (unless its
+disposal is a [manual disposal](#manual-disposals-aa47)), or why a box with no
+key cannot change the row.
 
 | Input key | TY2025 box | TY2026 box | Reviewed meaning and treatment |
 |---|---|---|---|

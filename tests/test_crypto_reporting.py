@@ -2044,3 +2044,76 @@ def test_a_group_form_off_its_exact_total_still_blocks(broker):
 def test_a_form_showing_the_fills_own_rounded_sum_ties_row_for_row():
     result = resolved(_subcent_fills(150.02))
     assert sorted(row['proceeds'] for row in rows(result)) == [75.01, 75.01]
+
+
+# Two sales from two lots: 'sale' (box K, routed) and 'nft' (its form fills
+# box 11c, first-sale NFT proceeds, which the engine does not model).
+TWO_SALES = [event('A', 'buy', 'buy', '2023-01-01', usd=100), event('A', 'buy2', 'buy', '2023-02-01', usd=200),
+             event('A', 'sale', 'sell', '2025-03-01', usd=150), event('A', 'nft', 'sell', '2025-04-01', usd=260)]
+
+
+def _manual_block(manual=True):
+    block = reporting(form(), form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260,
+                                   primary_sale_proceeds=260))
+    if manual:
+        block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    return block
+
+
+def test_a_form_the_engine_cannot_model_refuses_unless_its_disposal_is_manual():
+    with pytest.raises(C.CryptoImportError, match='manual_disposals'):
+        run(_manual_block(manual=False), TWO_SALES)
+    result = resolved(run(_manual_block(), TWO_SALES))
+    # The other sale routes as before; the manual one leaves every total here.
+    assert [(r['txn_id'], r['box']) for r in rows(result)] == [('sale', 'K')]
+    assert result['schedule_d']['net_gain'] == 50
+    entry, = result['broker_reporting']['manual_disposals']
+    assert (entry['txn_id'], entry['form_ids'], entry['unmodeled_boxes'], entry['broker_proceeds']) == (
+        'nft', ['da-2'], ['primary_sale_proceeds'], 260)
+    # FIFO still consumed its lot: the slice the preparer starts from.
+    assert [(r['date_acquired'], r['proceeds'], r['cost_basis']) for r in entry['fifo_rows']] == [
+        ('2023-02-01', 260, 200)]
+    assert result['crypto_summary']['manual_disposals'] == [{'account_id': 'A', 'txn_id': 'nft'}]
+    assert result['caveats'][0].startswith('MANUAL: 1 disposal') and 'primary_sale_proceeds' in result['caveats'][0]
+
+
+@pytest.mark.parametrize('entry,fragment', [
+    (dict(account_id='A', txn_id='sale', evidence='w'), 'fills a box this engine does not model'),
+    (dict(account_id='A', txn_id='missing', evidence='w'), 'distinct transactions'),
+    (dict(account_id='A', txn_id='nft'), 'needs account_id, txn_id and evidence'),
+    (dict(account_id='A', txn_id='nft', evidence=''), 'non-empty string'),
+])
+def test_a_manual_disposal_must_be_one_the_engine_cannot_model(entry, fragment):
+    # Listed beside the genuine one, so only the entry under test can refuse.
+    block = _manual_block()
+    block['manual_disposals'] = ([*block['manual_disposals'], entry] if entry.get('txn_id') != 'nft'
+                                 else [entry])
+    with pytest.raises(C.CryptoImportError, match=fragment):
+        run(block, TWO_SALES)
+
+
+def test_tie_out_fails_until_the_manual_disposal_is_merged():
+    built = resolved(run(_manual_block(), TWO_SALES))
+    result = _merged(built)
+    targets = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert any('A/nft was left for manual preparation' in t for t in targets)
+    # The preparer merges the hand-prepared row, in its box and with the
+    # form's figure, into Form 8949 and its Schedule D row alike.
+    hand = {**built['broker_reporting']['manual_disposals'][0]['fifo_rows'][0],
+            'box': 'K', 'broker_proceeds': 260, 'adjustment_code': None}
+    result['form_8949']['part_ii_long_term'].append(hand)
+    row = result['schedule_d']['part_ii_long_term']['line_9_digital_assets']
+    for key, value in (('proceeds', 260), ('cost', 200), ('gain', 60), ('broker_proceeds', 260)):
+        row[key] = round(row[key] + value, 2)
+    targets = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert not any('manual preparation' in t or 'routed Form 8949' in t for t in targets), targets
+
+
+def test_an_option_reviewed_import_cannot_leave_a_disposal_manual():
+    from tests.test_crypto_options import option_review
+    block = _manual_block()
+    block['option_exercise_review'] = option_review(TWO_SALES[2], 'written_call')
+    with pytest.raises(C.CryptoImportError, match='option-reviewed import cannot'):
+        run(block, TWO_SALES)

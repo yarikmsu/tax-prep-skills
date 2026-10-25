@@ -375,6 +375,12 @@ Update `result.json` from the main session only — never from a delegated sub-t
    `employer_stock` flag, whose tie reads the row's whole adjustment. A row without a box is
    never merged: the importer gives one only from reconciled evidence, and a year
    without a reviewed regime blocks rather than reusing another year's boxes.
+   A disposal under `broker_reporting.manual_disposals` (a `MANUAL` caveat) has no
+   row here at all: prepare it by hand from its FIFO slices and form, then merge
+   its Form 8949 row with `account_id`, `txn_id`, `box` and `broker_proceeds` and
+   add the same amounts into its box's Schedule D row
+   (`docs/contributing/crypto-accounts.md`, Manual disposals). Tie-out fails until
+   each one is merged.
 4. **`crypto_summary`** ← the result's COMPLETE `crypto_summary` + `needs_basis`.
    Preserve `basis_mode`, `complete`, `unresolved_inputs` and every `reporting_*`
    field; tie-out blocks unresolved account metadata and unrouted reporting. Retain

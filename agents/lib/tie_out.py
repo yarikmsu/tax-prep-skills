@@ -1018,6 +1018,25 @@ def _digital_proceeds_checks(result: dict) -> "tuple[float, list[str]]":
     return max(difference, 0.0), problems
 
 
+def _manual_disposals_on_the_return(result: dict) -> list[str]:
+    """Each disposal the import left for manual preparation, merged as an
+    account-tagged Form 8949 row with a box. Its broker form is normally in
+    the ledger too, but this does not depend on the parse having kept it."""
+    summary = result.get('crypto_summary')
+    pending = summary.get('manual_disposals', []) if isinstance(summary, dict) else []
+    if not isinstance(pending, list) or any(not isinstance(entry, dict) for entry in pending):
+        return ['crypto_summary.manual_disposals is malformed; copy it from the import']
+    form = result.get('form_8949')
+    merged = {(row.get('account_id'), row.get('txn_id'))
+              for part in ('part_i_short_term', 'part_ii_long_term')
+              for row in ((form.get(part) or []) if isinstance(form, dict) else [])
+              if isinstance(row, dict) and row.get('box') is not None}
+    return [f"crypto disposal {entry.get('account_id')}/{entry.get('txn_id')} was left for manual preparation "
+            'and is not on the return; merge its hand-prepared Form 8949 row with its account_id, txn_id, '
+            'box and broker_proceeds'
+            for entry in pending if (entry.get('account_id'), entry.get('txn_id')) not in merged]
+
+
 def _digital_rows_match_form_8949(result: dict) -> list[str]:
     """Each Schedule D digital row against the sum, by box, of the result's
     own routed Form 8949 account rows, in cents.
@@ -2725,6 +2744,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # digital-asset rows with no summary at all, still owes the reconciliation.
     missing_targets.extend(_digital_row_placement_checks(result))
     missing_targets.extend(_digital_rows_match_form_8949(result))
+    missing_targets.extend(_manual_disposals_on_the_return(result))
     digital_rows = _digital_asset_rows(result)
     missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):

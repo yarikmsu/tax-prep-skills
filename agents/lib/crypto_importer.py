@@ -940,9 +940,28 @@ def _form_cents(value, label) -> int:
     return int(amount * 100)
 
 
+def _manual_disposals_input(reporting, events) -> dict:
+    """Disposals the preparer files by hand, keyed (account, txn): evidence."""
+    raw = reporting.get('manual_disposals', [])
+    if not isinstance(raw, list):
+        raise CryptoImportError('manual_disposals must be a list of reviewed disposals')
+    manual = {}
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != {'account_id', 'txn_id', 'evidence'}:
+            raise CryptoImportError('Each manual disposal needs account_id, txn_id and evidence')
+        key = (_account_id(entry['account_id'], 'manual disposal account_id'),
+               _account_id(entry['txn_id'], 'manual disposal txn_id'))
+        if key not in events or key in manual:
+            raise CryptoImportError('manual_disposals must name distinct transactions in this import')
+        manual[key] = _account_id(entry['evidence'], 'manual disposal evidence')
+    return manual
+
+
 def _broker_reporting_input(reporting, events, regime, tax_year):
-    if not isinstance(reporting, dict) or not set(reporting) <= {'accounts', 'forms', 'resolutions', 'fill_groups'}:
-        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions and fill_groups')
+    if not isinstance(reporting, dict) or not set(reporting) <= {
+            'accounts', 'forms', 'resolutions', 'fill_groups', 'manual_disposals'}:
+        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions, fill_groups '
+                                'and manual_disposals')
     raw_accounts = reporting.get('accounts', {})
     raw_forms = reporting.get('forms', [])
     raw_resolutions = reporting.get('resolutions', {})
@@ -950,12 +969,19 @@ def _broker_reporting_input(reporting, events, regime, tax_year):
             and isinstance(raw_resolutions, dict)):
         raise CryptoImportError('broker_reporting accounts and resolutions are objects; forms is a list')
     accounts = _accounts_input(raw_accounts, events)
-    forms = [_form_input(f'broker_reporting.forms[{index}]', form, events, accounts, regime, tax_year)
+    manual = _manual_disposals_input(reporting, events)
+    forms = [_form_input(f'broker_reporting.forms[{index}]', form, events, accounts, regime, tax_year, manual)
              for index, form in enumerate(raw_forms)]
     ids = [form['form_id'] for form in forms]
     if len(set(ids)) != len(ids):
         raise CryptoImportError('broker form ids must be unique')
-    return accounts, forms, _resolutions_input(raw_resolutions, ids)
+    for key in manual:
+        # The path exists for a form the engine cannot model, never as a way
+        # around reconciling one it can.
+        if not any((form['account_id'], form['txn_id']) == key and form['unmodeled'] for form in forms):
+            raise CryptoImportError('A manual disposal must be reported by a broker form that fills a box this '
+                                    'engine does not model; reconcile any other disposal instead')
+    return accounts, forms, _resolutions_input(raw_resolutions, ids), manual
 
 
 def _accounts_input(raw_accounts, events) -> dict:
@@ -979,7 +1005,7 @@ def _accounts_input(raw_accounts, events) -> dict:
     return accounts
 
 
-def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
+def _form_input(label, form, events, accounts, regime, tax_year, manual=None) -> dict:
     if not isinstance(form, dict):
         raise CryptoImportError(f'{label} must be an object')
     # First, because the type decides which keys the form must carry.
@@ -1000,9 +1026,11 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
         # An evidenced put cost is already in this disposal's source proceeds.
         # A group alias must not borrow the first member's option evidence.
         filled.remove('net_proceeds')
-    if filled:
-        raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; '
-                                'report that disposal manually (a blank box is copied as null, false or 0)')
+    is_manual = (form.get('account_id'), form.get('txn_id')) in (manual or {})
+    if filled and not is_manual:
+        raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; list that disposal '
+                                'under broker_reporting.manual_disposals and prepare it by hand (a blank box '
+                                'is copied as null, false or 0)')
     missing = (_FORM_FIELDS | unsupported | reviewed) - set(form)
     unknown = set(form) - _FORM_FIELDS - unsupported - reviewed
     if missing or unknown:
@@ -1036,7 +1064,8 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
             'cost_basis': None if shown is None else _form_cents(shown, f'{label}.cost_basis'),
             'reported': reported, 'term': term,
             'net_proceeds': form.get('net_proceeds') is True,
-            'customer_acquisition_info': form.get('customer_acquisition_info')}
+            'customer_acquisition_info': form.get('customer_acquisition_info'),
+            'unmodeled': filled}
 
 
 def _resolutions_input(raw_resolutions, ids) -> dict:
@@ -1307,7 +1336,7 @@ def _issue(reason, account=None, txn=None, form=None) -> dict:
 
 def _reporting_inputs(reporting, events, regime, tax_year):
     if reporting is None:
-        return {}, [], {}
+        return {}, [], {}, {}
     if regime is None:
         raise CryptoImportError(
             'broker_reporting needs --year' if tax_year is None else
@@ -1403,7 +1432,7 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     for row in rows:
         by_txn.setdefault((row.account_id, row.txn_id), []).append(row)
     by_txn, events, fill_groups = _fill_group_rows(reporting, by_txn, events)
-    accounts, forms, resolutions = _reporting_inputs(reporting, events, regime, tax_year)
+    accounts, forms, resolutions, manual = _reporting_inputs(reporting, events, regime, tax_year)
     forms_by_txn: 'dict[tuple, list]' = {}
     for form in forms:
         forms_by_txn.setdefault((form['account_id'], form['txn_id']), []).append(form)
@@ -1413,10 +1442,22 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
         issues.append(_issue('Form 8949 routing needs the filing year (--year)' if tax_year is None else
                              f'TY{tax_year} has no reviewed Form 8949 reporting regime'))
         by_txn = {}
-    routed, records, not_reported, above = {}, [], [], 0
+    routed, records, not_reported, above, manual_records, excluded = {}, [], [], 0, [], set()
     for (account, txn), txn_rows in by_txn.items():
         declared = accounts.get(account)
-        if declared is None:
+        if (account, txn) in manual:
+            # Prepared by hand: FIFO has consumed its lots, but none of its
+            # rows is routed or totalled here. The ledger still holds its
+            # form, so tie-out fails until the hand-prepared row is merged.
+            excluded.update(id(row) for row in txn_rows)
+            txn_forms = forms_by_txn.get((account, txn), [])
+            manual_records.append({
+                'account_id': account, 'txn_id': txn, 'evidence': manual[(account, txn)],
+                'form_ids': [form['form_id'] for form in txn_forms],
+                'unmodeled_boxes': sorted({box for form in txn_forms for box in form['unmodeled']}),
+                'broker_proceeds': _money(sum(form['proceeds'] for form in txn_forms) / 100),
+                'fifo_rows': [_row_dict(replace(row, fifo_cost_basis=row.cost_basis)) for row in txn_rows]})
+        elif declared is None:
             issues.append(_issue('declare whether this account received broker forms for the filing year',
                                  account, txn))
         elif not declared['forms_received'] or txn in declared['not_reported']:
@@ -1434,9 +1475,11 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
             if new_rows is not None:
                 above += extra
                 routed.update(new_rows)
-    final = [routed.get(id(row)) or replace(row, fifo_cost_basis=row.cost_basis) for row in rows]
+    final = [routed.get(id(row)) or replace(row, fifo_cost_basis=row.cost_basis)
+             for row in rows if id(row) not in excluded]
     return final, _reporting_report(
         tax_year, regime, issues, forms=records, not_reported=not_reported,
+        **({'manual_disposals': manual_records} if manual_records else {}),
         accounts={account: {'forms_received': entry['forms_received'], 'evidence': entry['evidence'],
                             'not_reported': sorted(entry['not_reported'])} for account, entry in accounts.items()},
         proceeds_above_forms=_money(above / 100), schedule_d_routing=_schedule_d_routing(final),
@@ -2116,6 +2159,20 @@ def build_crypto_import(transactions: 'list[dict]', *,
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
+    manual = reporting.get('manual_disposals', [])
+    if manual:
+        if reviewed_options:
+            # Tie-out rebuilds an option return from this source and compares
+            # every account row, which a hand-prepared row cannot match.
+            raise CryptoImportError('An option-reviewed import cannot also leave a disposal for manual '
+                                    'preparation; prepare that import externally')
+        result['crypto_summary']['manual_disposals'] = [
+            {'account_id': entry['account_id'], 'txn_id': entry['txn_id']} for entry in manual]
+        boxes = sorted({box for entry in manual for box in entry['unmodeled_boxes']})
+        result['caveats'].insert(0, f'MANUAL: {len(manual)} disposal(s) carry a broker-form box this engine '
+                                    f"does not model ({', '.join(boxes)}); they are left out of Form 8949 and "
+                                    'Schedule D here. Prepare each by hand from broker_reporting.manual_disposals '
+                                    'and merge its row before tie-out, which fails until it is on the return.')
     if not reporting['complete']:
         result['caveats'].insert(0, 'BLOCKED: Form 8949 reporting is unresolved; reconcile broker forms '
                                     '(broker_reporting.unresolved) before merging rows into a return.')
