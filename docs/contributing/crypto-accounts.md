@@ -162,8 +162,9 @@ from a form's absence in the import. `broker_reporting` sits beside
   Four boxes this engine does not model are likewise REQUIRED,
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
-  and `loss_not_allowed` (box 7). Filled in, each refuses: report that
-  transaction manually. Each form carries additional required keys under the
+  and `loss_not_allowed` (box 7). Filled in, each refuses the import unless
+  that disposal is listed under [manual disposals](#manual-disposals-aa47),
+  which leaves it to be prepared by hand. Each form carries additional required keys under the
   same rule, listed in its reviewed table below. A form naming a key outside
   its type's set is refused.
   Backup and state withholding (both forms' boxes 4 and 16) belong to the parse
@@ -175,6 +176,7 @@ from a form's absence in the import. `broker_reporting` sits beside
 |---|---|---|
 | Proceeds above the form | `proceeds: taxpayer_records` | (d) the correct, higher proceeds; reported as `proceeds_above_forms` |
 | Proceeds below the form, by no more than the recorded fee | `proceeds: transaction_costs` | (d) the form's proceeds; code E; the unreflected costs in (g) |
+| Proceeds above the form, by no more than a reviewed written call's premium | `proceeds: option_premium` | (d) the form's proceeds; code E; the unreflected premium in (g) |
 | Basis reported to the IRS differs | `basis: taxpayer_records` | (e) the reported basis; code B; (g) = reported − FIFO basis |
 | Basis shown but not reported differs | `basis: taxpayer_records` | (e) the FIFO basis; code B; (g) zero |
 | Holding period differs | `term: taxpayer_records` | the correct part; code T; (g) zero |
@@ -310,16 +312,72 @@ groups are collected. Intervening purchases and transfers keep their original
 position. Output rows retain their own transaction IDs, dates and FIFO basis;
 the form workpaper names the group and `fill_groups` retains its membership
 and evidence. Fees are summed once for the group's reconciliation. Units and
-amounts must reconcile under the existing exact checks. Group-level
+amounts must reconcile under the existing exact checks, with one exact
+exception: each fill rounds to cents on its own, while a broker reporting the
+order rounds it once. A single form whose proceeds equal the fills' exact
+total, net of fees, rounded once takes the form's figure, the difference
+landing on the largest row, when every fill's rows share one holding period;
+moving those cents between short- and long-term rows would move gain between
+parts, so a mixed-term group, and any other difference, stays unresolved. Group-level
 `resolutions` are refused: spreading an adjustment across differently priced
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
 
 This handles linked partial fills only. An export's lost precision or wrong
 USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47).
-Optional annual stablecoin/NFT reports, manual special treatments and
-cross-year date corrections remain AA47 follow-ups. An optional-method box
+Optional annual stablecoin/NFT reports and cross-year date corrections remain
+AA47 follow-ups; a box this engine does not model goes through
+[manual disposals](#manual-disposals-aa47). An optional-method box
 still refuses; this grouping cannot clear an unreviewed reporting year.
+
+### Manual disposals (AA47)
+
+A broker form that fills a box this engine does not model refuses the whole
+import, though only its own disposal needs the special treatment. List that
+disposal instead in the optional `broker_reporting.manual_disposals`:
+
+```json
+{"account_id": "exchange-A", "txn_id": "sale-7", "evidence": "ordinary-gain-workpaper"}
+```
+
+Each entry names a filing-year disposal (or a fill group's `group_id`), and at
+least one of its forms must fill an unmodeled box: the path never stands in
+for reconciling a form the engine can model. Three boxes refuse it, because
+their treatment reaches beyond the one disposal: a reported wash sale
+(§1091(d) moves the disallowed loss into a replacement lot's basis), a CUSIP
+(a tokenized security, whose other sales face the wash-sale rules too), and
+box 11c's first-sale NFT proceeds (a ledger category tie-out blocks on by
+itself); prepare such an import externally. FIFO still consumes the
+disposal's lots, so later sales and inventory keep their FIFO basis. Its rows leave the
+import's Form 8949 rows, its Schedule D totals and its box routing, and
+`broker_reporting.manual_disposals` records its form ids, the unmodeled boxes,
+the forms' proceeds, and per holding period its share of those proceeds
+(`broker_proceeds_by_term`), its FIFO basis (`fifo_cost_basis`) and the boxes
+its form type gives that term (`boxes_by_term`). Its `fifo_rows` are the
+slices to start the preparation from, each with its `holding_period` and its
+`broker_proceeds` share as a routed disposal's rows take it: forms split by
+term give each term's slices their own form's figure, and otherwise the forms'
+total is spread over the slices by their proceeds. The output opens with a `MANUAL` caveat, and
+`crypto_summary.manual_disposals` lists the disposals with the same figures.
+
+Prepare each by hand under the form's own instructions, then merge each of its
+`fifo_rows` (keyed by the entry's own `txn_id`, a fill group's `group_id`
+included) as a Form 8949 row in its holding period's part, with its
+`account_id`, `txn_id`, a box of that part, `broker_proceeds` and
+`fifo_cost_basis`, adding the same amounts into each box's Schedule D digital
+row. Tie-out fails, whether or not the parse ledger still holds the form,
+until every merged row's box is one its form type gives the part it sits in,
+the rows' broker figures add to the forms' proceeds, and per part their broker
+figures and FIFO basis are the recorded per-term figures. A merged row's
+column (d) may exceed its broker figure, the correct higher proceeds being the
+preparer's to enter: the cross-check of column (d) against the import's
+`reporting_proceeds_above_forms` sets the manual rows' excess aside. These are totals, so they
+catch a slice left out or merged twice, a short-term slice in Part II
+(including one with no basis) and a box from the other part; they do not
+check each slice row by row. The money columns are the preparer's; the term
+is the lot's. An option-reviewed import cannot
+also leave a disposal manual, since its tie-out rebuilds every account row from
+the source.
 
 ### Reviewed Form 1099-B inputs (AA61)
 
@@ -332,7 +390,8 @@ The numbered meanings agree; box 9 names the preceding year-end and box 10
 the covered year-end. This is the spot-crypto import contract, not a general
 securities or barter importer. Required unsupported keys must be copied as
 null, false or 0 when blank; a filled value refuses the import, including a
-negative contract amount. An older summary cannot establish those blanks.
+negative contract amount, unless its disposal is a
+[manual disposal](#manual-disposals-aa47). An older summary cannot establish those blanks.
 
 | Input key | TY2023 box | TY2024 box | Reviewed meaning and treatment |
 |---|---|---|---|
@@ -393,8 +452,9 @@ relief, and the box 1g and box 9 changes are below. A later year's box change
 needs a per-year input map, preserving TY2025.
 
 The table has a row for every box, numbered or not, keyed or not. Each says
-how the box is copied, that a filled box refuses the import, or why a box
-with no key cannot change the row.
+how the box is copied, that a filled box refuses the import (unless its
+disposal is a [manual disposal](#manual-disposals-aa47)), or why a box with no
+key cannot change the row.
 
 | Input key | TY2025 box | TY2026 box | Reviewed meaning and treatment |
 |---|---|---|---|
@@ -636,8 +696,15 @@ The adjustment precedes FIFO across all years. Acquired basis follows partial
 sales, spending, exchanges, transfers and remaining inventory. An option-caused
 disposal itself must be a direct USD `sell`; a `trade` also creates a new asset's
 basis and is outside this path. A purchased put additionally requires every
-sold lot to have been held long-term already on `option_opened`; otherwise its
-holding-period treatment requires external preparation. Opening inventory with
+sold lot to have been held long-term already on `option_opened`, and no lot of
+the same asset in any account, a lot sent to the taxpayer's own outside
+wallet included, to be held one year or less on that date or bought after it
+and no later than the exercise. A sent lot counts as held from the send on,
+even if a later receive returns it: the engine cannot tie a receive to the
+send it reverses, so that round trip refuses too. Pub. 550's married-put rule
+makes such holdings short-term and restarts their holding period, which the
+engine does not model, so the import refuses and that case is prepared
+externally. Opening inventory with
 an externally supplied basis still needs the original exercise and transfer
 history to use this review path.
 
@@ -646,6 +713,11 @@ A direct purchased-put sale can reconcile a form's `net_proceeds: true`.
 That form cannot deduct the put cost again through code E. A gross-proceeds
 form can use the evidenced put cost plus separately recorded commissions to
 explain code E; the existing resolution and evidence are still required.
+A written call's premium raises the amount realized above a gross form's
+proceeds. The Form 8949 instructions (TY2023-2025) put the form's figure in
+column (d) and an option premium the form does not reflect in (g) under code
+E, so `proceeds: option_premium` does that, for no more than the reviewed
+premium; `taxpayer_records` still enters the higher figure in (d) instead.
 Other unsupported filled boxes refuse. Grouped option-caused disposals refuse
 pending external premium allocation; ordinary later sales from an
 option-acquired lot may use reviewed fill groups.

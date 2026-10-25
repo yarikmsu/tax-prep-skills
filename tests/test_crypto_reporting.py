@@ -2013,3 +2013,313 @@ def test_a_missing_broker_figure_is_reported_once_not_as_a_second_excess():
     report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
         option_exercise_answer=False, specific_identification_answer=False)
     assert not any('exceeds its rows' in t for t in report.missing_result_targets)
+
+
+def _subcent_fills(broker):
+    # Two fills of 0.5 BTC at 75.005 each: rounded on their own they post
+    # 75.01 + 75.01 = 150.02, while the order's exact 150.010 rounds once to
+    # 150.01, which is what the broker reports.
+    tx = [event('A', 'buy', 'buy', '2023-01-01', 1, 100),
+          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '75.005'),
+          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '75.005')]
+    block = {**reporting(form(txn_id='order1', proceeds=broker)),
+             'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                  evidence='single-sale-confirmation')]}
+    return run(block, tx)
+
+
+def test_a_group_form_equal_to_its_once_rounded_total_takes_the_forms_figure():
+    result = resolved(_subcent_fills(150.01))
+    assert sorted(row['proceeds'] for row in rows(result)) == [75.0, 75.01]
+    assert result['broker_reporting']['proceeds_above_forms'] == 0
+
+
+@pytest.mark.parametrize('broker', [150.0, 150.03])
+def test_a_group_form_off_its_exact_total_still_blocks(broker):
+    # Neither is the order's exact 150.010 rounded once, nor the fills' own
+    # 150.02 (which ties row for row): a real difference stays unresolved.
+    blocked(_subcent_fills(broker), 'proceeds differ')
+
+
+def test_a_form_showing_the_fills_own_rounded_sum_ties_row_for_row():
+    result = resolved(_subcent_fills(150.02))
+    assert sorted(row['proceeds'] for row in rows(result)) == [75.01, 75.01]
+
+
+# Two sales from two lots: 'sale' (box K, routed) and 'nft' (its form checks
+# box 6, ordinary gain or loss, which the engine does not model).
+TWO_SALES = [event('A', 'buy', 'buy', '2023-01-01', usd=100), event('A', 'buy2', 'buy', '2023-02-01', usd=200),
+             event('A', 'sale', 'sell', '2025-03-01', usd=150), event('A', 'nft', 'sell', '2025-04-01', usd=260)]
+
+
+def _manual_block(manual=True):
+    block = reporting(form(), form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260,
+                                   ordinary=True))
+    if manual:
+        block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    return block
+
+
+def test_a_form_the_engine_cannot_model_refuses_unless_its_disposal_is_manual():
+    with pytest.raises(C.CryptoImportError, match='manual_disposals'):
+        run(_manual_block(manual=False), TWO_SALES)
+    result = resolved(run(_manual_block(), TWO_SALES))
+    # The other sale routes as before; the manual one leaves every total here.
+    assert [(r['txn_id'], r['box']) for r in rows(result)] == [('sale', 'K')]
+    assert result['schedule_d']['net_gain'] == 50
+    entry, = result['broker_reporting']['manual_disposals']
+    assert (entry['txn_id'], entry['form_ids'], entry['unmodeled_boxes'], entry['broker_proceeds']) == (
+        'nft', ['da-2'], ['ordinary'], 260)
+    # FIFO still consumed its lot: the slice the preparer starts from, with
+    # its term and its share of the form's proceeds.
+    assert [(r['date_acquired'], r['proceeds'], r['cost_basis'], r['holding_period'], r['broker_proceeds'])
+            for r in entry['fifo_rows']] == [('2023-02-01', 260, 200, 'long', 260)]
+    assert result['crypto_summary']['manual_disposals'] == [
+        {'account_id': 'A', 'txn_id': 'nft', 'broker_proceeds': 260,
+         'broker_proceeds_by_term': {'short': 0, 'long': 260},
+         'fifo_cost_basis': {'short': 0, 'long': 200},
+         'boxes_by_term': {'short': ['G', 'H', 'I'], 'long': ['J', 'K', 'L']}}]
+    assert result['caveats'][0].startswith('MANUAL: 1 disposal') and 'ordinary' in result['caveats'][0]
+
+
+@pytest.mark.parametrize('entry,fragment', [
+    (dict(account_id='A', txn_id='sale', evidence='w'), 'fills a box this engine does not model'),
+    (dict(account_id='A', txn_id='missing', evidence='w'), 'distinct transactions'),
+    (dict(account_id='A', txn_id='nft'), 'needs account_id, txn_id and evidence'),
+    (dict(account_id='A', txn_id='nft', evidence=''), 'non-empty string'),
+])
+def test_a_manual_disposal_must_be_one_the_engine_cannot_model(entry, fragment):
+    # Listed beside the genuine one, so only the entry under test can refuse.
+    block = _manual_block()
+    block['manual_disposals'] = ([*block['manual_disposals'], entry] if entry.get('txn_id') != 'nft'
+                                 else [entry])
+    with pytest.raises(C.CryptoImportError, match=fragment):
+        run(block, TWO_SALES)
+
+
+def test_tie_out_fails_until_the_manual_disposal_is_merged():
+    built = resolved(run(_manual_block(), TWO_SALES))
+    result = _merged(built)
+    targets = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert any('A/nft was left for manual preparation' in t for t in targets)
+    # The preparer merges the hand-prepared row, in its box and with the
+    # form's figure, into Form 8949 and its Schedule D row alike.
+    hand = {**built['broker_reporting']['manual_disposals'][0]['fifo_rows'][0],
+            'box': 'K', 'broker_proceeds': 260, 'adjustment_code': None}
+    result['form_8949']['part_ii_long_term'].append(hand)
+    row = result['schedule_d']['part_ii_long_term']['line_9_digital_assets']
+    for key, value in (('proceeds', 260), ('cost', 200), ('gain', 60), ('broker_proceeds', 260)):
+        row[key] = round(row[key] + value, 2)
+    targets = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert not any('manual preparation' in t or 'routed Form 8949' in t for t in targets), targets
+
+
+def test_an_option_reviewed_import_cannot_leave_a_disposal_manual():
+    from tests.test_crypto_options import option_review
+    block = _manual_block()
+    block['option_exercise_review'] = option_review(TWO_SALES[2], 'written_call')
+    with pytest.raises(C.CryptoImportError, match='option-reviewed import cannot'):
+        run(block, TWO_SALES)
+
+
+def test_an_import_whose_only_sale_is_manual_still_answers_yes():
+    tx = [event('A', 'buy2', 'buy', '2023-02-01', usd=200), event('A', 'nft', 'sell', '2025-04-01', usd=260)]
+    block = reporting(form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260, ordinary=True))
+    block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    result = resolved(run(block, tx))
+    assert rows(result) == [] and result['digital_asset_question'] == 'Yes'
+
+
+@pytest.mark.parametrize('box,value', [('wash_sale_loss_disallowed', 300), ('cusip', '000000000'),
+                                       ('primary_sale_proceeds', 260)])
+def test_a_box_whose_treatment_reaches_other_sales_cannot_be_left_manual(box, value):
+    block = reporting(form(), form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260,
+                                   **{box: value}))
+    block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    with pytest.raises(C.CryptoImportError, match=re.escape(f"cannot isolate ['{box}']")):
+        run(block, TWO_SALES)
+
+
+def test_a_manual_disposal_merged_in_part_or_without_a_box_fails_tie_out():
+    # Two slices: 0.5 of a 2023 lot and 0.5 of a 2025 lot, one 260 form.
+    tx = [event('A', 'old', 'buy', '2023-02-01', qty='0.5', usd=100),
+          event('A', 'new', 'buy', '2025-01-02', qty='0.5', usd=100),
+          event('A', 'nft', 'sell', '2025-04-01', qty='1', usd=260)]
+    block = reporting(form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260, ordinary=True))
+    block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    built = resolved(run(block, tx))
+    long_slice, short_slice = sorted(built['broker_reporting']['manual_disposals'][0]['fifo_rows'],
+                                     key=lambda r: r['date_acquired'])
+    result = _merged(built)
+
+    def check():
+        return tie_out.evaluate([], result, [], option_exercise_answer=False,
+                                specific_identification_answer=False).missing_result_targets
+
+    result['form_8949']['part_ii_long_term'].append({**long_slice, 'box': 'K', 'broker_proceeds': 130})
+    assert any('only partly on the return' in t for t in check())
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': None, 'broker_proceeds': 130})
+    assert any('only partly on the return' in t for t in check())
+    result['form_8949']['part_i_short_term'][-1]['box'] = 'H'
+    assert not any('A/nft' in t for t in check()), check()
+
+
+def _two_term_manual_sale(new_lot=None):
+    # 0.5 of a 2023 lot and 0.5 of a 2025 lot, sold together under one 260 form.
+    tx = [event('A', 'old', 'buy', '2023-02-01', qty='0.5', usd=100),
+          new_lot or event('A', 'new', 'buy', '2025-01-02', qty='0.5', usd=100),
+          event('A', 'nft', 'sell', '2025-04-01', qty='1', usd=260)]
+    block = reporting(form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260, ordinary=True))
+    block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    built = resolved(run(block, tx))
+    long_slice, short_slice = sorted(built['broker_reporting']['manual_disposals'][0]['fifo_rows'],
+                                     key=lambda r: r['date_acquired'])
+    return _merged(built), long_slice, short_slice
+
+
+def _manual_targets(result, key):
+    return [t for t in tie_out.evaluate([], result, [], option_exercise_answer=False,
+                                        specific_identification_answer=False).missing_result_targets if key in t]
+
+
+def test_a_manual_slice_merged_twice_fails_tie_out():
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'] += [{**long_slice, 'box': 'K', 'broker_proceeds': 130}] * 2
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': 'H', 'broker_proceeds': 130})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'more than once on the return' in targets[0], targets
+    assert 'add to 390.00, not the 260.00' in targets[0]
+
+
+def test_a_two_term_manual_sale_merged_as_one_long_term_row_fails_tie_out():
+    # Column (d) and the broker figure tie, but $30 of short-term gain would
+    # be taxed at long-term rates: the FIFO basis of each part pins the terms.
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'].append(
+        {**long_slice, 'box': 'K', 'proceeds': 260, 'cost_basis': 200, 'gain_loss': 60, 'broker_proceeds': 260})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'other holding periods than its lots' in targets[0], targets
+    assert 'broker_proceeds must be 130.00 in Part I and 130.00 in Part II' in targets[0]
+
+
+@pytest.mark.parametrize('box', [
+    'K',     # a long-term box: Schedule D routes by box, so it would reach line 9
+    'B',     # a 1099-B box on a 1099-DA slice: the same Schedule D line, the wrong checkbox
+    ['H'],   # not a box at all
+])
+def test_a_manual_slice_needs_a_box_its_form_type_gives_its_part(box):
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'].append({**long_slice, 'box': 'K'})
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': box})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'box is not one its form type gives the part' in targets[0], targets
+    result['form_8949']['part_i_short_term'][-1]['box'] = 'H'
+    assert not _manual_targets(result, 'A/nft')
+
+
+def test_split_forms_give_each_terms_slices_their_own_forms_proceeds():
+    # One form per term, each rounding its half the other way from FIFO's
+    # spread: each term's slices take their own form's figure, as routed
+    # rows of the same sale would.
+    tx = [event('A', 'old', 'buy', '2023-02-01', qty='0.5', usd=100),
+          event('A', 'new', 'buy', '2025-01-02', qty='0.5', usd=100),
+          event('A', 'nft', 'sell', '2025-04-01', qty='1', usd='260.01')]
+    block = reporting(form(form_id='da-s', txn_id='nft', date_sold='2025-04-01', quantity='0.5',
+                           proceeds='130.01', term='short', ordinary=True),
+                      form(form_id='da-l', txn_id='nft', date_sold='2025-04-01', quantity='0.5',
+                           proceeds='130.00', term='long'))
+    block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
+    built = resolved(run(block, tx))
+    slices = built['broker_reporting']['manual_disposals'][0]['fifo_rows']
+    assert sorted((r['holding_period'], r['broker_proceeds']) for r in slices) == [('long', 130), ('short', 130.01)]
+    assert built['crypto_summary']['manual_disposals'][0]['broker_proceeds_by_term'] == {'short': 130.01, 'long': 130}
+    result = _merged(built)
+    for r in slices:
+        part, box = ('part_i_short_term', 'H') if r['holding_period'] == 'short' else ('part_ii_long_term', 'K')
+        result['form_8949'][part].append({**r, 'box': box})
+    assert not _manual_targets(result, 'A/nft')
+
+
+def test_a_manual_slice_may_report_proceeds_above_its_form():
+    # The preparer's column (d) is the correct, higher figure, which the
+    # import that left the sale out reported no excess for; its broker
+    # figures still tie, and every routed row's excess is still checked.
+    result, long_slice, short_slice = _two_term_manual_sale()
+    for part, s, box, line, extra in (('part_ii_long_term', long_slice, 'K', 'line_9_digital_assets', 0),
+                                      ('part_i_short_term', short_slice, 'H', 'line_2_digital_assets', 10)):
+        proceeds = s['proceeds'] + extra
+        gain = round(proceeds - s['cost_basis'], 2)
+        result['form_8949'][part].append({**s, 'box': box, 'proceeds': proceeds, 'gain_loss': gain})
+        row = result['schedule_d'][part].setdefault(line, dict(proceeds=0, cost=0, adjustment=0, gain=0,
+                                                               adjustment_code=None, broker_proceeds=0))
+        for key, value in (('proceeds', proceeds), ('cost', s['cost_basis']), ('gain', gain),
+                           ('broker_proceeds', s['broker_proceeds'])):
+            row[key] = round(row[key] + value, 2)
+    targets = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert not [t for t in targets if 'column (d)' in t or 'A/nft' in t or 'routed Form 8949' in t], targets
+
+
+def test_a_zero_basis_slice_cannot_change_its_term_unseen():
+    # A $0-basis short-term receive adds nothing to either term's FIFO basis;
+    # its broker share is what pins it to Part I.
+    result, long_slice, short_slice = _two_term_manual_sale(
+        event('A', 'fork', 'receive', '2025-01-02', qty='0.5', basis_usd=0, acquired='2025-01-02',
+              external_transfer_confirmed=True))
+    assert short_slice['cost_basis'] == 0 and short_slice['holding_period'] == 'short'
+    result['form_8949']['part_ii_long_term'] += [{**long_slice, 'box': 'K'}, {**short_slice, 'box': 'K'}]
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'other holding periods than its lots' in targets[0], targets
+
+
+def test_a_manual_sale_keeps_each_terms_fifo_basis():
+    # The broker shares in their parts, the basis moved between them.
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'].append({**long_slice, 'box': 'K', 'fifo_cost_basis': 200})
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': 'H', 'fifo_cost_basis': 0})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'fifo_cost_basis must be 100.00 in Part I and 100.00 in Part II' in targets[0]
+    result['form_8949']['part_i_short_term'][-1]['fifo_cost_basis'] = None
+    assert 'without its fifo_cost_basis' in _manual_targets(result, 'A/nft')[0]
+
+
+@pytest.mark.parametrize('field', ['broker_proceeds', 'broker_proceeds_by_term', 'fifo_cost_basis', 'boxes_by_term'])
+def test_a_manual_entry_from_an_older_import_is_malformed(field):
+    result, long_slice, short_slice = _two_term_manual_sale()
+    del result['crypto_summary']['manual_disposals'][0][field]
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'is malformed or from an older import; re-run the import' in targets[0], targets
+
+
+def test_a_manual_fill_group_merges_its_slices_as_given():
+    # Two fills of one order at different prices: each slice's broker share
+    # follows its own proceeds, not its units.
+    tx = [event('A', 'old', 'buy', '2023-01-01', '1', 100),
+          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '70'),
+          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '80')]
+    block = {**reporting(form(txn_id='order1', proceeds=150, ordinary=True)),
+             'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                  evidence='order-confirmation')],
+             'manual_disposals': [dict(account_id='A', txn_id='order1', evidence='order-workpaper')]}
+    built = resolved(run(block, tx))
+    slices = built['broker_reporting']['manual_disposals'][0]['fifo_rows']
+    # Keyed by the group, as the summary and tie-out key it.
+    assert [(r['txn_id'], r['broker_proceeds']) for r in slices] == [('order1', 70), ('order1', 80)]
+    result = _merged(built)
+    assert _manual_targets(result, 'A/order1')
+    result['form_8949']['part_ii_long_term'] += [{**r, 'box': 'K'} for r in slices]
+    assert not _manual_targets(result, 'A/order1')
+
+
+def test_a_mixed_term_group_keeps_its_cents_rather_than_move_them_between_parts():
+    # The fills' once-rounded total is 150.01 against their own 150.02, but
+    # one fill is long-term and one short: the cent cannot move between parts.
+    tx = [event('A', 'old', 'buy', '2023-01-01', '0.5', 50), event('A', 'new', 'buy', '2025-01-02', '0.5', 50),
+          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '75.005'),
+          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '75.005')]
+    block = {**reporting(form(txn_id='order1', proceeds=150.01)),
+             'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                  evidence='single-sale-confirmation')]}
+    blocked(run(block, tx), 'proceeds differ')

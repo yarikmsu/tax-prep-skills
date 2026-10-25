@@ -893,7 +893,7 @@ _FORM_UNSUPPORTED_BY_TYPE = {
     '1099-DA': frozenset({'net_proceeds', 'qof',
                           'optional_method', 'primary_sale_proceeds', 'cusip'}),
 }
-_RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs'},
+_RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs', 'option_premium'},
                 'basis': {'taxpayer_records'}, 'term': {'taxpayer_records'}}
 
 
@@ -940,9 +940,35 @@ def _form_cents(value, label) -> int:
     return int(amount * 100)
 
 
+# Boxes whose treatment reaches beyond the disposal a manual entry replaces:
+# §1091(d) adds a disallowed wash-sale loss to the replacement lot's basis; a
+# CUSIP marks a tokenized security, so its OTHER sales face §1091 too; and
+# box 11c's first-sale NFT proceeds are a ledger category tie-out blocks on.
+_BOXES_REACHING_OTHER_SALES = {'wash_sale_loss_disallowed', 'cusip', 'primary_sale_proceeds'}
+
+
+def _manual_disposals_input(reporting, events) -> dict:
+    """Disposals the preparer files by hand, keyed (account, txn): evidence."""
+    raw = reporting.get('manual_disposals', [])
+    if not isinstance(raw, list):
+        raise CryptoImportError('manual_disposals must be a list of reviewed disposals')
+    manual = {}
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != {'account_id', 'txn_id', 'evidence'}:
+            raise CryptoImportError('Each manual disposal needs account_id, txn_id and evidence')
+        key = (_account_id(entry['account_id'], 'manual disposal account_id'),
+               _account_id(entry['txn_id'], 'manual disposal txn_id'))
+        if key not in events or key in manual:
+            raise CryptoImportError('manual_disposals must name distinct transactions in this import')
+        manual[key] = _account_id(entry['evidence'], 'manual disposal evidence')
+    return manual
+
+
 def _broker_reporting_input(reporting, events, regime, tax_year):
-    if not isinstance(reporting, dict) or not set(reporting) <= {'accounts', 'forms', 'resolutions', 'fill_groups'}:
-        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions and fill_groups')
+    if not isinstance(reporting, dict) or not set(reporting) <= {
+            'accounts', 'forms', 'resolutions', 'fill_groups', 'manual_disposals'}:
+        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions, fill_groups '
+                                'and manual_disposals')
     raw_accounts = reporting.get('accounts', {})
     raw_forms = reporting.get('forms', [])
     raw_resolutions = reporting.get('resolutions', {})
@@ -950,12 +976,26 @@ def _broker_reporting_input(reporting, events, regime, tax_year):
             and isinstance(raw_resolutions, dict)):
         raise CryptoImportError('broker_reporting accounts and resolutions are objects; forms is a list')
     accounts = _accounts_input(raw_accounts, events)
-    forms = [_form_input(f'broker_reporting.forms[{index}]', form, events, accounts, regime, tax_year)
+    manual = _manual_disposals_input(reporting, events)
+    forms = [_form_input(f'broker_reporting.forms[{index}]', form, events, accounts, regime, tax_year, manual)
              for index, form in enumerate(raw_forms)]
     ids = [form['form_id'] for form in forms]
     if len(set(ids)) != len(ids):
         raise CryptoImportError('broker form ids must be unique')
-    return accounts, forms, _resolutions_input(raw_resolutions, ids)
+    for key in manual:
+        # The path exists for a form the engine cannot model, never as a way
+        # around reconciling one it can.
+        boxes = {box for form in forms if (form['account_id'], form['txn_id']) == key for box in form['unmodeled']}
+        if not boxes:
+            raise CryptoImportError('A manual disposal must be reported by a broker form that fills a box this '
+                                    'engine does not model; reconcile any other disposal instead')
+        reaching = sorted(boxes & _BOXES_REACHING_OTHER_SALES)
+        if reaching:
+            raise CryptoImportError(f'A manual disposal cannot isolate {reaching}: a wash sale moves its loss into '
+                                    'a replacement lot, a tokenized security subjects its other sales to the '
+                                    'wash-sale rules, and first-sale NFT proceeds block the tie-out gate on their '
+                                    'own; prepare this import externally')
+    return accounts, forms, _resolutions_input(raw_resolutions, ids), manual
 
 
 def _accounts_input(raw_accounts, events) -> dict:
@@ -979,7 +1019,7 @@ def _accounts_input(raw_accounts, events) -> dict:
     return accounts
 
 
-def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
+def _form_input(label, form, events, accounts, regime, tax_year, manual=None) -> dict:
     if not isinstance(form, dict):
         raise CryptoImportError(f'{label} must be an object')
     # First, because the type decides which keys the form must carry.
@@ -1000,9 +1040,11 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
         # An evidenced put cost is already in this disposal's source proceeds.
         # A group alias must not borrow the first member's option evidence.
         filled.remove('net_proceeds')
-    if filled:
-        raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; '
-                                'report that disposal manually (a blank box is copied as null, false or 0)')
+    is_manual = (form.get('account_id'), form.get('txn_id')) in (manual or {})
+    if filled and not is_manual:
+        raise CryptoImportError(f'{label} fills {filled}, which this engine does not model; list that disposal '
+                                'under broker_reporting.manual_disposals and prepare it by hand (a blank box '
+                                'is copied as null, false or 0)')
     missing = (_FORM_FIELDS | unsupported | reviewed) - set(form)
     unknown = set(form) - _FORM_FIELDS - unsupported - reviewed
     if missing or unknown:
@@ -1036,7 +1078,8 @@ def _form_input(label, form, events, accounts, regime, tax_year) -> dict:
             'cost_basis': None if shown is None else _form_cents(shown, f'{label}.cost_basis'),
             'reported': reported, 'term': term,
             'net_proceeds': form.get('net_proceeds') is True,
-            'customer_acquisition_info': form.get('customer_acquisition_info')}
+            'customer_acquisition_info': form.get('customer_acquisition_info'),
+            'unmodeled': filled}
 
 
 def _resolutions_input(raw_resolutions, ids) -> dict:
@@ -1110,11 +1153,26 @@ def _form_groups(rows, forms):
     return groups, None
 
 
-def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> int:
+def _exact_net(raw) -> 'Fraction | None':
+    """A record's exact USD amount net of its fee, before any rounding to
+    cents; None for a record that carries no USD amount (a transfer leg)."""
+    if raw.get('usd_amount') is None:
+        return None
+    return _exact(raw['usd_amount'], 'source USD amount') - _exact(raw.get('fee_usd', 0), 'source fee')
+
+
+def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left,
+                    premium_left=0, rounded_once=False) -> 'tuple[int, int]':
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
-    recorded fee still left to explain a later form's code E."""
+    recorded fee and reviewed written-call premium still left to explain a
+    later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
         t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
+    elif gap and rounded_once:
+        # A group's fills each round to cents, while the broker rounded the
+        # order once; the form equals that exact total rounded, so the gap is
+        # those roundings alone and the form's figure stands.
+        t.proceeds = _absorb(t.proceeds, -gap)
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
         t.used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
         t.above += gap
@@ -1127,9 +1185,18 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
             t.codes.add('E')
             fee_left += gap
             t.proceeds, t.costs = _spread(form['proceeds'], weights), _spread(gap, weights)
+    elif gap > 0 and resolution.get('proceeds') == 'option_premium':
+        t.used.add('proceeds')
+        if gap > premium_left:
+            t.reasons.append(f'FIFO proceeds exceed the form by {gap / 100:,.2f}, more than the '
+                             f'{premium_left / 100:,.2f} of reviewed written-call premium left to explain it')
+        else:  # i8949 code E: the form's proceeds in (d), the unreflected premium in (g)
+            t.codes.add('E')
+            premium_left -= gap
+            t.proceeds, t.costs = _spread(form['proceeds'], weights), _spread(gap, weights)
     elif gap:
         t.reasons.append(f'proceeds differ from the form by {gap / 100:+,.2f}')
-    return fee_left
+    return fee_left, premium_left
 
 
 def _treat_basis(t, form, gap, weights, fifo_basis, resolution, split_cent) -> None:
@@ -1198,6 +1265,11 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     # unreported basis stays FIFO, so mixing the two can change total gain.
     split = len(forms) > 1
     proceeds_cent = split and sum(form['proceeds'] for form in forms) == sum(_cents(row.proceeds) for row in rows)
+    # A single disposal's rows already add to its once-rounded total, so this
+    # can move only a fill group's cents, and only within one holding period:
+    # cents moved between short and long rows would move gain between parts.
+    rounded_once = (len({row.holding_period for row in rows}) == 1 and event.get('net') is not None
+                    and forms[0]['proceeds'] == _cents(event['net']))
     basis_cent = split and (all(form['reported'] for form in forms) and sum(
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
     # The only costs a form can leave unreflected are the fee the import
@@ -1205,6 +1277,7 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     if event.get('option_cost') and len({form['net_proceeds'] for form in forms}) > 1:
         return _unpaired(rows, forms, 'mixed gross/net option forms require external preparation')
     fee_left = event['fee'] + (event.get('option_cost', 0) if not any(form['net_proceeds'] for form in forms) else 0)
+    premium_left = event.get('option_premium_received', 0)
     routed: 'dict[int, Form8949Row]' = {}
     records: 'list[dict]' = []
     problems: 'list[tuple]' = []
@@ -1223,8 +1296,9 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
         resolution = resolutions.get(form['form_id'], {})
         weights = [row.quantity_exact for row in group]
         t = _FormTreatment(fifo_proceeds, fifo_basis, [0] * len(group), [0] * len(group), [set() for _ in group])
-        fee_left = _treat_proceeds(t, form, sum(fifo_proceeds) - form['proceeds'], weights, resolution,
-                                   proceeds_cent, fee_left)
+        fee_left, premium_left = _treat_proceeds(t, form, sum(fifo_proceeds) - form['proceeds'], weights,
+                                                 resolution, proceeds_cent, fee_left, premium_left,
+                                                 rounded_once)
         basis_gap = 0 if form['cost_basis'] is None else form['cost_basis'] - sum(fifo_basis)
         _treat_basis(t, form, basis_gap, weights, fifo_basis, resolution, basis_cent)
         _treat_term(t, form, group, basis_gap, resolution)
@@ -1278,7 +1352,7 @@ def _issue(reason, account=None, txn=None, form=None) -> dict:
 
 def _reporting_inputs(reporting, events, regime, tax_year):
     if reporting is None:
-        return {}, [], {}
+        return {}, [], {}, {}
     if regime is None:
         raise CryptoImportError(
             'broker_reporting needs --year' if tax_year is None else
@@ -1333,7 +1407,9 @@ def _fill_group_rows(reporting, by_txn, events):
         if len({e['asset'] for e in source}) != 1 or len({e['date'] for e in source}) != 1:
             raise CryptoImportError('A fill group must be one same-asset, same-day broker sale')
         grouped[key] = [row for member in keys for row in by_txn[member]]
-        expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source)}
+        nets = [e['net'] for e in source]
+        expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source),
+                         'net': None if None in nets else sum(nets)}
         for member in keys:
             del grouped[member]
         used.update(keys)
@@ -1359,6 +1435,53 @@ def _check_fill_group_evidence(groups, accounts, forms_by_txn, resolutions):
                                     'group-level resolutions are not supported')
 
 
+def _broker_shares(txn_rows, txn_forms) -> 'list[int]':
+    """Each slice's cents of the forms' proceeds, as a routed disposal's rows
+    take them: split forms that pair with FIFO's terms give each term's slices
+    their own form's figure, and otherwise the forms' total is spread over all
+    of them, by the slices' proceeds or, failing those, their units."""
+    groups, _ = _form_groups(txn_rows, txn_forms) if len(txn_forms) > 1 else ([(None, txn_rows)], None)
+    if groups is None:
+        groups = [(None, txn_rows)]
+    shares = {}
+    for form, group in groups:
+        total = form['proceeds'] if form is not None else sum(f['proceeds'] for f in txn_forms)
+        cents = [_cents(row.proceeds) for row in group]
+        units = [row.quantity_exact or Fraction(0) for row in group]
+        weights = cents if any(cents) else units if any(units) else [1] * len(group)
+        shares.update(zip(map(id, group), _spread(total, weights) if total else [0] * len(group)))
+    return [shares[id(row)] for row in txn_rows]
+
+
+def _manual_record(account, txn, evidence, txn_rows, txn_forms, regime) -> dict:
+    """The workpaper for a disposal left for hand preparation. Each FIFO
+    slice's term is fixed by its lot whatever the preparation does to the
+    money columns, so each slice carries its term and its share of the forms'
+    proceeds, and the record keeps both shares and the FIFO basis per term,
+    with the boxes each term may take on this form type, for tie-out."""
+    total = sum(form['proceeds'] for form in txn_forms)
+    shares = _broker_shares(txn_rows, txn_forms)
+
+    def by_term(values):
+        return {period: _money(sum(value for row, value in zip(txn_rows, values)
+                                   if row.holding_period == period))
+                for period in ('short', 'long')}
+    return {
+        'account_id': account, 'txn_id': txn, 'evidence': evidence,
+        'form_ids': [form['form_id'] for form in txn_forms],
+        'unmodeled_boxes': sorted({box for form in txn_forms for box in form['unmodeled']}),
+        'broker_proceeds': _money(total / 100),
+        'broker_proceeds_by_term': by_term([share / 100 for share in shares]),
+        'fifo_cost_basis': by_term([row.cost_basis for row in txn_rows]),
+        'boxes_by_term': {period: list(regime[period]) for period in ('short', 'long')},
+        # Keyed as the summary and tie-out key it, a fill group's group_id
+        # included, so the slices merge as given.
+        'fifo_rows': [{**_row_dict(replace(row, txn_id=txn, fifo_cost_basis=row.cost_basis,
+                                           broker_proceeds=_money(share / 100))),
+                       'holding_period': row.holding_period}
+                      for row, share in zip(txn_rows, shares)]}
+
+
 def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     """Route filing-year account rows to Form 8949 boxes from explicit evidence.
 
@@ -1372,7 +1495,7 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     for row in rows:
         by_txn.setdefault((row.account_id, row.txn_id), []).append(row)
     by_txn, events, fill_groups = _fill_group_rows(reporting, by_txn, events)
-    accounts, forms, resolutions = _reporting_inputs(reporting, events, regime, tax_year)
+    accounts, forms, resolutions, manual = _reporting_inputs(reporting, events, regime, tax_year)
     forms_by_txn: 'dict[tuple, list]' = {}
     for form in forms:
         forms_by_txn.setdefault((form['account_id'], form['txn_id']), []).append(form)
@@ -1382,10 +1505,17 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
         issues.append(_issue('Form 8949 routing needs the filing year (--year)' if tax_year is None else
                              f'TY{tax_year} has no reviewed Form 8949 reporting regime'))
         by_txn = {}
-    routed, records, not_reported, above = {}, [], [], 0
+    routed, records, not_reported, above, manual_records, excluded = {}, [], [], 0, [], set()
     for (account, txn), txn_rows in by_txn.items():
         declared = accounts.get(account)
-        if declared is None:
+        if (account, txn) in manual:
+            # Prepared by hand: FIFO has consumed its lots, but none of its
+            # rows is routed or totalled here. The ledger still holds its
+            # form, so tie-out fails until the hand-prepared row is merged.
+            excluded.update(id(row) for row in txn_rows)
+            manual_records.append(_manual_record(account, txn, manual[(account, txn)], txn_rows,
+                                                 forms_by_txn.get((account, txn), []), regime))
+        elif declared is None:
             issues.append(_issue('declare whether this account received broker forms for the filing year',
                                  account, txn))
         elif not declared['forms_received'] or txn in declared['not_reported']:
@@ -1403,9 +1533,11 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
             if new_rows is not None:
                 above += extra
                 routed.update(new_rows)
-    final = [routed.get(id(row)) or replace(row, fifo_cost_basis=row.cost_basis) for row in rows]
+    final = [routed.get(id(row)) or replace(row, fifo_cost_basis=row.cost_basis)
+             for row in rows if id(row) not in excluded]
     return final, _reporting_report(
         tax_year, regime, issues, forms=records, not_reported=not_reported,
+        **({'manual_disposals': manual_records} if manual_records else {}),
         accounts={account: {'forms_received': entry['forms_received'], 'evidence': entry['evidence'],
                             'not_reported': sorted(entry['not_reported'])} for account, entry in accounts.items()},
         proceeds_above_forms=_money(above / 100), schedule_d_routing=_schedule_d_routing(final),
@@ -1542,7 +1674,12 @@ def _apply_option_premiums(transactions, raw_review, account_mode, tax_year):
                          unsupported_items=[], source_url=_OPTION_SOURCES[tax_year], evidence=evidence, events=records)
 
 
-def _check_put_holding_periods(rows, review):
+def _check_put_holding_periods(rows, review, assets=None, inventory=None, transfers=None):
+    """A purchased put's sale keeps its lots' long-term holding period only
+    when no same-asset lot was held one year or less when the put was bought,
+    or bought before it was exercised: Pub. 550's married-put rule makes such
+    holdings short-term and resets their holding period. The engine models
+    neither, so it refuses rather than file a wrong term for any of them."""
     if review is None:
         return
     for event in review['events']:
@@ -1553,6 +1690,46 @@ def _check_put_holding_periods(rows, review):
         if not selected or any(row.needs_basis or row.date_acquired == 'UNKNOWN' or
                 _holding_period(datetime.date.fromisoformat(row.date_acquired), opened) != 'long' for row in selected):
             raise CryptoImportError('Purchased put needs external holding-period treatment: every disposed lot must already be long-term when the put was bought')
+        if assets is None:
+            continue
+        asset = assets[(event['account_id'], event['txn_id'])]
+        exercised = datetime.date.fromisoformat(selected[0].date_sold)
+        if _married_put_lots(rows, assets, inventory or {}, asset, opened, exercised, transfers or []):
+            raise CryptoImportError('Purchased put needs external holding-period treatment: a same-asset lot in some '
+                                    'account was held one year or less when the put was bought, or bought before '
+                                    'it was exercised (Pub. 550 married-put rule)')
+
+
+def _married_put_lots(rows, assets, inventory, asset, opened, exercised, transfers=()) -> bool:
+    """Whether any lot of `asset`, in any account, is one the married-put rule
+    reaches: still held on `opened` with a short-term holding period then, or
+    acquired after `opened` and no later than `exercised`. A lot is its slices
+    across the rows, plus what inventory still holds, plus what an external
+    send moved to a wallet the taxpayer still owns, keyed by its origin."""
+    lots: 'dict[tuple, list]' = {}
+    for row in rows:
+        if assets.get((row.account_id, row.txn_id)) != asset:
+            continue
+        key = (row.origin_account_id, row.origin_txn_id, row.date_acquired)
+        entry = lots.setdefault(key, [Fraction(0), Fraction(0)])
+        entry[0] += row.quantity_exact or 0
+        if datetime.date.fromisoformat(row.date_sold) < opened:
+            entry[1] += row.quantity_exact or 0
+    held_elsewhere = [entry['slices'] for entry in transfers if entry['external'] and entry['asset'] == asset]
+    for held in [*inventory.values(), *({asset: slices} for slices in held_elsewhere)]:
+        for lot in held.get(asset, []):
+            key = (lot['origin_account_id'], lot['origin_txn_id'], lot['acquired_tax_date'] or 'UNKNOWN')
+            exact = lot['quantity_exact']
+            lots.setdefault(key, [Fraction(0), Fraction(0)])[0] += Fraction(int(exact['numerator']), int(exact['denominator']))
+    for (_, _, acquired), (total, sold_before) in lots.items():
+        if acquired == 'UNKNOWN':
+            return True
+        bought = datetime.date.fromisoformat(acquired)
+        if opened < bought <= exercised:
+            return True
+        if bought <= opened and total > sold_before and _holding_period(bought, opened) != 'long':
+            return True
+    return False
 
 
 def _tax_calendar_review(raw):
@@ -1866,7 +2043,12 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
     else:
         rows_all = match_lots(acquisitions, disposals)
-    _check_put_holding_periods(rows_all, reviewed_options)
+    _check_put_holding_periods(
+        rows_all, reviewed_options,
+        assets={(raw['account_id'], raw['txn_id']): txn.asset for raw, txn in zip(transactions, txns)}
+        if account_mode else None,
+        inventory=account_report['inventory'] if account_report else None,
+        transfers=account_report['transfer_ledger'] if account_report else None)
     # FIFO orders by instant while each row's dates are read in its own
     # record's offset, so records exported in different offsets can fund a
     # sale from a lot whose printed acquisition date is later than the sale's.
@@ -1905,13 +2087,16 @@ def build_crypto_import(transactions: 'list[dict]', *,
         off_year = 0
     if account_mode:
         events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
-                                                        'date': _parse_dt(raw['date'], 'date').date()}
+                                                        'date': _parse_dt(raw['date'], 'date').date(),
+                                                        'net': _exact_net(raw)}
                   for raw, txn in zip(transactions, txns)}
         for event in reviewed_options['events'] if reviewed_options else []:
             record = events[(event['account_id'], event['txn_id'])]
             record.update(option_treatment=event['treatment'], option_txn_id=event['txn_id'])
             if event['treatment'] == 'purchased_put':
                 record['option_cost'] = _form_cents(event['premium_usd'], 'reviewed put cost')
+            elif event['treatment'] == 'written_call':
+                record['option_premium_received'] = _form_cents(event['premium_usd'], 'reviewed call premium')
         rows, reporting = _reconcile_broker_reporting(rows, tax_year, events, broker_reporting)
     else:
         if broker_reporting is not None:
@@ -1958,7 +2143,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
     # Digital-asset question: Yes if any REPORTED (filing-year) disposal OR income receipt;
     # else No. Uses the filtered sets so an out-of-year-only history doesn't force a Yes on
     # a year with no actual digital-asset activity. (rows are disposals; incomes is filtered.)
-    digital_asset = "Yes" if (rows or incomes) else "No"
+    # A disposal left for manual preparation is still a disposal this year.
+    digital_asset = "Yes" if (rows or incomes or reporting.get('manual_disposals')) else "No"
 
     result = {
         "schema": SCHEMA,
@@ -2035,6 +2221,24 @@ def build_crypto_import(transactions: 'list[dict]', *,
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
+    manual = reporting.get('manual_disposals', [])
+    if manual:
+        if reviewed_options:
+            # Tie-out rebuilds an option return from this source and compares
+            # every account row, which a hand-prepared row cannot match.
+            raise CryptoImportError('An option-reviewed import cannot also leave a disposal for manual '
+                                    'preparation; prepare that import externally')
+        result['crypto_summary']['manual_disposals'] = [
+            {'account_id': entry['account_id'], 'txn_id': entry['txn_id'],
+             'broker_proceeds': entry['broker_proceeds'],
+             'broker_proceeds_by_term': entry['broker_proceeds_by_term'],
+             'fifo_cost_basis': entry['fifo_cost_basis'],
+             'boxes_by_term': entry['boxes_by_term']} for entry in manual]
+        boxes = sorted({box for entry in manual for box in entry['unmodeled_boxes']})
+        result['caveats'].insert(0, f'MANUAL: {len(manual)} disposal(s) carry a broker-form box this engine '
+                                    f"does not model ({', '.join(boxes)}); they are left out of Form 8949 and "
+                                    'Schedule D here. Prepare each by hand from broker_reporting.manual_disposals '
+                                    'and merge its row before tie-out, which fails until it is on the return.')
     if not reporting['complete']:
         result['caveats'].insert(0, 'BLOCKED: Form 8949 reporting is unresolved; reconcile broker forms '
                                     '(broker_reporting.unresolved) before merging rows into a return.')
