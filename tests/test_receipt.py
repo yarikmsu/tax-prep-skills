@@ -285,6 +285,15 @@ class TestTheInvalidationSetIsTheInputSetAndNothingWider:
         branch happened to be the `else` and got a set nobody chose."""
         assert set(receipt._INPUTS) == set(receipt.REQUIRED_GATES)
 
+    def test_normalized_option_source_edits_invalidate_the_tie_out(self, tmp_path):
+        _workspace(tmp_path)
+        source = tmp_path / 'crypto_transactions.json'
+        source.write_text(json.dumps({'transactions': []}))
+        _passing(tmp_path)
+        source.write_text(json.dumps({'transactions': [], 'broker_reporting': {}}))
+        assert not verify(tmp_path, required=('tie_out',)).valid
+        assert verify(tmp_path, required=('return_builder', 'capabilities')).valid
+
     def test_only_the_tie_out_reads_the_source_documents(self, tmp_path):
         """Each gate's input set is the files IT reads. The tie-out's question
         is whether every document reached the return, so one arriving later is

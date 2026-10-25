@@ -235,11 +235,12 @@ _RETURN_FILES = ("parse_ledger.json", "result.json", "taxpayer_profile.json")
 # would fire on correct work — the gates-that-cry-wolf rule. Nothing is lost,
 # because a filing package requires BOTH receipts and the tie-out's still
 # refuses. The capability gate reads the profile's flags and nothing else, and
-# it runs BEFORE result.json exists.
+# it runs BEFORE result.json exists. Tie-out also reads normalized crypto source
+# events so a changed option premium invalidates a previously repriced return.
 _INPUTS = {
     "capabilities": _Reads(("taxpayer_profile.json",), False, False),
     "return_builder": _Reads(_RETURN_FILES, True, False),
-    "tie_out": _Reads(_RETURN_FILES, True, True),
+    "tie_out": _Reads((*_RETURN_FILES, "crypto_transactions.json"), True, True),
 }
 
 

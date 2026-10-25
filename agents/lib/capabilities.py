@@ -293,15 +293,19 @@ RULES: "tuple[Rule, ...]" = (
          "for a written call, down for a purchased put) or the basis of a lot "
          "it bought (up by a purchased call's cost, down by a written put's "
          "premium), in whatever year the exercise fell. Assets sold, exchanged or "
-         "spent from that lot all use that basis, and the crypto import prices "
-         "neither adjustment. Form 1099-DA box 3a cannot clear a sale: \"Net "
-         "proceeds\" refuses the import, and \"Gross proceeds\" can show on an "
+         "spent from that lot all use that basis. Form 1099-DA box 3a cannot "
+         "clear a sale: \"Net proceeds\" alone supplies no premium evidence, "
+         "and \"Gross proceeds\" can show on an "
          "ordinary sale and on an option's sale alike, a broker need not net a "
          "premium on an option granted or acquired before 2026 (Regs. 1.6045-1(m)). "
-         "Acknowledging this leaves those disposals in the import, priced without "
-         "the premium, since no input marks one transaction for hand "
-         "preparation (AA47): correct those Form 8949 rows and lots by hand. A "
-         "form with \"Net proceeds\" checked is still refused."),
+         "After acknowledgement, plain USD premium exercises require the "
+         "externally reviewed option_exercise_review input (AA47). It binds "
+         "each original source event and premium-inclusion answer, recomputes "
+         "FIFO and carries acquired basis to later disposals. Tie-out rebuilds "
+         "crypto_transactions.json and checks the merged Form 8949 and Schedule D "
+         "figures. Acknowledgement alone never completes the return. Compensation, "
+         "section 1256, straddles, holding-period adjustments, non-USD premiums "
+         "and grouped option-caused sales still need external preparation."),
     # --- MANUAL: the skills hand-compute these from worksheets; flag loudly ---
     Rule("iso_exercise", "has_iso_exercise", MANUAL,
          "ISO exercise (incentive stock options)", "Form 6251 + CA Schedule P",

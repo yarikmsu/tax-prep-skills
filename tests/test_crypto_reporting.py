@@ -913,7 +913,7 @@ def test_merged_crypto_with_the_option_question_unanswered_fails():
     report = tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=None, specific_identification_answer=False)
     assert report.failed
     assert any('has_digital_asset_option_exercise is unanswered' in t for t in report.missing_result_targets)
-    assert not tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=True, specific_identification_answer=False).failed
+    assert tie_out.evaluate([], {'crypto_summary': COMPLETE}, [], option_exercise_answer=True, specific_identification_answer=False).failed
 
 
 def test_an_omitted_option_answer_is_unanswered():
@@ -948,7 +948,8 @@ def test_the_gate_reads_the_option_answer_from_the_profile(tmp_path, capsys, ans
     (tmp_path / 'taxpayer_profile.json').write_text(json.dumps(
         {'flags': {'has_crypto': False, 'has_crypto_specific_identification': False,
                    'has_digital_asset_option_exercise': answer}}))
-    assert tie_out._main(['--workspace', str(tmp_path)]) == (2 if owed else 0)
+    # A true answer is answered, but the premium review/source is still owed.
+    assert tie_out._main(['--workspace', str(tmp_path)]) == (2 if owed or answer is True else 0)
     captured = capsys.readouterr()
     assert captured.err == ''
     assert ('has_digital_asset_option_exercise is unanswered' in captured.out) is owed
