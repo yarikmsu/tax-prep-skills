@@ -294,7 +294,7 @@ disposal it reports, copying every box and a blank one as null: the importer
 refuses a missing key rather than read it as blank. `asset` is the exception:
 it holds the import's own symbol for the described asset (1099-DA box 1b,
 1099-B box 1a: "BTC", not "Bitcoin"), which must equal the disposal's exactly. A 1099-DA summary that does
-not show boxes 3a, 3b, 8, 11a, 11c and CUSIP never read them: re-read those from
+not show boxes 3a, 3b, 8, 11a, 11b, 11c and CUSIP never read them: re-read those from
 the form, never copy one as blank from that summary. Box 3a's "Gross proceeds"
 has no key: copy only `net_proceeds`. A TY2023-2024 1099-B summary that omits
 boxes 3, 6, 8-11, 13 or CUSIP likewise cannot establish blanks: re-read them
@@ -307,6 +307,11 @@ If one broker sale covers several imported partial fills, use the optional
 `fill_groups` links in that contract and point its form at the group ID. Obtain
 the single-sale confirmation; do not combine similar-looking trades. Matching
 still runs on the original events, and group-level resolutions are refused.
+A form with box 11a checked for qualifying stablecoins reports a year of one
+coin's sales: list them from the broker's annual statement in
+`optional_aggregates` and point the form at that group, copying box 11b as
+`transactions` (`docs/contributing/crypto-accounts.md`, Optional aggregate
+forms). A specified-NFT aggregate form is prepared externally.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
 

@@ -900,7 +900,7 @@ _FORM_UNSUPPORTED_BY_TYPE = {
                          'current_unrealized_profit_loss', 'aggregate_contract_profit_loss',
                          'bartering'}),
     '1099-DA': frozenset({'net_proceeds', 'qof',
-                          'optional_method', 'primary_sale_proceeds', 'cusip'}),
+                          'optional_method', 'transactions', 'primary_sale_proceeds', 'cusip'}),
 }
 _RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs', 'option_premium'},
                 'basis': {'taxpayer_records'}, 'term': {'taxpayer_records'}}
@@ -975,9 +975,9 @@ def _manual_disposals_input(reporting, events) -> dict:
 
 def _broker_reporting_input(reporting, events, regime, tax_year):
     if not isinstance(reporting, dict) or not set(reporting) <= {
-            'accounts', 'forms', 'resolutions', 'fill_groups', 'manual_disposals'}:
-        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions, fill_groups '
-                                'and manual_disposals')
+            'accounts', 'forms', 'resolutions', 'fill_groups', 'optional_aggregates', 'manual_disposals'}:
+        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions, fill_groups, '
+                                'optional_aggregates and manual_disposals')
     raw_accounts = reporting.get('accounts', {})
     raw_forms = reporting.get('forms', [])
     raw_resolutions = reporting.get('resolutions', {})
@@ -1044,6 +1044,12 @@ def _form_input(label, form, events, accounts, regime, tax_year, manual=None) ->
     filled = sorted(key for key in unsupported & set(form) if form[key] not in (None, False, 0))
     option = (events.get((form['account_id'], form['txn_id']), {})
               if isinstance(form.get('account_id'), str) and isinstance(form.get('txn_id'), str) else {})
+    aggregate = option.get('aggregate')
+    if aggregate is not None:
+        # Box 11a names the method and 11b the count, which reconciliation
+        # compares; neither is an unmodeled box on the form that reports one.
+        _aggregate_boxes(label, form, aggregate)
+        filled = [key for key in filled if key not in _AGGREGATE_BOXES]
     if ('net_proceeds' in filled and form.get('net_proceeds') is True and option.get('option_treatment') == 'purchased_put'
             and option.get('option_txn_id') == form.get('txn_id')):
         # An evidenced put cost is already in this disposal's source proceeds.
@@ -1074,7 +1080,8 @@ def _form_input(label, form, events, accounts, regime, tax_year, manual=None) ->
     if reported and shown is None:
         raise CryptoImportError(f'{label} reports basis to the IRS but shows no cost_basis')
     try:
-        date_sold = datetime.date.fromisoformat(form['date_sold'])
+        date_sold = (None if aggregate is not None and form['date_sold'] is None
+                     else datetime.date.fromisoformat(form['date_sold']))
     except (TypeError, ValueError):
         raise CryptoImportError(f'{label}.date_sold must be YYYY-MM-DD') from None
     quantity = _exact(form['quantity'], f'{label}.quantity')
@@ -1088,7 +1095,28 @@ def _form_input(label, form, events, accounts, regime, tax_year, manual=None) ->
             'reported': reported, 'term': term,
             'net_proceeds': form.get('net_proceeds') is True,
             'customer_acquisition_info': form.get('customer_acquisition_info'),
+            'transactions': form.get('transactions') if aggregate is not None else None,
             'unmodeled': filled}
+
+
+# The 1099-DA boxes an optional aggregate form fills: 11a's method and 11b's
+# number of transactions.
+_AGGREGATE_BOXES = ('optional_method', 'transactions')
+
+
+def _aggregate_boxes(label: str, form: dict, method: str) -> None:
+    """An optional aggregate form names its method in box 11a and its count in
+    11b, and never checks box 2 (Form 1099-DA instructions, TY2025). Its date
+    sold may be blank, and is a year's sales' in any case, so it is not
+    compared with them."""
+    count = form.get('transactions')
+    if form.get('optional_method') != method:
+        raise CryptoImportError(f'{label} links an optional aggregate, so box 11a must be {method!r}')
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise CryptoImportError(f'{label}.transactions (box 11b) must be a positive whole number')
+    if form.get('basis_reported_to_irs') is not False:
+        raise CryptoImportError(f'{label} is an optional aggregate form, which never reports basis to the IRS '
+                                '(box 2); re-read the form')
 
 
 def _resolutions_input(raw_resolutions, ids) -> dict:
@@ -1124,7 +1152,8 @@ def _form_record(form, group, fifo_proceeds, fifo_basis, reasons, codes='', appl
         'form_id': form['form_id'], 'account_id': group[0].account_id, 'txn_id': form['txn_id'],
         'term': form['term'], 'basis_reported_to_irs': form['reported'],
         'customer_acquisition_info': form['customer_acquisition_info'],
-        'date_sold': group[0].date_sold, 'broker_date_sold': form['date_sold'].isoformat(),
+        'date_sold': group[0].date_sold,
+        'broker_date_sold': None if form['date_sold'] is None else form['date_sold'].isoformat(),
         'broker_proceeds': _money(form['proceeds'] / 100), 'fifo_proceeds': _money(sum(fifo_proceeds) / 100),
         'broker_cost_basis': None if shown is None else _money(shown / 100),
         'fifo_cost_basis': _money(sum(fifo_basis) / 100),
@@ -1296,8 +1325,10 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
         fifo_basis = [_cents(row.cost_basis) for row in group]
         reasons = [reason for reason, differs in (
             ('asset differs', form['asset'] != event['asset']),
-            ('date sold differs', not _same_sale_date(form['date_sold'], event['date'])),
-            ('units differ', form['quantity'] != sum(row.quantity_exact for row in group))) if differs]
+            ('date sold differs', 'aggregate' not in event and not _same_sale_date(form['date_sold'], event['date'])),
+            ('units differ', form['quantity'] != sum(row.quantity_exact for row in group)),
+            ('number of transactions differs',
+             'aggregate' in event and form['transactions'] != event['transactions'])) if differs]
         if reasons:
             records.append(_form_record(form, group, fifo_proceeds, fifo_basis, reasons))
             problems.append((form['form_id'], '; '.join(reasons)))
@@ -1381,48 +1412,72 @@ def _stray_evidence(forms_by_txn, accounts, by_txn) -> 'list[dict]':
     return issues
 
 
-def _fill_group_rows(reporting, by_txn, events):
-    """Link reviewed fills AFTER FIFO, preserving each row's original identity.
+# The §1.6045-1(d)(10) optional methods this engine reconciles. A specified-NFT
+# aggregate joins different assets on one form, and its first-sale proceeds go
+# in box 11c, so it is prepared externally.
+_AGGREGATE_METHODS = {'qualifying_stablecoins'}
 
-    A group is one same-day broker sale, not an optional annual aggregate.
-    Combining raw events before matching would move intervening acquisitions
-    or transfers and could change basis. Only the reporting lookup is grouped.
-    """
-    raw = reporting.get('fill_groups', []) if isinstance(reporting, dict) else []
+
+def _group_entries(reporting, field: str, keys: 'tuple[str, ...]', kind: str) -> list:
+    raw = reporting.get(field, []) if isinstance(reporting, dict) else []
     if not isinstance(raw, list):
-        raise CryptoImportError('fill_groups must be a list of reviewed single-sale links')
-    if not raw:
+        raise CryptoImportError(f'{field} must be a list of reviewed links')
+    if any(not isinstance(entry, dict) or set(entry) != set(keys) for entry in raw):
+        raise CryptoImportError(f"Each {kind} needs {', '.join(keys[:-1])} and {keys[-1]}")
+    return raw
+
+
+def _fill_group_rows(reporting, by_txn, events):
+    """Link reviewed fills, and the disposals one optional aggregate form
+    reports, AFTER FIFO, preserving each row's original identity.
+
+    A fill group is one same-day broker sale. An optional aggregate is a
+    year's designated sales of one qualifying stablecoin in one account,
+    which the broker reports on one form without a date sold. Combining raw
+    events before matching would move intervening acquisitions or transfers
+    and could change basis. Only the reporting lookup is grouped.
+    """
+    fills = _group_entries(reporting, 'fill_groups', ('account_id', 'group_id', 'txn_ids', 'evidence'),
+                           'fill group')
+    aggregates = _group_entries(reporting, 'optional_aggregates',
+                                ('account_id', 'group_id', 'method', 'txn_ids', 'evidence'), 'optional aggregate')
+    if not fills and not aggregates:
         return by_txn, events, []
     grouped, expanded, records, used = dict(by_txn), dict(events), [], set()
-    for entry in raw:
-        if not isinstance(entry, dict) or set(entry) != {'account_id', 'group_id', 'txn_ids', 'evidence'}:
-            raise CryptoImportError('Each fill group needs account_id, group_id, txn_ids and evidence')
-        account = _account_id(entry['account_id'], 'fill group account_id')
-        group = _account_id(entry['group_id'], 'fill group group_id')
-        evidence = _account_id(entry['evidence'], 'fill group evidence')
+    for entry, method in [(entry, None) for entry in fills] + [(entry, entry['method']) for entry in aggregates]:
+        kind = 'fill group' if method is None else 'optional aggregate'
+        if method is not None and method not in _AGGREGATE_METHODS:
+            raise CryptoImportError('An optional aggregate reconciles qualifying_stablecoins forms only; a '
+                                    'specified-NFT aggregate form needs external preparation')
+        account = _account_id(entry['account_id'], f'{kind} account_id')
+        group = _account_id(entry['group_id'], f'{kind} group_id')
+        evidence = _account_id(entry['evidence'], f'{kind} evidence')
         listed = entry['txn_ids']
-        if not isinstance(listed, list) or len(listed) < 2:
-            raise CryptoImportError('A fill group must link at least two distinct filing-year disposals')
-        txns = [_account_id(txn, 'fill group txn_id') for txn in listed]
-        keys = [(account, txn) for txn in txns]
+        if not isinstance(listed, list) or len(listed) < (2 if method is None else 1):
+            raise CryptoImportError('A fill group must link at least two distinct filing-year disposals'
+                                    if method is None else 'An optional aggregate must list its disposals')
+        keys = [(account, _account_id(txn, f'{kind} txn_id')) for txn in listed]
         key = account, group
         if len(set(keys)) != len(keys) or used.intersection(keys):
-            raise CryptoImportError('Fill groups must not repeat or overlap disposals')
+            raise CryptoImportError('Fill groups and optional aggregates must not repeat or overlap disposals')
         if key in expanded:
-            raise CryptoImportError('A fill group_id must not collide with a transaction or another group')
+            raise CryptoImportError(f'A {kind} group_id must not collide with a transaction or another group')
         if any(member not in by_txn for member in keys):
-            raise CryptoImportError('Every fill group member must be a filing-year disposal in that account')
+            raise CryptoImportError(f'Every {kind} member must be a filing-year disposal in that account')
         source = [events[member] for member in keys]
-        if len({e['asset'] for e in source}) != 1 or len({e['date'] for e in source}) != 1:
-            raise CryptoImportError('A fill group must be one same-asset, same-day broker sale')
+        if len({e['asset'] for e in source}) != 1 or (method is None and len({e['date'] for e in source}) != 1):
+            raise CryptoImportError('A fill group must be one same-asset, same-day broker sale' if method is None
+                                    else 'An optional aggregate reports one stablecoin')
         grouped[key] = [row for member in keys for row in by_txn[member]]
         nets = [e['net'] for e in source]
         expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source),
-                         'net': None if None in nets else sum(nets)}
+                         'net': None if None in nets else sum(nets),
+                         **({} if method is None else {'aggregate': method, 'transactions': len(keys)})}
         for member in keys:
             del grouped[member]
         used.update(keys)
-        records.append(dict(account_id=account, group_id=group, txn_ids=txns, evidence=evidence))
+        records.append(dict(account_id=account, group_id=group, txn_ids=[txn for _, txn in keys],
+                            evidence=evidence, **({} if method is None else {'method': method})))
     return grouped, expanded, records
 
 
@@ -1436,6 +1491,8 @@ def _check_fill_group_evidence(groups, accounts, forms_by_txn, resolutions):
         matching = forms_by_txn.get((account, alias), [])
         if not matching:
             raise CryptoImportError('Every fill group must be linked by a broker form txn_id')
+        if 'method' in group and len(matching) != 1:
+            raise CryptoImportError('An optional aggregate is reported on exactly one broker form')
         if any(form['form_id'] in resolutions for form in matching):
             # Quantity weights assume one disposal price. Different fills can
             # have different prices, fees and holding periods; spreading a
@@ -1550,7 +1607,9 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
         accounts={account: {'forms_received': entry['forms_received'], 'evidence': entry['evidence'],
                             'not_reported': sorted(entry['not_reported'])} for account, entry in accounts.items()},
         proceeds_above_forms=_money(above / 100), schedule_d_routing=_schedule_d_routing(final),
-        **({'fill_groups': fill_groups} if fill_groups else {}))
+        **{field: entries for field, entries in (
+            ('fill_groups', [group for group in fill_groups if 'method' not in group]),
+            ('optional_aggregates', [group for group in fill_groups if 'method' in group])) if entries})
 
 
 # The amount keys of a result.json Schedule D row, which a box's totals add
@@ -1999,10 +2058,12 @@ def build_crypto_import(transactions: 'list[dict]', *,
     if isinstance(broker_reporting, dict) and 'option_exercise_review' in broker_reporting and option_review is None:
         raise CryptoImportError('option_exercise_review must be a complete reviewed object, never null')
     transactions, reviewed_options = _apply_option_premiums(transactions, option_review, account_mode, tax_year)
-    if reviewed_options and isinstance(broker_reporting.get('fill_groups'), list):
+    if reviewed_options:
         sales = {(event['account_id'], event['txn_id']) for event in reviewed_options['events']
                  if event['treatment'] in {'written_call', 'purchased_put'}}
-        for group in broker_reporting['fill_groups']:
+        groups = [group for field in ('fill_groups', 'optional_aggregates')
+                  if isinstance(broker_reporting.get(field), list) for group in broker_reporting[field]]
+        for group in groups:
             if isinstance(group, dict) and isinstance(group.get('txn_ids'), list) and any(
                     (group.get('account_id'), txn) in sales for txn in group['txn_ids']
                     if isinstance(group.get('account_id'), str) and isinstance(txn, str)):

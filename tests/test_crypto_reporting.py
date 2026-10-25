@@ -31,7 +31,7 @@ BASE = [event('A', 'buy', 'buy', '2023-01-01', usd=100),
 
 # Reviewed form-specific boxes, each copied blank.
 DA_BLANKS = dict(net_proceeds=False, qof=False, customer_acquisition_info=False,
-                 optional_method=None, primary_sale_proceeds=None, cusip=None)
+                 optional_method=None, transactions=None, primary_sale_proceeds=None, cusip=None)
 B_BLANKS = dict(collectibles=False, qof=False, net_proceeds=False, cusip=None,
                 contract_profit_loss=None, prior_unrealized_profit_loss=None,
                 current_unrealized_profit_loss=None, aggregate_contract_profit_loss=None,
@@ -1325,7 +1325,7 @@ _1099DA_KEY_BOXES = {'asset': '1b', 'quantity': '1c', 'date_sold': '1e', 'procee
                      'accrued_market_discount': '1h', 'wash_sale_loss_disallowed': '1i',
                      'loss_not_allowed': '5', 'net_proceeds': '3a', 'qof': '3b',
                      'customer_acquisition_info': '8',
-                     'optional_method': '11a', 'primary_sale_proceeds': '11c', 'cusip': 'CUSIP',
+                     'optional_method': '11a', 'transactions': '11b', 'primary_sale_proceeds': '11c', 'cusip': 'CUSIP',
                      'federal_withholding_1099': '4', 'state_withholding_nc': '16'}
 # The boxes /tax-parse records in the parse ledger rather than the form entry.
 _1099DA_LEDGER_KEYS = {'federal_withholding_1099', 'state_withholding_nc'}
@@ -2323,3 +2323,110 @@ def test_a_mixed_term_group_keeps_its_cents_rather_than_move_them_between_parts(
              'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
                                   evidence='single-sale-confirmation')]}
     blocked(run(block, tx), 'proceeds differ')
+
+
+# AA47: a qualifying stablecoin's designated sales on one optional aggregate
+# Form 1099-DA (Treas. Reg. §1.6045-1(d)(10); TY2025 1099-DA instructions:
+# box 1f the sales' aggregate proceeds, 1c their units, 11b their count).
+USDC = [event('A', 'usdc-old', 'buy', '2023-06-01', qty='300', usd=300),
+        event('A', 'usdc-new', 'buy', '2025-01-02', qty='300', usd=300),
+        event('A', 'u1', 'sell', '2025-03-01', qty='200', usd='200.10'),
+        event('A', 'u2', 'sell', '2025-05-01', qty='200', usd='199.95'),
+        event('A', 'u3', 'sell', '2025-07-01', qty='100', usd='100.02')]
+USDC = [{**e, 'asset': 'USDC'} for e in USDC]
+
+
+def aggregate_reporting(**changes):
+    agg = form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity='500', date_sold=None,
+               proceeds='500.07', optional_method='qualifying_stablecoins', transactions=3)
+    block = reporting(agg)
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=['u1', 'u2', 'u3'], evidence='usdc-annual-statement')]
+    for key, value in changes.items():
+        block['forms'][0][key] = value
+    return block
+
+
+def test_an_optional_aggregate_form_reconciles_its_years_stablecoin_sales():
+    result = resolved(run(aggregate_reporting(), USDC))
+    # Each sale keeps its own rows, in its own holding period's box H or K,
+    # with its share of the form's figure. u2's 200 units are the old lot's
+    # last 100 and the new lot's first 100; its 199.95 posts the rounded
+    # running total, 99.98 then 99.97. 99.97 + 100.02 + 200.10 + 99.98 = 500.07.
+    assert [(r['txn_id'], r['date_acquired'], r['box'], r['proceeds'], r['broker_proceeds']) for r in rows(result)] == [
+        ('u2', '2025-01-02', 'H', 99.97, 99.97), ('u3', '2025-01-02', 'H', 100.02, 100.02),
+        ('u1', '2023-06-01', 'K', 200.1, 200.1), ('u2', '2023-06-01', 'K', 99.98, 99.98)]
+    assert result['broker_reporting']['optional_aggregates'] == aggregate_reporting()['optional_aggregates']
+    assert 'fill_groups' not in result['broker_reporting']
+    entry, = result['broker_reporting']['forms']
+    assert entry['status'] == 'reconciled' and entry['broker_date_sold'] is None
+
+
+@pytest.mark.parametrize('change,reason', [
+    (dict(transactions=4), 'number of transactions differs'),
+    (dict(quantity='499'), 'units differ'),
+    (dict(proceeds='500.08'), 'proceeds'),
+])
+def test_an_aggregate_form_that_disagrees_with_its_sales_stays_unresolved(change, reason):
+    result = run(aggregate_reporting(**change), USDC)
+    assert not result['broker_reporting']['complete']
+    assert any(reason in issue['reason'] for issue in result['broker_reporting']['unresolved'])
+
+
+def test_an_aggregate_form_may_print_a_date_sold_without_it_being_compared():
+    assert resolved(run(aggregate_reporting(date_sold='2025-12-31'), USDC))['broker_reporting']['complete']
+
+
+@pytest.mark.parametrize('change,refusal', [
+    (lambda b: b['optional_aggregates'][0].update(method='specified_nfts'), 'specified-NFT aggregate'),
+    (lambda b: b['optional_aggregates'][0].update(txn_ids=[]), 'must list its disposals'),
+    (lambda b: b['optional_aggregates'][0].update(txn_ids=['u1', 'usdc-old']), 'member must be a filing-year'),
+    (lambda b: b['optional_aggregates'][0].update(group_id='u1'), 'must not collide'),
+    (lambda b: b['optional_aggregates'][0].pop('method'), 'needs account_id, group_id, method'),
+    (lambda b: b['optional_aggregates'].append({**b['optional_aggregates'][0], 'group_id': 'usdc-b',
+                                                 'txn_ids': ['u3']}), 'must not repeat or overlap'),
+    (lambda b: b['forms'][0].update(optional_method=None), "box 11a must be 'qualifying_stablecoins'"),
+    (lambda b: b['forms'][0].update(transactions=True), 'positive whole number'),
+    (lambda b: b['forms'][0].update(transactions=None), 'positive whole number'),
+    (lambda b: b['forms'][0].update(basis_reported_to_irs=True, cost_basis=500), 'never reports basis'),
+    (lambda b: b['forms'].append(form(form_id='da-u1', txn_id='u1', asset='USDC', quantity='200',
+                                      proceeds='200.10')), 'direct-member broker form'),
+    (lambda b: b['forms'].append({**b['forms'][0], 'form_id': 'da-usdc-2'}), 'exactly one broker form'),
+    (lambda b: b['resolutions'].update({'da-usdc': dict(proceeds='taxpayer_records', evidence='w')}),
+     'exact form reconciliation'),
+    (lambda b: b['accounts']['A'].update(not_reported=['u3']), 'declared not_reported'),
+])
+def test_an_optional_aggregate_refuses_evidence_it_cannot_reconcile(change, refusal):
+    block = aggregate_reporting()
+    change(block)
+    with pytest.raises(C.CryptoImportError, match=re.escape(refusal)):
+        run(block, USDC)
+
+
+def test_an_aggregate_of_two_assets_is_refused():
+    tx = copy.deepcopy(USDC)
+    tx[4]['asset'] = 'USDT'
+    tx.append({**event('A', 'usdt', 'buy', '2025-01-03', qty='100', usd=100), 'asset': 'USDT'})
+    with pytest.raises(C.CryptoImportError, match='reports one stablecoin'):
+        run(aggregate_reporting(), tx)
+
+
+@pytest.mark.parametrize('key,value', [('transactions', 3), ('optional_method', 'qualifying_stablecoins')])
+def test_an_aggregate_box_on_any_other_form_still_refuses(key, value):
+    with pytest.raises(C.CryptoImportError, match=rf"fills \['{key}'\], which this engine does not model"):
+        run(reporting(form(**{key: value})))
+
+
+def test_an_aggregate_import_ties_out_by_box():
+    built = resolved(run(aggregate_reporting(), USDC))
+    targets = tie_out.evaluate([], _merged(built), [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert not [t for t in targets if 'digital' in t.lower() or 'crypto' in t.lower()], targets
+
+
+def test_an_option_caused_sale_cannot_sit_in_an_optional_aggregate():
+    from tests.test_crypto_options import option_review
+    block = aggregate_reporting()
+    block['option_exercise_review'] = option_review(USDC[2], 'written_call')
+    with pytest.raises(C.CryptoImportError, match='Grouped option-caused disposals'):
+        run(block, USDC)

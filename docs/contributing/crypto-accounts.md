@@ -126,7 +126,8 @@ from a form's absence in the import. `broker_reporting` sits beside
      "wash_sale_loss_disallowed": null, "loss_not_allowed": false,
      "net_proceeds": false, "qof": false,
      "customer_acquisition_info": false,
-     "optional_method": null, "primary_sale_proceeds": null, "cusip": null}
+     "optional_method": null, "transactions": null, "primary_sale_proceeds": null,
+     "cusip": null}
   ],
   "resolutions": {
     "da-1": {"proceeds": "taxpayer_records", "evidence": "trade-confirmation-1"}
@@ -324,11 +325,51 @@ fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
 
 This handles linked partial fills only. An export's lost precision or wrong
-USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47).
-Optional annual stablecoin/NFT reports and cross-year date corrections remain
-AA47 follow-ups; a box this engine does not model goes through
-[manual disposals](#manual-disposals-aa47). An optional-method box
-still refuses; this grouping cannot clear an unreviewed reporting year.
+USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47),
+and a broker's annual qualifying-stablecoin form through
+[optional aggregate forms](#optional-aggregate-forms-aa47). Specified-NFT
+aggregate forms and cross-year date corrections remain AA47 follow-ups; a box
+this engine does not model goes through [manual disposals](#manual-disposals-aa47).
+This grouping cannot clear an unreviewed reporting year.
+
+### Optional aggregate forms (AA47)
+
+Treas. Reg. §1.6045-1(d)(10) lets a broker report a customer's year of
+designated sales of each qualifying stablecoin on one Form 1099-DA instead of
+one form per sale, once those sales across the customer's stablecoins at that
+broker exceed $10,000. The form checks box 11a, gives the sales' aggregate
+proceeds in box 1f, their units in 1c and their number in 11b, leaves the date
+acquired blank and never checks box 2; the date sold may be blank too. A
+designated sale is any sale except one for a different digital asset that is
+not a qualifying stablecoin, which appears on no form. Read live on
+2026-10-25: the regulation (unchanged for sales from 2025-01-01), the
+[TY2025 Form 1099-DA instructions](https://www.irs.gov/pub/irs-prior/i1099da--2025.pdf)
+and the [TY2025 Form 8949 instructions](https://www.irs.gov/pub/irs-prior/i8949--2025.pdf),
+which still want one row per sale, short-term in box H and long-term in box K.
+
+List the sales the form aggregates, from the broker's annual statement, in the
+optional `broker_reporting.optional_aggregates`, and point the form's `txn_id`
+at the group:
+
+```json
+{"account_id": "exchange-A", "group_id": "usdc-2025", "method": "qualifying_stablecoins",
+ "txn_ids": ["sell-u1", "sell-u2", "sell-u3"], "evidence": "usdc-annual-statement"}
+```
+
+The members are filing-year disposals of one asset in one account, on no
+other form and in no fill group, and the group is linked by exactly one form
+whose `optional_method` names the same method and whose `transactions` is a
+whole number. The form reconciles as a fill group's does, against the
+members' own rows: units and proceeds exactly, the number of transactions
+against the members, and its date sold, if any, against nothing. Each sale
+keeps its own Form 8949 rows in its own holding period's box, with its share
+of box 1f. A difference stays unresolved, since group-level resolutions are
+refused. A designated sale the form leaves out, or every sale when the year's
+total was at or under the threshold, goes on no form: declare it under the
+account's `not_reported` with its evidence, as any sale no form reports.
+A specified-NFT aggregate form joins different assets and can carry box 11c's
+first-sale proceeds, so it still refuses and is prepared externally; so does
+an option-caused sale inside an aggregate.
 
 ### Manual disposals (AA47)
 
@@ -472,7 +513,8 @@ key cannot change the row.
 | `net_proceeds` | 3a | 3a | "Net proceeds" checked: box 1f was reduced by option premiums. Refuses without a source-bound purchased-put exercise under the reviewed option-premium path below; a blank 3a is false. "Gross proceeds" is no key, because it cannot clear a sale either way. The instructions complete box 3a "if the digital assets were sold because of the exercise of an option" yet leave it off the boxes "completed only if applicable", and box 1f says "Otherwise, check 'Gross proceeds' in box 3a", so a broker may check it on every sale; and on an option's sale it means the premium was NOT netted, which §1.6045-1(m) does not require for an option granted or acquired before 2026, or held outside the broker's account. Refusing it would refuse ordinary forms, and accepting it as "no option" would pass that unadjusted sale. An option exercise affecting a disposal (sale, exchange or spending), through its proceeds or the lot's basis, requires the capability review (`digital_asset_option_exercise`), whichever box shows. |
 | `qof` | 3b | 3b | Disposition of an interest in a qualified opportunity fund; checked, refuses the import, since gain previously deferred into the fund needs its own code-Y row and Form 8997. |
 | `customer_acquisition_info` | 8 | 8 | The broker took customer-provided acquisition information into account when identifying units (§1.6045-1(d)(2)(ii)(B)(4)). Copy a boolean or null, retaining the field when blank. It can supply dates for FIFO or support specific identification; the form cannot establish the method. A checked box is accepted only after the import's explicit FIFO confirmation. Specific identification at any broker or wallet blocks FIFO pricing, whether this box is checked or blank. |
-| `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method; either box checked refuses the import, since an aggregate is not one disposal's figures (AA47). |
+| `optional_method` | 11a | 11a | Qualifying stablecoins or specified NFTs reported under an optional aggregate method: `qualifying_stablecoins` or `specified_nfts`. A form that links a reviewed qualifying-stablecoin [optional aggregate](#optional-aggregate-forms-aa47) reconciles; checked on any other form, or for specified NFTs, it refuses the import, since an aggregate is not one disposal's figures (AA47). |
+| `transactions` | 11b | 11b | Number of transactions under an optional method, a whole number; null on any other form. The optional aggregate compares it with its listed disposals; filled on any other form it refuses. |
 | `primary_sale_proceeds` | 11c | 11c | Specified NFTs' first-sale proceeds, kept out of box 1f; a nonzero amount refuses the import. `/tax-parse` also records it as `nft_first_sale_proceeds`, which blocks the tie-out gate, so a form that never reaches `broker_reporting` cannot lose it. |
 | `cusip` | CUSIP | CUSIP | CUSIP or other identifying number of a tokenized security, which the wash-sale rules reach (box 1i) while the import models none; filled in, refuses the import. A tokenized security with no applicable number leaves it blank and passes; box 1i still refuses a wash sale the broker reports. |
 | `federal_withholding_1099` (parse ledger only) | 4 | 4 | Backup withholding; handled by `/tax-parse`, outside `broker_reporting.forms`. |
@@ -482,7 +524,6 @@ key cannot change the row.
 | — | 7 | 7 | Only cash proceeds were paid. Not read: proceeds paid in property are its value, which the import prices for trades too, and the amounts are compared either way. |
 | — | 9 | 9 | Noncovered security; not read, since box 2 answers whether basis was reported (below). |
 | — | 10 | 10 | Reserved. |
-| — | 11b | 11b | Number of transactions under an optional method; completed only with box 11a, which refuses. |
 | — | 12a | 12a | Units transferred into the account. Not read: transfers come from the reviewed transfer links, and the original lot keeps its dates and basis. |
 | — | 12b | 12b | Transfer-in date; not read, as box 12a. |
 | — | 13 | 13 | Reserved. |
