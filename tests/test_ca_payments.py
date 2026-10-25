@@ -117,6 +117,8 @@ def test_matching_rows_raise_questions_without_rejecting_legitimate_equal_paymen
                          ('person', 'joint'), ('date', None), ('amount', 1001)]:
         records.append(payment(field, **{field: value}))
     records.append(payment('unknown', date=None))
+    # Two zero rows match each other on every field and still claim nothing.
+    records += [payment('zero-a', amount=0), payment('zero-b', amount=0)]
     p, _ = paying(records)
     p.update(tax_year=2025, filing_status='Single')
     report = B.ca_payment_review(p)
@@ -142,7 +144,10 @@ def test_review_cli_needs_only_profile_and_never_certifies_or_changes_the_return
     assert (tmp_path / 'taxpayer_profile.json').read_bytes() == before
     assert not (tmp_path / 'result.json').exists()
     assert not (tmp_path / 'validation_receipt.json').exists()
-    assert B._main(['--review-ca-payments', '--check']) == 1
+    # The same readable workspace, so only the mode conflict can refuse it.
+    assert B._main(['--workspace', str(tmp_path), '--review-ca-payments', '--check']) == 1
+    assert 'not allowed with' in capsys.readouterr().err
+    assert not (tmp_path / 'validation_receipt.json').exists()
 
 
 def test_review_keeps_source_validation_and_explicit_zero(tmp_path, capsys):

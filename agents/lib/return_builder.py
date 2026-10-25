@@ -1331,10 +1331,11 @@ def _ca_payment_sources(profile: dict, year: int, status: str) -> tuple[dict, st
             except ValueError:
                 raise ValueError(f"{where}: date must be an actual ISO payment date, not in the future, or explicit null") from None
         amount = money(record["amount"], where + ".amount")
-        match_key = (state, destination, kind, person, date, amount)
-        matching.setdefault(match_key, []).append(index)
         if not amount:
             continue
+        # A zero row claims nothing, so asking whether it repeats another one
+        # is a question with no answer that could change line72.
+        matching.setdefault((state, destination, kind, person, date, amount), []).append(index)
         if state != "CA" or destination != year:
             totals["external_record_count"] += 1
             continue
