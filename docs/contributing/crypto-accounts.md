@@ -137,7 +137,8 @@ from a form's absence in the import. `broker_reporting` sits beside
   `not_reported`, which must each be a filing-year disposal of that account. An
   undeclared account blocks; it is never presumed formless.
 - **forms** — one entry per reported transaction, linked by `txn_id` to the
-  reviewed disposal it reports. The asset and units must match it, and the date
+  reviewed disposal it reports, or to the `group_id` of
+  [linked partial fills](#linked-partial-fills-aa47). The asset and units must match it, and the date
   sold must be the import's date or the day either side in the same year:
   §1.6045-1(d)(2)(i)(B)(3) asks the broker only for "the sale date", naming no
   time zone, and no UTC offset reaches a full day. The row keeps the import's
@@ -152,6 +153,9 @@ from a form's absence in the import. `broker_reporting` sits beside
   agrees, the forms' own figures replace a one-cent apportionment difference in proceeds. Basis
   apportionment requires both forms to report basis to the IRS; otherwise each
   basis difference requires an evidenced resolution preserving FIFO gain.
+  The adopted cent goes on the form's largest row; re-spreading the form's
+  figure by units would reprice lots of different basis, or fills of one
+  order at different prices.
   Four boxes this engine does not model are likewise REQUIRED,
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
@@ -246,6 +250,41 @@ like with like; the documented `proceeds_above_forms`
 excess comes off the result side, which it can only lower, and the key alone
 meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
+
+### Linked partial fills (AA47)
+
+One broker sale can cover several imported fill IDs. Link them explicitly in
+the optional `broker_reporting.fill_groups` list, then set the form's `txn_id`
+to that group's `group_id`:
+
+```json
+{"account_id": "exchange-A", "group_id": "order-1",
+ "txn_ids": ["fill-1", "fill-2"], "evidence": "single-sale-confirmation"}
+```
+
+The evidence must establish that the listed fills belong to that one reported
+sale. Never infer a group from similar amounts or nearby timestamps. Each
+member must be a filing-year disposal in the same account, of the same asset,
+on the same calendar day. At least two distinct IDs are required. Groups
+cannot overlap, reuse a transaction's ID as their own ID, or contradict a
+member's `not_reported` declaration. Every group needs a broker form; a member
+cannot also have a separate direct form. A holding-period split uses the
+existing separate-form rules, with each form naming the same group.
+
+FIFO still matches each original fill in chronological order before reporting
+groups are collected. Intervening purchases and transfers keep their original
+position. Output rows retain their own transaction IDs, dates and FIFO basis;
+the form workpaper names the group and `fill_groups` retains its membership
+and evidence. Fees are summed once for the group's reconciliation. Units and
+amounts must reconcile under the existing exact checks. Group-level
+`resolutions` are refused: spreading an adjustment across differently priced
+fills could move gain between holding periods. Correct the underlying records
+from evidence or prepare that case externally.
+
+This handles linked partial fills only. Optional annual stablecoin/NFT reports,
+precision differences, unexplained proceeds gaps, manual special treatments
+and cross-year date corrections remain AA47 follow-ups. An optional-method box
+still refuses; this grouping cannot clear an unreviewed reporting year.
 
 ### Reviewed Form 1099-B inputs (AA61)
 

@@ -919,6 +919,16 @@ def _spread(total_cents: int, weights) -> 'list[int]':
     return _running_cents([Fraction(total_cents, 100) * w / whole for w in weights])
 
 
+def _absorb(cents: 'list[int]', delta: int) -> 'list[int]':
+    """The rows' own cents with a split form's apportionment cent on the
+    largest row. Re-spreading the form's figure by units would reprice rows
+    whose per-unit amount differs — lots of different basis, or the fills of
+    one order at different prices — while the form's total still tied."""
+    out = list(cents)
+    out[out.index(max(out))] += delta
+    return out
+
+
 def _form_cents(value, label) -> int:
     amount = _exact(value, label)
     if (amount * 100).denominator != 1:
@@ -927,8 +937,8 @@ def _form_cents(value, label) -> int:
 
 
 def _broker_reporting_input(reporting, events, regime, tax_year):
-    if not isinstance(reporting, dict) or not set(reporting) <= {'accounts', 'forms', 'resolutions'}:
-        raise CryptoImportError('broker_reporting takes only accounts, forms and resolutions')
+    if not isinstance(reporting, dict) or not set(reporting) <= {'accounts', 'forms', 'resolutions', 'fill_groups'}:
+        raise CryptoImportError('broker_reporting takes only accounts, forms, resolutions and fill_groups')
     raw_accounts = reporting.get('accounts', {})
     raw_forms = reporting.get('forms', [])
     raw_resolutions = reporting.get('resolutions', {})
@@ -1047,7 +1057,7 @@ def _form_record(form, group, fifo_proceeds, fifo_basis, reasons, codes='', appl
     applied = applied or {}
     shown = form['cost_basis']
     return {
-        'form_id': form['form_id'], 'account_id': group[0].account_id, 'txn_id': group[0].txn_id,
+        'form_id': form['form_id'], 'account_id': group[0].account_id, 'txn_id': form['txn_id'],
         'term': form['term'], 'basis_reported_to_irs': form['reported'],
         'customer_acquisition_info': form['customer_acquisition_info'],
         'date_sold': group[0].date_sold, 'broker_date_sold': form['date_sold'].isoformat(),
@@ -1092,7 +1102,7 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
     recorded fee still left to explain a later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
-        t.proceeds = _spread(form['proceeds'], weights)  # split-form apportionment cent
+        t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
         t.used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
         t.above += gap
@@ -1113,7 +1123,7 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
 def _treat_basis(t, form, gap, weights, fifo_basis, resolution, split_cent) -> None:
     """Columns (e) and (g) for a basis gap (form less FIFO, in cents)."""
     if gap and split_cent and abs(gap) <= 1:  # split-form apportionment cent; (e) is the form's
-        t.column_e = _spread(form['cost_basis'], weights)
+        t.column_e = _absorb(fifo_basis, gap)
     elif gap and resolution.get('basis') == 'taxpayer_records':
         t.used.add('basis')
         t.codes.add('B')
@@ -1268,6 +1278,67 @@ def _stray_evidence(forms_by_txn, accounts, by_txn) -> 'list[dict]':
     return issues
 
 
+def _fill_group_rows(reporting, by_txn, events):
+    """Link reviewed fills AFTER FIFO, preserving each row's original identity.
+
+    A group is one same-day broker sale, not an optional annual aggregate.
+    Combining raw events before matching would move intervening acquisitions
+    or transfers and could change basis. Only the reporting lookup is grouped.
+    """
+    raw = reporting.get('fill_groups', []) if isinstance(reporting, dict) else []
+    if not isinstance(raw, list):
+        raise CryptoImportError('fill_groups must be a list of reviewed single-sale links')
+    if not raw:
+        return by_txn, events, []
+    grouped, expanded, records, used = dict(by_txn), dict(events), [], set()
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != {'account_id', 'group_id', 'txn_ids', 'evidence'}:
+            raise CryptoImportError('Each fill group needs account_id, group_id, txn_ids and evidence')
+        account = _account_id(entry['account_id'], 'fill group account_id')
+        group = _account_id(entry['group_id'], 'fill group group_id')
+        evidence = _account_id(entry['evidence'], 'fill group evidence')
+        listed = entry['txn_ids']
+        if not isinstance(listed, list) or len(listed) < 2:
+            raise CryptoImportError('A fill group must link at least two distinct filing-year disposals')
+        txns = [_account_id(txn, 'fill group txn_id') for txn in listed]
+        keys = [(account, txn) for txn in txns]
+        key = account, group
+        if len(set(keys)) != len(keys) or used.intersection(keys):
+            raise CryptoImportError('Fill groups must not repeat or overlap disposals')
+        if key in expanded:
+            raise CryptoImportError('A fill group_id must not collide with a transaction or another group')
+        if any(member not in by_txn for member in keys):
+            raise CryptoImportError('Every fill group member must be a filing-year disposal in that account')
+        source = [events[member] for member in keys]
+        if len({e['asset'] for e in source}) != 1 or len({e['date'] for e in source}) != 1:
+            raise CryptoImportError('A fill group must be one same-asset, same-day broker sale')
+        grouped[key] = [row for member in keys for row in by_txn[member]]
+        expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source)}
+        for member in keys:
+            del grouped[member]
+        used.update(keys)
+        records.append(dict(account_id=account, group_id=group, txn_ids=txns, evidence=evidence))
+    return grouped, expanded, records
+
+
+def _check_fill_group_evidence(groups, accounts, forms_by_txn, resolutions):
+    for group in groups:
+        account, alias, members = group['account_id'], group['group_id'], set(group['txn_ids'])
+        if members.intersection(accounts.get(account, {}).get('not_reported', ())):
+            raise CryptoImportError('A fill group contradicts a member declared not_reported')
+        if any((account, member) in forms_by_txn for member in members):
+            raise CryptoImportError('A grouped fill cannot also have a direct-member broker form')
+        matching = forms_by_txn.get((account, alias), [])
+        if not matching:
+            raise CryptoImportError('Every fill group must be linked by a broker form txn_id')
+        if any(form['form_id'] in resolutions for form in matching):
+            # Quantity weights assume one disposal price. Different fills can
+            # have different prices, fees and holding periods; spreading a
+            # group-level correction by units could move gain between terms.
+            raise CryptoImportError('Grouped fills require exact form reconciliation; '
+                                    'group-level resolutions are not supported')
+
+
 def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     """Route filing-year account rows to Form 8949 boxes from explicit evidence.
 
@@ -1277,13 +1348,15 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     box and leaves the report incomplete.
     """
     regime = _REPORTING_REGIMES.get(tax_year) if tax_year is not None else None
-    accounts, forms, resolutions = _reporting_inputs(reporting, events, regime, tax_year)
     by_txn: 'dict[tuple, list]' = {}
     for row in rows:
         by_txn.setdefault((row.account_id, row.txn_id), []).append(row)
+    by_txn, events, fill_groups = _fill_group_rows(reporting, by_txn, events)
+    accounts, forms, resolutions = _reporting_inputs(reporting, events, regime, tax_year)
     forms_by_txn: 'dict[tuple, list]' = {}
     for form in forms:
         forms_by_txn.setdefault((form['account_id'], form['txn_id']), []).append(form)
+    _check_fill_group_evidence(fill_groups, accounts, forms_by_txn, resolutions)
     issues = _stray_evidence(forms_by_txn, accounts, by_txn)
     if by_txn and regime is None:
         issues.append(_issue('Form 8949 routing needs the filing year (--year)' if tax_year is None else
@@ -1315,7 +1388,8 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
         tax_year, regime, issues, forms=records, not_reported=not_reported,
         accounts={account: {'forms_received': entry['forms_received'], 'evidence': entry['evidence'],
                             'not_reported': sorted(entry['not_reported'])} for account, entry in accounts.items()},
-        proceeds_above_forms=_money(above / 100), schedule_d_routing=_schedule_d_routing(final))
+        proceeds_above_forms=_money(above / 100), schedule_d_routing=_schedule_d_routing(final),
+        **({'fill_groups': fill_groups} if fill_groups else {}))
 
 
 # The amount keys of a result.json Schedule D row, which a box's totals add
