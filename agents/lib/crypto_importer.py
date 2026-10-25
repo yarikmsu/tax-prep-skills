@@ -919,6 +919,16 @@ def _spread(total_cents: int, weights) -> 'list[int]':
     return _running_cents([Fraction(total_cents, 100) * w / whole for w in weights])
 
 
+def _absorb(cents: 'list[int]', delta: int) -> 'list[int]':
+    """The rows' own cents with a split form's apportionment cent on the
+    largest row. Re-spreading the form's figure by units would reprice rows
+    whose per-unit amount differs — lots of different basis, or the fills of
+    one order at different prices — while the form's total still tied."""
+    out = list(cents)
+    out[out.index(max(out))] += delta
+    return out
+
+
 def _form_cents(value, label) -> int:
     amount = _exact(value, label)
     if (amount * 100).denominator != 1:
@@ -1092,7 +1102,7 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
     recorded fee still left to explain a later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
-        t.proceeds = _spread(form['proceeds'], weights)  # split-form apportionment cent
+        t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
         t.used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
         t.above += gap
@@ -1113,7 +1123,7 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
 def _treat_basis(t, form, gap, weights, fifo_basis, resolution, split_cent) -> None:
     """Columns (e) and (g) for a basis gap (form less FIFO, in cents)."""
     if gap and split_cent and abs(gap) <= 1:  # split-form apportionment cent; (e) is the form's
-        t.column_e = _spread(form['cost_basis'], weights)
+        t.column_e = _absorb(fifo_basis, gap)
     elif gap and resolution.get('basis') == 'taxpayer_records':
         t.used.add('basis')
         t.codes.add('B')

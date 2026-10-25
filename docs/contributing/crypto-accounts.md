@@ -137,7 +137,8 @@ from a form's absence in the import. `broker_reporting` sits beside
   `not_reported`, which must each be a filing-year disposal of that account. An
   undeclared account blocks; it is never presumed formless.
 - **forms** — one entry per reported transaction, linked by `txn_id` to the
-  reviewed disposal it reports. The asset and units must match it, and the date
+  reviewed disposal it reports, or to the `group_id` of
+  [linked partial fills](#linked-partial-fills-aa47). The asset and units must match it, and the date
   sold must be the import's date or the day either side in the same year:
   §1.6045-1(d)(2)(i)(B)(3) asks the broker only for "the sale date", naming no
   time zone, and no UTC offset reaches a full day. The row keeps the import's
@@ -152,6 +153,9 @@ from a form's absence in the import. `broker_reporting` sits beside
   agrees, the forms' own figures replace a one-cent apportionment difference in proceeds. Basis
   apportionment requires both forms to report basis to the IRS; otherwise each
   basis difference requires an evidenced resolution preserving FIFO gain.
+  The adopted cent goes on the form's largest row; re-spreading the form's
+  figure by units would reprice lots of different basis, or fills of one
+  order at different prices.
   Four boxes this engine does not model are likewise REQUIRED,
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
