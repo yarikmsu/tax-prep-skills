@@ -1517,7 +1517,7 @@ def test_near_the_one_year_line_both_dates_must_come_from_one_calendar(acquired,
     block = {**reporting(form(date_sold=utc['sale'][:10])), 'tax_calendar_review': calendar_review()}
     index = 0 if corrected == 'buy' else 1
     one = [source_correction(tx[index], date=utc[corrected])]
-    with pytest.raises(C.CryptoImportError, match='different calendars'):
+    with pytest.raises(C.CryptoImportError, match='no one calendar'):
         source_run(one, tx, block)
     # Both dates re-read in UTC: one calendar, so the true holding period.
     both = [source_correction(tx[0], date=utc['buy']), source_correction(tx[1], date=utc['sale'])]
@@ -1534,7 +1534,7 @@ def test_a_bare_date_purchase_near_the_one_year_line_cannot_be_read_in_the_sales
     tx = [event('A', 'buy', 'buy', '2024-12-31', usd=100),
           event('A', 'sale', 'sell', '2026-01-01T01:00:00+08:00', usd=150)]
     block = {**reporting(form(date_sold='2025-12-31')), 'tax_calendar_review': calendar_review()}
-    with pytest.raises(C.CryptoImportError, match='different calendars'):
+    with pytest.raises(C.CryptoImportError, match='no one calendar'):
         source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block)
 
 
@@ -1545,7 +1545,7 @@ def test_a_padded_receive_kind_is_still_read_by_its_acquisition_date():
                     acquired='2024-12-31T01:00:00+08:00', external_transfer_confirmed=True)
     tx = [receive, event('A', 'sale', 'sell', '2026-01-01T01:00:00+08:00', usd=150)]
     block = {**reporting(received=False), 'tax_calendar_review': calendar_review()}
-    with pytest.raises(C.CryptoImportError, match='different calendars'):
+    with pytest.raises(C.CryptoImportError, match='no one calendar'):
         source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block)
 
 
@@ -1556,9 +1556,42 @@ def test_the_window_covers_a_february_29_anniversary_across_a_day_of_offsets():
     tx = [event('A', 'buy', 'buy', '2023-02-27T23:30:00-11:00', usd=100),
           event('A', 'sale', 'sell', '2024-02-29T04:00:00-11:00', usd=150)]
     block = {**reporting(form(date_sold='2024-03-01')), 'tax_calendar_review': calendar_review()}
-    with pytest.raises(C.CryptoImportError, match='different calendars'):
+    with pytest.raises(C.CryptoImportError, match='no one calendar'):
         C.build_crypto_import(tx, tax_year=2024, specific_identification=False, broker_reporting={
             **block, 'source_corrections': [source_correction(tx[1], date='2024-03-01T05:00:00+14:00')]})
+
+
+def test_a_purchase_that_reads_the_same_day_in_the_sales_calendar_needs_no_correction():
+    # The AA47 case near the line: the noon +08:00 purchase is 04:00 UTC on
+    # the same day, so in UTC both dates hold and the hold is exactly a year.
+    tx = [event('A', 'buy', 'buy', '2024-12-31T12:00:00+08:00', usd=100),
+          event('A', 'sale', 'sell', '2026-01-01T01:00:00+08:00', usd=150)]
+    block = {**reporting(form(date_sold='2025-12-31')), 'tax_calendar_review': calendar_review()}
+    result = resolved(source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block))
+    assert result['form_8949']['part_i_short_term'] == [only(result)]
+    assert (only(result)['date_acquired'], only(result)['date_sold']) == ('2024-12-31', '2025-12-31')
+
+
+def test_one_zone_across_a_daylight_saving_change_is_one_calendar():
+    # Both dates read in US Pacific, -08:00 then -07:00. In -08:00 the sale is
+    # still 2025-03-10, so one fixed offset gives both dates.
+    tx = [event('A', 'buy', 'buy', '2024-03-10T04:00:00Z', usd=100),
+          event('A', 'sale', 'sell', '2025-03-10T20:00:00-07:00', usd=150)]
+    correction = source_correction(tx[0], date='2024-03-09T20:00:00-08:00')
+    block = {**reporting(form(date_sold='2025-03-10')), 'tax_calendar_review': calendar_review()}
+    result = resolved(source_run([correction], tx, block))
+    assert result['form_8949']['part_ii_long_term'] == [only(result)]
+
+
+def test_a_recorded_date_its_instant_does_not_give_cannot_pass_the_check():
+    # ' UTC' at hour 24: the form date reads 2023-12-31 while the instant is
+    # 2024-01-01 (or, before Python 3.14, does not parse). Either way the
+    # row's dates are not what one calendar gives.
+    tx = [event('A', 'buy', 'buy', '2023-12-31 24:00:00 UTC', usd=100),
+          event('A', 'sale', 'sell', '2025-01-02T01:00:00+08:00', usd=150)]
+    block = {**reporting(form(date_sold='2025-01-01')), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='no one calendar|ISO date/time'):
+        source_run([source_correction(tx[1], date='2025-01-01T17:00:00Z')], tx, block)
 
 
 def test_a_hold_far_from_the_one_year_line_needs_no_second_correction():

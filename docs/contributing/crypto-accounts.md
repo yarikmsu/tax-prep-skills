@@ -514,10 +514,11 @@ secured import workpaper. Source arrays and exports remain unchanged.
 A correction re-reads one record in another calendar, and a row's two dates
 can then come from different calendars. Within three days of the one-year line
 that can flip a sale between short and long term, so a corrected row there
-must have both its acquisition and sale timestamps in one offset: correct the
-other date too. A bare date, an unconfirmed naive time or a receive's
-`acquired` (which this path cannot correct) has no calendar to compare, so
-such a row refuses; prepare it externally.
+must have both dates hold in one calendar: re-read in the offset of either
+end, each end's instant must give the date the row uses. A purchase at noon
+in +08:00 is the same day in UTC and needs nothing; one that is not must be
+corrected too. A bare date or an unconfirmed naive time has no instant to
+re-read, so such a row refuses there; prepare it externally.
 
 A correction may move a disposal or income event back a year, the AA47 case:
 the import dates a sale January 1, the broker December 31. The output then

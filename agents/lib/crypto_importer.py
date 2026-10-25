@@ -1569,10 +1569,10 @@ def _apply_source_corrections(transactions, corrections, account_mode, calendar_
     return updated, records, calendar if date_changes else None, moves
 
 
-def _timestamp_offset(value, naive_utc):
-    """The UTC offset a recorded timestamp's calendar date is read in, or
-    None when it has none to read: a date alone, or a naive time nobody
-    confirmed was UTC."""
+def _timestamp_instant(value, naive_utc):
+    """A recorded timestamp as an aware instant, or None when it has no
+    calendar to re-read: a date alone, or a naive time nobody confirmed was
+    UTC."""
     if not isinstance(value, str):
         return None
     text = value.strip()
@@ -1584,17 +1584,19 @@ def _timestamp_offset(value, naive_utc):
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return datetime.timedelta(0) if naive_utc else None
-    return parsed.utcoffset()
+        return parsed.replace(tzinfo=datetime.timezone.utc) if naive_utc else None
+    return parsed
 
 
 def _check_reviewed_calendar(rows_all, transactions, records, calendar) -> None:
     """A corrected date moves one record to another calendar. Near the
     one-year line, a row whose two dates are read in different calendars can
     flip between short and long term while each date is individually right.
-    Within three days of it, both dates must carry one offset: two offsets put
-    one instant at most two calendar days apart, and a February 29
-    anniversary adds a third."""
+    Within three days of it (two offsets put one instant at most two calendar
+    days apart, and a February 29 anniversary adds a third), both dates the
+    row uses must be what both instants read in one of the two offsets. The
+    comparison is with the dates the row uses, so a timestamp whose recorded
+    date and instant disagree refuses as well."""
     corrected = {(r['account_id'], r['txn_id']) for r in records if 'date' in r['corrected']}
     by_key = {(t['account_id'], t['txn_id']): t for t in transactions}
     naive_utc = calendar.get('naive_timestamps_are_utc', False)
@@ -1612,12 +1614,14 @@ def _check_reviewed_calendar(rows_all, transactions, records, calendar) -> None:
         # a padded ' receive' compares its transfer date, not its acquisition.
         receive = str(source.get('kind', '')).strip().lower() == 'receive'
         acquired_raw = source.get('acquired') if receive else source.get('date')
-        offsets = {_timestamp_offset(by_key.get(sale, {}).get('date'), naive_utc),
-                   _timestamp_offset(acquired_raw, naive_utc)}
-        if None in offsets or len(offsets) != 1:
-            raise CryptoImportError('A reviewed tax date leaves a sale within two days of its one-year holding '
-                                    'period with its dates in different calendars; correct the acquisition and '
-                                    'sale dates in one calendar, or prepare that sale externally')
+        ends = (_timestamp_instant(by_key.get(sale, {}).get('date'), naive_utc),
+                _timestamp_instant(acquired_raw, naive_utc))
+        if None in ends or not any(
+                (ends[0].astimezone(zone).date(), ends[1].astimezone(zone).date()) == (sold, acquired)
+                for zone in {end.tzinfo for end in ends}):
+            raise CryptoImportError('A reviewed tax date leaves a sale within three days of its one-year holding '
+                                    'period with dates that no one calendar gives; correct the other date into '
+                                    'the same calendar, or prepare that sale externally')
 
 
 def _prior_years_corrected(rows_all, records, tax_year) -> 'list[int]':
