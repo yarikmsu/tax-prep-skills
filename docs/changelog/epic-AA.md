@@ -3758,3 +3758,15 @@ $0 loss merged twice, which the totals cannot see. A missing or malformed
 broker figure is a missing result target (exit 2) rather than a raise that
 read as a malformed ledger. Still open: a stale import whose figures agree
 with each other.
+
+## AA56 — the shipped index tells the two PR numberings apart (#53)
+
+Pull-request numbering restarted at #1 when the repository was recreated on
+2026-10-10, but the shipped-index test built one set of merged numbers from
+every subject in history, so a row naming a new number that never merged
+passed on an old merge carrying it. Since #51 every new number has an old
+namesake, and the AA49 row passed before #51 had merged. The index now
+writes the private repository's pull requests as `old #N`, and the test
+checks those against the history of the recreation commit `0a05d0c` and every
+`#N` against the merges after it, failing by name if a later rewrite drops
+that commit.
