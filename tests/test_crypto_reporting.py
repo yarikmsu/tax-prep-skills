@@ -8,6 +8,7 @@ basis-not-reported form takes the correct basis in (e) with -0- in (g).
 import copy
 import json
 import re
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,7 @@ BASE = [event('A', 'buy', 'buy', '2023-01-01', usd=100),
 
 # Reviewed form-specific boxes, each copied blank.
 DA_BLANKS = dict(net_proceeds=False, qof=False, customer_acquisition_info=False,
-                 optional_method=None, primary_sale_proceeds=None, cusip=None)
+                 optional_method=None, transactions=None, primary_sale_proceeds=None, cusip=None)
 B_BLANKS = dict(collectibles=False, qof=False, net_proceeds=False, cusip=None,
                 contract_profit_loss=None, prior_unrealized_profit_loss=None,
                 current_unrealized_profit_loss=None, aggregate_contract_profit_loss=None,
@@ -1325,7 +1326,7 @@ _1099DA_KEY_BOXES = {'asset': '1b', 'quantity': '1c', 'date_sold': '1e', 'procee
                      'accrued_market_discount': '1h', 'wash_sale_loss_disallowed': '1i',
                      'loss_not_allowed': '5', 'net_proceeds': '3a', 'qof': '3b',
                      'customer_acquisition_info': '8',
-                     'optional_method': '11a', 'primary_sale_proceeds': '11c', 'cusip': 'CUSIP',
+                     'optional_method': '11a', 'transactions': '11b', 'primary_sale_proceeds': '11c', 'cusip': 'CUSIP',
                      'federal_withholding_1099': '4', 'state_withholding_nc': '16'}
 # The boxes /tax-parse records in the parse ledger rather than the form entry.
 _1099DA_LEDGER_KEYS = {'federal_withholding_1099', 'state_withholding_nc'}
@@ -2323,3 +2324,222 @@ def test_a_mixed_term_group_keeps_its_cents_rather_than_move_them_between_parts(
              'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
                                   evidence='single-sale-confirmation')]}
     blocked(run(block, tx), 'proceeds differ')
+
+
+# AA47: a qualifying stablecoin's designated sales on one optional aggregate
+# Form 1099-DA (Treas. Reg. §1.6045-1(d)(10); TY2025 1099-DA instructions:
+# box 1f the sales' aggregate proceeds, 1c their units, 11b their count).
+USDC = [event('A', 'usdc-old', 'buy', '2023-06-01', qty='300', usd=300),
+        event('A', 'usdc-new', 'buy', '2025-01-02', qty='300', usd=300),
+        event('A', 'u1', 'sell', '2025-03-01', qty='200', usd='200.10'),
+        event('A', 'u2', 'sell', '2025-05-01', qty='200', usd='199.95'),
+        event('A', 'u3', 'sell', '2025-07-01', qty='100', usd='100.02')]
+USDC = [{**e, 'asset': 'USDC'} for e in USDC]
+
+
+def aggregate_reporting(**changes):
+    agg = form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity='500', date_sold=None,
+               proceeds='500.07', optional_method='qualifying_stablecoins', transactions=3)
+    block = reporting(agg)
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=['u1', 'u2', 'u3'], evidence='usdc-annual-statement')]
+    for key, value in changes.items():
+        block['forms'][0][key] = value
+    return block
+
+
+def test_an_optional_aggregate_form_reconciles_its_years_stablecoin_sales():
+    result = resolved(run(aggregate_reporting(), USDC))
+    # Each sale keeps its own rows, in its own holding period's box H or K,
+    # with its share of the form's figure. u2's 200 units are the old lot's
+    # last 100 and the new lot's first 100; its 199.95 posts the rounded
+    # running total, 99.98 then 99.97. 99.97 + 100.02 + 200.10 + 99.98 = 500.07.
+    assert [(r['txn_id'], r['date_acquired'], r['box'], r['proceeds'], r['broker_proceeds']) for r in rows(result)] == [
+        ('u2', '2025-01-02', 'H', 99.97, 99.97), ('u3', '2025-01-02', 'H', 100.02, 100.02),
+        ('u1', '2023-06-01', 'K', 200.1, 200.1), ('u2', '2023-06-01', 'K', 99.98, 99.98)]
+    assert result['broker_reporting']['optional_aggregates'] == aggregate_reporting()['optional_aggregates']
+    assert 'fill_groups' not in result['broker_reporting']
+    entry, = result['broker_reporting']['forms']
+    assert entry['status'] == 'reconciled' and entry['broker_date_sold'] is None
+
+
+@pytest.mark.parametrize('change,reason', [
+    (dict(transactions=4), 'number of transactions differs'),
+    (dict(quantity='499'), 'units differ'),
+    (dict(proceeds='500.08'), 'proceeds'),
+])
+def test_an_aggregate_form_that_disagrees_with_its_sales_stays_unresolved(change, reason):
+    result = run(aggregate_reporting(**change), USDC)
+    assert not result['broker_reporting']['complete']
+    assert any(reason in issue['reason'] for issue in result['broker_reporting']['unresolved'])
+
+
+def test_an_aggregate_form_may_print_a_date_sold_without_it_being_compared():
+    assert resolved(run(aggregate_reporting(date_sold='2025-12-31'), USDC))['broker_reporting']['complete']
+
+
+@pytest.mark.parametrize('change,refusal', [
+    (lambda b: b['optional_aggregates'][0].update(method='specified_nfts'), 'specified-NFT aggregate'),
+    (lambda b: b['optional_aggregates'][0].update(txn_ids=[]), 'must list its disposals'),
+    (lambda b: b['optional_aggregates'][0].update(txn_ids=['u1', 'usdc-old']), 'member must be a filing-year'),
+    (lambda b: b['optional_aggregates'][0].update(group_id='u1'), 'must not collide'),
+    (lambda b: b['optional_aggregates'][0].pop('method'), 'needs account_id, group_id, method'),
+    (lambda b: b['optional_aggregates'].append({**b['optional_aggregates'][0], 'group_id': 'usdc-b',
+                                                 'txn_ids': ['u3']}), 'must not repeat or overlap'),
+    (lambda b: b['forms'][0].update(optional_method=None), "box 11a must be 'qualifying_stablecoins'"),
+    (lambda b: b['forms'][0].update(transactions=True), 'positive whole number'),
+    (lambda b: b['forms'][0].update(transactions=None), 'positive whole number'),
+    (lambda b: b['forms'][0].update(basis_reported_to_irs=True, cost_basis=500), 'never reports basis'),
+    (lambda b: b['forms'].append(form(form_id='da-u1', txn_id='u1', asset='USDC', quantity='200',
+                                      proceeds='200.10')), 'direct-member broker form'),
+    (lambda b: b['forms'].append({**b['forms'][0], 'form_id': 'da-usdc-2'}), 'exactly one broker form'),
+    (lambda b: b['resolutions'].update({'da-usdc': dict(proceeds='taxpayer_records', evidence='w')}),
+     'exact form reconciliation'),
+    (lambda b: b['accounts']['A'].update(not_reported=['u3']), 'declared not_reported'),
+])
+def test_an_optional_aggregate_refuses_evidence_it_cannot_reconcile(change, refusal):
+    block = aggregate_reporting()
+    change(block)
+    with pytest.raises(C.CryptoImportError, match=re.escape(refusal)):
+        run(block, USDC)
+
+
+def test_an_aggregate_of_two_assets_is_refused():
+    tx = copy.deepcopy(USDC)
+    tx[4]['asset'] = 'USDT'
+    tx.append({**event('A', 'usdt', 'buy', '2025-01-03', qty='100', usd=100), 'asset': 'USDT'})
+    with pytest.raises(C.CryptoImportError, match='reports one stablecoin'):
+        run(aggregate_reporting(), tx)
+
+
+@pytest.mark.parametrize('key,value', [('transactions', 3), ('optional_method', 'qualifying_stablecoins')])
+def test_an_aggregate_box_on_any_other_form_still_refuses(key, value):
+    with pytest.raises(C.CryptoImportError, match=rf"fills \['{key}'\], which this engine does not model"):
+        run(reporting(form(**{key: value})))
+
+
+def test_an_aggregate_import_ties_out_by_box():
+    built = resolved(run(aggregate_reporting(), USDC))
+    targets = tie_out.evaluate([], _merged(built), [], option_exercise_answer=False,
+                               specific_identification_answer=False).missing_result_targets
+    assert not [t for t in targets if 'digital' in t.lower() or 'crypto' in t.lower()], targets
+
+
+def test_an_option_caused_sale_cannot_sit_in_an_optional_aggregate():
+    from tests.test_crypto_options import option_review
+    block = aggregate_reporting()
+    block['option_exercise_review'] = option_review(USDC[2], 'written_call')
+    with pytest.raises(C.CryptoImportError, match='Grouped option-caused disposals'):
+        run(block, USDC)
+
+
+@pytest.mark.parametrize('price,count,big,form_total', [
+    ('1.005', 400, 50, '452.00'),   # each sale rounds up; the form rounds the exact 452.00 once
+    ('0.005', 200, 0, '1.00'),      # each sale rounds to 0.01; the form's 1.00 is half of that
+])
+def test_a_years_rounding_moves_no_sale_more_than_a_cent(price, count, big, form_total):
+    # One holding period, so the form's once-rounded total stands; spread a
+    # cent per sale rather than onto one row, no sale's figure moves more
+    # than its own rounding, and none goes negative.
+    tx = [{**event('A', 'lot', 'buy', '2025-01-02', qty='1000', usd=1000), 'asset': 'USDC'}]
+    tx += [{**event('A', f's{i}', 'sell', '2025-06-01', qty='1', usd=price), 'asset': 'USDC'} for i in range(count)]
+    members = [f's{i}' for i in range(count)]
+    if big:
+        tx.append({**event('A', 'big', 'sell', '2025-07-01', qty=str(big), usd=big), 'asset': 'USDC'})
+        members.append('big')
+    units = count + big
+    block = reporting(form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity=str(units),
+                           date_sold=None, proceeds=form_total, optional_method='qualifying_stablecoins',
+                           transactions=len(members)))
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=members, evidence='usdc-annual-statement')]
+    result = resolved(run(block, tx))
+    sold = {r['txn_id']: r['proceeds'] for r in rows(result)}
+    exact = float(price)
+    assert all(abs(sold[f's{i}'] - exact) < 0.01 and sold[f's{i}'] >= 0 for i in range(count))
+    assert (not big or sold['big'] == big) and round(sum(sold.values()), 2) == float(form_total)
+
+
+@pytest.mark.parametrize('method', [None, ['qualifying_stablecoins'], 'specified_nfts'])
+def test_an_optional_aggregate_must_name_a_supported_method(method):
+    block = aggregate_reporting()
+    block['optional_aggregates'][0]['method'] = method
+    with pytest.raises(C.CryptoImportError, match='qualifying_stablecoins forms only'):
+        run(block, USDC)
+
+
+@pytest.mark.parametrize('date', ['2024-12-31', '2026-01-05'])
+def test_an_aggregates_printed_date_sold_falls_in_the_filing_year(date):
+    with pytest.raises(C.CryptoImportError, match='a date sold it prints must fall in that year'):
+        run(aggregate_reporting(date_sold=date), USDC)
+
+
+def test_the_cent_moves_on_the_sale_whose_rounding_went_furthest_the_other_way():
+    # 1.004 posts 1.00 and each 1.005 posts 1.01: 3.02 against the form's
+    # once-rounded 3.014 = 3.01. The cent comes off a 1.005 sale, which ends
+    # half a cent from its exact figure; taking it from the 1.004 sale, first
+    # in the list, would leave that one 1.4 cents off.
+    prices = {'a': '1.004', 'b': '1.005', 'c': '1.005'}
+    tx = [{**event('A', 'lot', 'buy', '2025-01-02', qty='10', usd=10), 'asset': 'USDC'}]
+    tx += [{**event('A', txn, 'sell', '2025-06-01', qty='1', usd=price), 'asset': 'USDC'}
+           for txn, price in prices.items()]
+    block = reporting(form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity='3', date_sold=None,
+                           proceeds='3.01', optional_method='qualifying_stablecoins', transactions=3))
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=list(prices), evidence='usdc-annual-statement')]
+    sold = {r['txn_id']: r['proceeds'] for r in rows(resolved(run(block, tx)))}
+    assert sold['a'] == 1.00 and sorted([sold['b'], sold['c']]) == [1.00, 1.01]
+
+
+def test_rounded_once_leaves_a_gap_when_a_sales_rows_miss_its_own_rounding():
+    # The one-cent-per-sale bound rests on each sale's rows adding to its own
+    # rounded net; rows that do not would be moved off the form, so the gap
+    # stays a reason instead.
+    from types import SimpleNamespace
+    rows_ = [SimpleNamespace(txn_id='a', proceeds=1.03, holding_period='long'),
+             SimpleNamespace(txn_id='b', proceeds=1.00, holding_period='long')]
+    event_ = {'member_nets': {'a': Fraction(1), 'b': Fraction(1)}}
+    assert C._rounded_once(rows_, event_, 200) is None
+    rows_[0].proceeds = 1.00
+    assert C._rounded_once(rows_, event_, 200) == [100, 100]  # no gap to spread, no change
+    # 1.005 posts 1.01 and 0.995 posts 1.00 against the exact 2.000: the tie
+    # goes to the sale listed first.
+    event_['member_nets'].update(a=Fraction(1005, 1000), b=Fraction(995, 1000))
+    rows_[0].proceeds = 1.01
+    assert C._rounded_once(rows_, event_, 200) == [100, 100]
+
+
+def test_rounded_once_scales_with_the_number_of_sales():
+    # A year's aggregate can hold tens of thousands of sales; one pass over
+    # the rows per sale was quadratic. Each sale rounds up here, so half of
+    # them move: the result is checked, not timed.
+    from types import SimpleNamespace
+    count = 40000
+    rows_ = [SimpleNamespace(txn_id=f's{i}', proceeds=1.01, holding_period='short') for i in range(count)]
+    nets = {f's{i}': Fraction(1005, 1000) for i in range(count)}
+    moved = C._rounded_once(rows_, {'member_nets': nets}, round(count * 100.5))
+    assert sum(moved) == round(count * 100.5) and sorted(set(moved)) == [100, 101]
+
+
+def test_a_fill_group_whose_rows_add_to_nothing_does_not_divide_by_zero():
+    # A fill whose fee exceeds its amount: the fills' cents add to zero, and
+    # the form's figure is spread by units instead.
+    tx = [event('A', 'lot', 'buy', '2023-01-01', qty='2', usd=10),
+          event('A', 'f1', 'sell', '2025-03-01', qty='1', usd='1.00'),
+          event('A', 'f2', 'sell', '2025-03-01', qty='1', usd='0.50', fee_usd='1.50')]
+    block = {**reporting(form(txn_id='grp', quantity='2', proceeds='0.00')),
+             'fill_groups': [dict(account_id='A', group_id='grp', txn_ids=['f1', 'f2'], evidence='e')]}
+    result = run(block, tx)
+    assert [r['broker_proceeds'] for r in rows(result)] == [0, 0]
+
+
+def test_a_manual_fill_group_whose_rows_add_to_nothing_does_not_divide_by_zero():
+    tx = [event('A', 'lot', 'buy', '2023-01-01', qty='2', usd=10),
+          event('A', 'f1', 'sell', '2025-03-01', qty='1', usd='1.00'),
+          event('A', 'f2', 'sell', '2025-03-01', qty='1', usd='0.50', fee_usd='1.50')]
+    # A manual form is not reconciled, so its 0.02 stands: spread by units.
+    block = {**reporting(form(txn_id='grp', quantity='2', proceeds='0.02', ordinary=True)),
+             'fill_groups': [dict(account_id='A', group_id='grp', txn_ids=['f1', 'f2'], evidence='e')],
+             'manual_disposals': [dict(account_id='A', txn_id='grp', evidence='w')]}
+    entry, = resolved(run(block, tx))['broker_reporting']['manual_disposals']
+    assert [r['broker_proceeds'] for r in entry['fifo_rows']] == [0.01, 0.01]

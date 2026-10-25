@@ -32,7 +32,7 @@ F (long-term, no 1099-B received)
 Foreign brokerages: typically Box B or E (basis not reported to IRS)
 
 ### 1099-DA Extraction
-Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 3a, 3b, 4-6, 8, 9, 11a, 11c, 14-16 and CUSIP.
+Must capture, per transaction: boxes 1a-1i (blank stays blank), 2, 3a, 3b, 4-6, 8, 9, 11a-11c, 14-16 and CUSIP.
 From TY2025 a digital asset never uses C/F: `/tax-parse-crypto` routes each
 transaction G-L from these boxes, so never pick its Form 8949 box here.
 
