@@ -106,9 +106,13 @@ def _complete_federal_ty2026_tax_law():
         fed["filing_statuses"][s]["brackets"] = brackets
     fed["child_tax_credit"].update({"amount_per_child": 2200, "refundable_limit": 1700})
     fed["child_tax_credit"]["phase_out_start"] = {"single": 200000, "mfj": 400000}
+    # Complete synthetic tables: the freshness gate also checks planning's
+    # statutory row counts. These amounts do not claim to be CMS's table.
     fed["irmaa"]["tiers"] = {
-        "single": [{"magi_threshold": 106000, "annual_surcharge_per_person": 1000}],
-        "mfj": [{"magi_threshold": 212000, "annual_surcharge_per_person": 1000}]}
+        status: [{"magi_threshold": base + i * 50000,
+                  "annual_surcharge_per_person": (i + 1) * 1000}
+                 for i in range(2 if status == "mfs" else 5)]
+        for status, base in (("single", 106000), ("mfj", 212000), ("mfs", 106000))}
     fed["capital_gains_rates"] = {
         "zero_pct_limit": {"single": 49000, "mfj": 98000, "mfs": 49000, "hoh": 65600},
         "fifteen_pct_limit": {"single": 540000, "mfj": 608000, "mfs": 304000, "hoh": 574000}}

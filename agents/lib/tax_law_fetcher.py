@@ -2418,7 +2418,8 @@ def _stamp_rate_year(data: dict, dotted: str, year: int) -> None:
     state["rate_tax_year"] = year if rated else None
 
 
-def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None:
+def _check_table(kind: str, dotted: str, value, *, writing: bool = True,
+                 year: "int | None" = None) -> None:
     """`writing` is False for the freshness audit, which reads a cache as
     stored: a rule that normalises in place must not let the audit pass a
     value the file still holds un-normalised."""
@@ -2478,6 +2479,11 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
         _check_ascending(dotted, value,
                          fields=("magi_threshold", "annual_surcharge_per_person"),
                          order_by="magi_threshold")
+        from agents.lib.tax_computations.federal.irmaa import validate_irmaa_tiers
+        try:
+            validate_irmaa_tiers(value, year, separate=dotted.endswith(".mfs"))
+        except ValueError as exc:
+            raise TaxLawSetError(f"{dotted}: {exc}") from None
     elif kind == "table_bases":
         # EMPTY is a value here, not the unfetched state: the table was
         # compared with its schedule and follows it throughout. The shape is
@@ -2499,7 +2505,7 @@ def _check_table(kind: str, dotted: str, value, *, writing: bool = True) -> None
 
 
 def _check_against(dotted: str, ref, value, *, top: bool = True,
-                   strict: bool = True) -> None:
+                   strict: bool = True, year: "int | None" = None) -> None:
     """`value` has the shape `ref` (the seed at `dotted`) prescribes, recursively.
 
     `top` is the leaf or block the command names. Below it, a whole-block write
@@ -2537,7 +2543,7 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         # matches its own pattern. Read as one, every fetched New York cache
         # failed (AA28). A table validator applies where the seed is a list.
         if pattern.match(dotted) and not isinstance(ref, dict):
-            _check_table(kind, dotted, value, writing=strict)
+            _check_table(kind, dotted, value, writing=strict, year=year)
             return
     if re.fullmatch(r"retirement_conformity\.[A-Z]{2}\.(employee_401k|traditional_ira|hsa)", dotted):
         if type(value) is not bool:
@@ -2561,9 +2567,10 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
             child = f"{dotted}.{k}"
             if dynamic:
                 _check_dynamic_key(dotted, k)
-                _check_against(child, _dynamic_ref(dotted), v, top=False, strict=strict)
+                _check_against(child, _dynamic_ref(dotted), v, top=False, strict=strict,
+                               year=year)
             elif k in ref:
-                _check_against(child, ref[k], v, top=False, strict=strict)
+                _check_against(child, ref[k], v, top=False, strict=strict, year=year)
     elif isinstance(ref, bool):
         if not isinstance(value, bool):
             raise TaxLawSetError(f"{dotted}: expected true or false")
@@ -2826,7 +2833,7 @@ def validate_cache(data: dict, year: int) -> "list[str]":
                 ref = create_state_template(declared_state_code(data) or "state", tax_year=year)
             else:
                 ref = _reference_for(path, data, value, year)
-            _check_against(path, ref, value, top=False, strict=False)
+            _check_against(path, ref, value, top=False, strict=False, year=year)
         except TaxLawSetError as e:
             problems.append(str(e))
     try:
@@ -2845,7 +2852,7 @@ def validate_cache(data: dict, year: int) -> "list[str]":
                     continue
                 try:
                     _check_against(f"retirement_conformity.{code}", schema[code], row,
-                                   top=False, strict=False)
+                                   top=False, strict=False, year=year)
                 except TaxLawSetError as e:
                     problems.append(str(e))
                 if any(row.get(k) is not None for k in ("employee_401k", "traditional_ira", "hsa")):
@@ -2955,7 +2962,7 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
             "year's cache, never set on its own — an attestation written apart "
             "from the rate can vouch for a rate carried over from another year")
     ref = _reference_for(dotted, data, value, year)
-    _check_against(dotted, ref, value)
+    _check_against(dotted, ref, value, year=year)
     if dotted in ("state.modifications", "state.local") and value.get("tax_year") != year:
         raise TaxLawSetError("Optional state rule block must explicitly name this cache year")
     _set_path(data, dotted, value, year)
