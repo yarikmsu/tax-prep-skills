@@ -85,7 +85,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA47** — the one 1099-DA case that still blocks, a specified-NFT optional aggregate form. | Nothing here waits on a publication; it is federal work a CA filer reaches, and it turns a permanent block into a return. |
+| **1. California filers: ready now** | Nothing: AA47, the last item here, shipped in #66. | Every remaining California item waits on a publication (tier 2) or on the owner's approval of a design (tier 3). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | AA44 and AA45 — prior-return import and multi-year Roth planning. | Larger product extensions. Each has a design PR awaiting the owner's approval (#59 and #58), with the decisions it needs listed. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -98,20 +98,6 @@ Trigger and range behavior is documented in
 
 ### AA — the 2026-09-20 product-owner review, and what later reviews filed under it
 
-- **AA47 (P2, M): Give the 1099-DA cases AA41 blocks for good a way through.**
-  AA41 links each form to one disposal by `txn_id` and requires matching units
-  and proceeds, so some cases blocked for good. Each now has an evidenced
-  treatment but one: linked partial fills (#44), reviewed source corrections
-  for an export's lost precision or wrong USD value (#45), a reviewed filing
-  date for a sale the import and the broker put on opposite sides of year-end
-  (#46), reviewed plain-USD option premiums (#47), a written call's premium as
-  code E, Pub. 550's married-put rule, once-rounded fill groups and manual
-  disposals for a box the engine does not model (#60), and optional aggregate
-  forms for qualifying stablecoins (#64). Still blocking: a broker using
-  §1.6045-1(d)(10)'s optional aggregate method for specified NFTs, whose one
-  form joins different assets and can carry box 11c's first-sale proceeds,
-  kept out of box 1f. It needs its own evidenced treatment, not a tolerance;
-  until then the import blocks instead of guessing. Found by AA41's review.
 
 - **AA48 (P1, S): Add the TY2026 Form 8949 boxes before TY2026 crypto imports.**
   `_REPORTING_REGIMES` holds TY2023-2025 only, so every TY2026 import with a
@@ -510,6 +496,7 @@ merge.
 | AA46 | #50, #57 | Arbitrary recursive field diffs stay out, and a separate `/tax-diff` skill is demand-gated. |
 | AA63 | #62 | Advisory only: no local return is computed, and a flat head tax is recorded nowhere. |
 | AA50 | #63 | FIFO matching still prices every lot slice in exact fractions, the import's remaining cost. |
+| AA47 | #44, #45, #46, #47, #60, #64, #66 | A first-sale NFT form (box 11c) and a date moved into a later year still refuse, and the collectible 28% rate stays unmodeled. |
 | AA49 | #51 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |

@@ -3858,4 +3858,15 @@ holding period's box. A form that rounds the sales' exact total once spreads
 the gap a cent per sale, on the sales whose own rounding fell furthest the
 other way; fill groups take the same rule, where the whole gap used to land on
 one row. Specified-NFT aggregate forms, which join different assets and can
-carry first-sale proceeds, still refuse, and are what remains of AA47.
+carry first-sale proceeds, still refused here; #66 below takes them.
+
+## AA47 (part) — specified-NFT aggregate forms (#66)
+
+The optional method's specified-NFT form reports every NFT sale on one Form
+1099-DA, its box 1b reading "Specified NFTs". The import already reconciled an
+individual NFT sale's form, under its caveat that the collectible 28% rate is
+not modeled, so the aggregate now reconciles the same way: its members may be
+different assets, its `asset` is box 1b's text, and units, count and proceeds
+tie as a stablecoin aggregate's do. A first-sale form, box 11c filled and box
+1f blank, still refuses. With it every case AA41 blocked for good has an
+evidenced treatment, and AA47 has shipped.
