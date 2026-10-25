@@ -18,6 +18,8 @@ taxpayer_profile.json. Re-runnable quarterly.
 Reviewed full-year NY/NC forecasts also produce equal-quarter IT-2105/NC-40
 annual targets, with complete state/local worksheets and fetched safe-harbor law.
 Reviewed Form 6251 forecasts add AMT and applicable credits to federal payments.
+An independently reviewed regular foreign tax credit can be included while
+AMT remains explicitly unmodeled; a prior AMT credit still needs Form 6251.
 Medicare IRMAA is a separate per-beneficiary premium estimate using the normal
 two-year lookback and that premium year's independently fetched law. CMS
 publishes that table the November before it applies, so a mid-year run
@@ -254,6 +256,10 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      Keep the AMT-excluding estimate and payment caveat visible even when the
      harbor says covered. A modeled amount and the FTC/Form 8801 credits already
      enter total tax, balance and payment targets; never add them a second time.
+     **`federal.foreign_tax_credit`** also enters those figures when supplied
+     through `foreign_tax_credit_projection` without an AMT worksheet. Follow
+     the [regular-credit interview](references/amt-irmaa.md); show the reviewed
+     credit and preserve the AMT caveat together.
    - **`irmaa`** — read `modeled`, `note`, income/premium years, MAGI and beneficiary
      count. Report modeled annual surcharges per beneficiary and household separately
      from income tax. An unavailable premium-year cache gives no verified future

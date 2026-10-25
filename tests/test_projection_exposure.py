@@ -10,7 +10,7 @@ import pytest
 
 from tests import test_projection as old
 from agents.lib import projection as P
-from agents.lib.projection.exposure import project_irmaa
+from agents.lib.projection.exposure import apply_projected_amt, project_irmaa
 from agents.lib.secure_fs import secure_path, write_secure
 
 
@@ -84,6 +84,104 @@ def test_missing_amt_with_known_foreign_tax_needs_reviewed_credit_worksheet():
     assert price(proj,profile,law).total_tax==31500
     with pytest.raises(P.ProjectionError,match="omitting a known credit"):
         price(dataclasses.replace(proj,amt_projection=None),profile,law)
+
+
+def regular_credit_case(**changes):
+    proj, profile, law = amt_case()
+    raw = {"tax_year": 2026, "filing_status": "MFJ", "full_year_inputs_confirmed": True,
+           "federal_agi_at_review": 200000, "taxable_income_at_review": 170000,
+           "regular_tax_at_review": 32000, "regular_foreign_tax_credit": 500}
+    raw.update(changes)
+    profile['flags'] = {'has_foreign_tax_paid': True}
+    # No AMT worksheet or fetched AMT law is required for a reviewed regular FTC.
+    del law['federal']['amt']
+    return dataclasses.replace(proj, amt_projection=None,
+                               foreign_tax_credit_projection=raw), profile, law
+
+
+def test_regular_foreign_credit_preserves_unmodeled_amt_and_reaches_payments():
+    proj, profile, law = regular_credit_case()
+    inputs = old._declared_standard({'tax_year': 2026,
+        'foreign_tax_credit_projection': proj.foreign_tax_credit_projection,
+        'ytd': {'wages': 200000, 'federal_withholding': 12000}})
+    report = P.build_report(inputs, profile, law, None, 2026, datetime.date(2026, 12, 31))
+    # Synthetic regular tax32,000 - reviewed credit500 =31,500;
+    # less withholding12,000 =19,500. Current prong90%=28,350, shortfall16,350.
+    f = report.federal
+    assert f.foreign_tax_credit == 500 and f.total_tax == 31500 and f.balance == 19500
+    assert f.amt is None and f.amt_details is None and 'AMT NOT MODELED' in f.amt_note
+    assert f.minimum_tax_credit == 0
+    assert report.safe_harbor.pct90_current == 28350
+    assert report.safe_harbor.shortfall == sum(v.amount for v in report.vouchers) == 16350
+    assert report.w4_zero.shortfall == 19500
+    rendered = P.render_markdown(report)
+    assert '| Foreign tax credit | ($500) |' in rendered
+    assert 'AMT NOT MODELED' in rendered and '| AMT (Form 6251)' not in rendered
+    assert P._report_to_dict(report)['federal']['foreign_tax_credit'] == 500
+
+
+@pytest.mark.parametrize('amount', [0, 500.01])
+def test_regular_foreign_credit_accepts_reviewed_zero_and_cents(amount):
+    f = price(*regular_credit_case(regular_foreign_tax_credit=amount))
+    assert f.foreign_tax_credit == amount
+    assert f.total_tax == round(32000 - amount, 2)
+
+
+def test_regular_foreign_credit_is_nonrefundable_and_does_not_offset_other_taxes():
+    proj, profile, law = regular_credit_case(regular_foreign_tax_credit=32000)
+    f = dataclasses.replace(price(*regular_credit_case()), ctc=4000,
+                            se_tax=2000, additional_medicare=500, niit=300)
+    #32K regular -4K CTC -32K FTC floors at0;2K SE +500 Medicare +300 NIIT remain.
+    out = apply_projected_amt(f, proj, profile, law, 'MFJ', 2026, 0, None, None, None)
+    assert out.total_tax == 2800 and out.balance == -9200
+
+
+@pytest.mark.parametrize('field', ['federal_agi_at_review', 'taxable_income_at_review',
+                                  'regular_tax_at_review', 'regular_foreign_tax_credit'])
+@pytest.mark.parametrize('bad', [None, True, '500', -1, math.nan, math.inf, -math.inf, 10**1000])
+def test_regular_foreign_credit_refuses_missing_invalid_and_stale_numbers(field, bad):
+    with pytest.raises(P.ProjectionError):
+        price(*regular_credit_case(**{field: bad}))
+
+
+@pytest.mark.parametrize('change', [
+    {'tax_year': 2025}, {'tax_year': True}, {'filing_status': 'Single'},
+    {'full_year_inputs_confirmed': False}, {'full_year_inputs_confirmed': 'true'},
+    {'federal_agi_at_review': 199999}, {'taxable_income_at_review': 169999},
+    {'regular_tax_at_review': 31999}, {'regular_foreign_tax_credit': 32000.01},
+    {'unknown_credit': 500}])
+def test_regular_foreign_credit_refuses_stale_or_ambiguous_review(change):
+    with pytest.raises(P.ProjectionError):
+        price(*regular_credit_case(**change))
+
+
+@pytest.mark.parametrize('raw', [True, 500, [], 'reviewed', {}])
+def test_regular_foreign_credit_cannot_be_a_bare_amount_or_empty_review(raw):
+    proj, profile, law = regular_credit_case()
+    with pytest.raises(P.ProjectionError):
+        price(dataclasses.replace(proj, foreign_tax_credit_projection=raw), profile, law)
+
+
+def test_regular_foreign_credit_cannot_bypass_prior_amt_credit_or_duplicate_a_full_worksheet():
+    proj, profile, law = regular_credit_case()
+    profile['prior_year'] = {'amt_credit_carryforward': 1000}
+    with pytest.raises(P.ProjectionError, match='positive prior AMT credit'):
+        price(proj, profile, law)
+    profile['prior_year']['amt_credit_carryforward'] = 0
+    full = amt_case()[0].amt_projection
+    with pytest.raises(P.ProjectionError, match='do not also supply'):
+        price(dataclasses.replace(proj, amt_projection=full), profile, law)
+
+
+@pytest.mark.parametrize('field', ['tax_year', 'filing_status', 'full_year_inputs_confirmed',
+    'federal_agi_at_review', 'taxable_income_at_review', 'regular_tax_at_review',
+    'regular_foreign_tax_credit'])
+def test_regular_foreign_credit_requires_every_review_field(field):
+    proj, profile, law = regular_credit_case()
+    raw = dict(proj.foreign_tax_credit_projection)
+    del raw[field]
+    with pytest.raises(P.ProjectionError):
+        price(dataclasses.replace(proj, foreign_tax_credit_projection=raw), profile, law)
 
 
 @pytest.mark.parametrize("bad",[None,"true",1,0,[],{}])
@@ -346,11 +444,14 @@ def test_missing_or_malformed_indexed_amt_law_refuses(field,bad):
         price(proj,profile,law)
 
 
-def test_projection_cli_reads_premium_year_cache_without_mutating_inputs(tmp_path):
+@pytest.mark.parametrize('regular_only', [False, True])
+def test_projection_cli_reads_premium_year_cache_without_mutating_inputs(tmp_path, regular_only):
     secure_path(tmp_path)
-    proj,profile,law=amt_case()
+    proj,profile,law=regular_credit_case() if regular_only else amt_case()
     inputs=old._declared_standard({"tax_year":2026,"as_of_date":"12-31","ytd":{"wages":200000},
-        "amt_projection":proj.amt_projection,"irmaa_projection":irmaa_inputs()})
+        "amt_projection":proj.amt_projection,
+        "foreign_tax_credit_projection":proj.foreign_tax_credit_projection,
+        "irmaa_projection":irmaa_inputs()})
     originals={}
     for name,data in [("projection_inputs.json",inputs),("taxpayer_profile.json",profile),
         ("tax_law_2026.json",law),("tax_law_2028.json",premium_law())]:
@@ -363,6 +464,10 @@ def test_projection_cli_reads_premium_year_cache_without_mutating_inputs(tmp_pat
         cwd=old.REPO,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
     out=json.loads(result.stdout)
-    assert out["federal"]["amt"]==50000
+    assert out["federal"]["amt"] == (None if regular_only else 50000)
+    if regular_only:
+        assert out['federal']['foreign_tax_credit'] == 500
+        assert out['federal']['total_tax'] == 31500
+        assert 'AMT NOT MODELED' in out['federal']['amt_note']
     assert out["irmaa"]["premium_year"]==2028 and out["irmaa"]["annual_household_surcharge"]==2000
     assert {name:(tmp_path/name).read_text() for name in originals}==originals

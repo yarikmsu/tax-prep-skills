@@ -2296,7 +2296,8 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     clock: the CLI already carries a `--today` override the tests drive.
     """
     _validate_tax_law_year(tax_law, year)
-    if any(inputs.get(key) is not None for key in ("state_projection", "amt_projection", "irmaa_projection")):
+    if any(inputs.get(key) is not None for key in ("state_projection", "amt_projection", "irmaa_projection",
+                                                 "foreign_tax_credit_projection")):
         from agents.lib.projection.states import _year, validate_forecast_profile
         validate_forecast_profile(profile, year)
         _year(inputs.get("tax_year"), year, "projection_inputs.tax_year")
@@ -2316,6 +2317,7 @@ def build_report(inputs: dict, profile: dict, tax_law: dict, prior,
     proj = replace(
         proj,
         amt_projection=inputs.get("amt_projection"),
+        foreign_tax_credit_projection=inputs.get("foreign_tax_credit_projection"),
         paychecks_remaining=paychecks_available_for_year(
             pay_frequency, year, today, proj.paychecks_remaining))
     # The same check one level out, because this `fs` reaches the state

@@ -43,7 +43,7 @@ def _year(value, expected: int, where: str) -> None:
         raise ProjectionError(f"{where} must name the covered year")
 
 
-def _unmodeled_credit_screen(profile: dict) -> None:
+def _unmodeled_credit_screen(profile: dict, *, foreign_credit_reviewed: bool = False) -> None:
     """Omitting a known credit can turn the nominally low fallback high."""
     prior = profile.get("prior_year")
     flags = profile.get("flags")
@@ -55,11 +55,45 @@ def _unmodeled_credit_screen(profile: dict) -> None:
     if type(foreign) is not bool:
         raise ProjectionError("Confirm has_foreign_tax_paid before using an AMT-excluding estimate")
     opening = _number(prior.get("amt_credit_carryforward", 0), "profile prior AMT credit")
-    if opening > 0 or foreign is True:
+    if opening > 0 or (foreign is True and not foreign_credit_reviewed):
         raise ProjectionError(
             "Complete amt_projection with the reviewed opening minimum-tax credit and "
-            "FTC worksheets before projecting payments; omitting a known credit could "
-            "overstate the estimate, so the AMT-excluding fallback is unavailable.")
+            "FTC worksheets (or foreign_tax_credit_projection for the regular FTC alone) "
+            "before projecting payments; omitting a known credit could overstate the estimate. "
+            "A positive prior AMT credit still requires amt_projection.")
+
+
+def _regular_foreign_tax_credit(raw, federal: FederalProjection,
+                                profile: dict, fs: str, year: int | None) -> float:
+    """Accept an allowed regular credit, never infer it from foreign taxes paid.
+
+    Eligibility, elections, baskets and carryovers are reviewed outside this
+    forecast. Bind that review to its income/deduction/tax frame so a stale
+    credit cannot silently lower a changed projection's payment target.
+    """
+    keys = {"tax_year", "filing_status", "full_year_inputs_confirmed",
+            "federal_agi_at_review", "taxable_income_at_review", "regular_tax_at_review",
+            "regular_foreign_tax_credit"}
+    name = "foreign_tax_credit_projection"
+    if not isinstance(raw, dict) or set(raw) - keys:
+        raise ProjectionError(f"{name} must be the documented reviewed regular FTC worksheet object")
+    if type(year) is not int:
+        raise ProjectionError("A reviewed regular foreign tax credit requires a covered tax year")
+    _year(raw.get("tax_year"), year, f"{name}.tax_year")
+    _year(profile.get("tax_year"), year, "taxpayer profile tax_year")
+    if raw.get("filing_status") != fs or raw.get("full_year_inputs_confirmed") is not True:
+        raise ProjectionError("Confirm the regular FTC worksheet's filing status and full-year inputs")
+    frame = {"federal_agi_at_review": round(federal.gross_income - federal.adjustments, 2),
+             "taxable_income_at_review": federal.taxable_income,
+             "regular_tax_at_review": federal.tax_before_credits}
+    for key, expected in frame.items():
+        value = _number(raw.get(key), f"{name}.{key}", signed=key == "federal_agi_at_review")
+        if round(value, 2) != expected:
+            raise ProjectionError(f"Rework the regular foreign tax credit at the projected {key}")
+    credit = round(_number(raw.get("regular_foreign_tax_credit"), f"{name}.regular_foreign_tax_credit"), 2)
+    if credit > federal.tax_before_credits:
+        raise ProjectionError("Reviewed regular foreign tax credit cannot exceed regular income tax")
+    return credit
 
 
 def apply_projected_amt(federal: FederalProjection, proj: ProjectedInputs,
@@ -67,9 +101,22 @@ def apply_projected_amt(federal: FederalProjection, proj: ProjectedInputs,
                         net_ltcg: float, cg_zero, cg_fifteen,
                         schedule_a: dict | None) -> FederalProjection:
     raw = proj.amt_projection
+    regular = proj.foreign_tax_credit_projection
+    if raw is not None and regular is not None:
+        raise ProjectionError("Use amt_projection.regular_foreign_tax_credit with an AMT worksheet; do not also supply foreign_tax_credit_projection")
     if raw is None:
-        _unmodeled_credit_screen(profile)
-        return replace(federal, amt_note=AMT_NOT_MODELED)
+        _unmodeled_credit_screen(profile, foreign_credit_reviewed=regular is not None)
+        if regular is None:
+            return replace(federal, amt_note=AMT_NOT_MODELED)
+        ftc = _regular_foreign_tax_credit(regular, federal, profile, fs, year)
+        # A nonrefundable credit offsets regular income tax, never SE tax,
+        # Additional Medicare or NIIT. Rebuild before flooring the income tax
+        # rather than subtracting the credit from the already floored total.
+        total = round(max(0.0, federal.tax_before_credits - federal.ctc - ftc)
+                      + federal.se_tax + federal.additional_medicare + federal.niit, 2)
+        return replace(federal, foreign_tax_credit=ftc, amt_note=AMT_NOT_MODELED,
+                       total_tax=total,
+                       balance=round(total - federal.withholding - federal.estimates_paid, 2))
     if not isinstance(raw, dict) or set(raw) - _AMT_KEYS:
         raise ProjectionError("amt_projection must be the documented Form 6251 worksheet object; unknown fields are refused")
     if type(year) is not int:

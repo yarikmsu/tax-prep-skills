@@ -87,6 +87,8 @@ class ProjectedInputs:
     state_local_applicability: "dict | None" = None
     # Reviewed full-year Form 6251 preferences and credit worksheets (AA42).
     amt_projection: dict | None = None
+    # Independently reviewed regular FTC when AMT remains unmodeled (AA78).
+    foreign_tax_credit_projection: dict | None = None
 
 
 @dataclass(frozen=True)
