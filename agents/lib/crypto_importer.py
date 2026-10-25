@@ -44,6 +44,7 @@ Pure compute + CLI. Never mutates result.json / taxpayer_profile.json — emits 
 dict the /tax-parse-crypto skill merges.
 """
 
+import bisect
 import datetime
 import heapq
 import json
@@ -720,13 +721,15 @@ def _match_account_fifo(raw, txns, transfer_links):
     pools, transit, transfers, rows, all_incomes, disposals = {}, {}, [], [], [], []
     order = _account_timeline(raw, txns, links)
     def add(account, asset, lot):
-        queue = pools.setdefault((account, asset), [])
-        queue.append(lot)
-        queue.sort(key=lambda entry: (entry.acquired or datetime.datetime.max, entry.origin_order))
+        # After any equal key, as appending and a stable sort would place it;
+        # re-sorting the whole pool per lot made a long history quadratic.
+        bisect.insort(pools.setdefault((account, asset), []), lot,
+                      key=lambda entry: (entry.acquired or datetime.datetime.max, entry.origin_order))
     def consume(index):
         txn, record = txns[index], raw[index]
         remaining, slices = qty[index], []
-        for lot in pools.get((record['account_id'], txn.asset), []):
+        queue = pools.get((record['account_id'], txn.asset), [])
+        for lot in queue:
             if remaining <= 0:
                 break
             if lot.quantity <= 0:
@@ -738,6 +741,12 @@ def _match_account_fifo(raw, txns, transfer_links):
             lot.quantity -= take
             lot.basis -= basis
             remaining -= take
+        # FIFO empties lots from the front. Dropping them keeps the next sale
+        # from walking every lot already sold; nothing reads an empty lot.
+        spent = 0
+        while spent < len(queue) and queue[spent].quantity <= 0:
+            spent += 1
+        del queue[:spent]
         if remaining > 0:
             unresolved(index, 'source account lacks acquisition inventory; another account cannot supply it')
             slices.append(_AccountLot(remaining, Fraction(0), None, record['account_id'],
@@ -2086,9 +2095,14 @@ def build_crypto_import(transactions: 'list[dict]', *,
         reported_disposals = taxable_disposals
         off_year = 0
     if account_mode:
-        events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
-                                                        'date': _parse_dt(raw['date'], 'date').date(),
-                                                        'net': _exact_net(raw)}
+        # Every transaction keeps its key, for the membership checks and the
+        # fill-group id collision check, but only a reported disposal is ever
+        # asked for its amounts; an option event's own fields are added below.
+        priced = {(row.account_id, row.txn_id) for row in rows}
+        events = {(raw['account_id'], raw['txn_id']): (
+                      {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
+                       'date': _parse_dt(raw['date'], 'date').date(), 'net': _exact_net(raw)}
+                      if (raw['account_id'], raw['txn_id']) in priced else {})
                   for raw, txn in zip(transactions, txns)}
         for event in reviewed_options['events'] if reviewed_options else []:
             record = events[(event['account_id'], event['txn_id'])]
