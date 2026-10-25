@@ -259,6 +259,8 @@ Copy the original context and values before entering the corrected facts.
 Never adopt a broker figure solely to clear a mismatch. FIFO is recomputed;
 all form and capability gates still apply. This path cannot change dates,
 fees, identities or lot selection. Preserve its complete correction workpaper.
+A `PRIOR-YEAR RETURN` caveat means the correction changes a year already
+reported: show it to the user and offer `/tax-amend` for that year.
 
 Add `broker_reporting` from the parsed broker forms — the schema, the year
 table and every treatment are in `docs/contributing/crypto-accounts.md`

@@ -1474,6 +1474,11 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         for name, value in values.items():
             if name not in raw:
                 raise CryptoImportError('A source correction must name an existing source field')
+            if name == 'quantity' and not isinstance(value, str):
+                # json.loads rounds a long number to a float before this sees
+                # it, so the "full precision" fact would be recorded rounded.
+                raise CryptoImportError('A corrected quantity must be a decimal string; '
+                                        'a JSON number cannot carry every source decimal')
             try:
                 original = _exact(raw[name], 'original source value')
                 claimed = _exact(expected[name], 'expected source value')
@@ -1489,6 +1494,19 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         records.append(dict(account_id=key[0], txn_id=key[1], expected=dict(expected),
                             corrected=dict(values), evidence=evidence))
     return updated, records
+
+
+def _prior_years_corrected(rows_all, records, tax_year) -> 'list[int]':
+    """Earlier years whose disposals a correction changes: the corrected sale
+    itself, or a sale that consumed a corrected acquisition. Those returns are
+    usually filed, and the corrected history now disagrees with them."""
+    if tax_year is None:
+        return []
+    corrected = {(r['account_id'], r['txn_id']) for r in records}
+    return sorted({int(row.date_sold[:4]) for row in rows_all
+                   if int(row.date_sold[:4]) < tax_year
+                   and ((row.account_id, row.txn_id) in corrected
+                        or (row.origin_account_id, row.origin_txn_id) in corrected)})
 
 
 def build_crypto_import(transactions: 'list[dict]', *,
@@ -1685,6 +1703,11 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['source_corrections'] = correction_records
         result['caveats'].append(f'{len(correction_records)} reviewed source correction(s) applied before FIFO; '
                                  'preserve the source_corrections JSON workpaper and its evidence.')
+        prior = _prior_years_corrected(rows_all, correction_records, tax_year)
+        if prior:
+            result['caveats'].insert(0, f"PRIOR-YEAR RETURN: a source correction changes disposals reported for "
+                                        f"TY{', TY'.join(map(str, prior))}; review whether that return needs "
+                                        'Form 1040-X (/tax-amend) so both years use the same basis.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])

@@ -441,7 +441,8 @@ Record that fact in the optional `broker_reporting.source_corrections` list:
 Each entry requires exactly those five keys. `expected` copies the original
 date, asset, kind and every financial field being corrected. `corrected`
 changes only `quantity` and/or `usd_amount`, retaining full decimal precision
-where the source supplies it. Account and transaction IDs must be explicit and
+where the source supplies it: a corrected `quantity` is a decimal string, since
+a JSON number reaches the engine already rounded. Account and transaction IDs must be explicit and
 unique. Missing, stale, repeated, unchanged, nonfinite or unsupported changes
 refuse. A transfer does not use `usd_amount`; its basis and ownership evidence
 must be prepared through the existing transfer path.
@@ -454,6 +455,12 @@ correction record in its JSON workpaper. Broker units, proceeds, basis and
 holding periods must still reconcile afterward. A difference alone cannot
 establish that the export or broker is wrong. Never fill the correction with
 the broker's figure solely to make reconciliation pass.
+
+A correction can reach an earlier year: the corrected event is an earlier
+sale, or an acquisition an earlier sale consumed. The output then opens with a
+`PRIOR-YEAR RETURN` caveat naming each such year, whose filed return used the
+uncorrected history. Review it for Form 1040-X through `/tax-amend`, so both
+years carry the same basis.
 
 Review and preserve `source_corrections` with the import's secured workpaper in
 `summaries/`. Dates, account identities, fees, lot selection and special form
