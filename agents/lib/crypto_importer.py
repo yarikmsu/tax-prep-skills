@@ -2095,9 +2095,14 @@ def build_crypto_import(transactions: 'list[dict]', *,
         reported_disposals = taxable_disposals
         off_year = 0
     if account_mode:
-        events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
-                                                        'date': _parse_dt(raw['date'], 'date').date(),
-                                                        'net': _exact_net(raw)}
+        # Every transaction keeps its key, for the membership checks and the
+        # fill-group id collision check, but only a reported disposal is ever
+        # asked for its amounts; an option event's own fields are added below.
+        priced = {(row.account_id, row.txn_id) for row in rows}
+        events = {(raw['account_id'], raw['txn_id']): (
+                      {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
+                       'date': _parse_dt(raw['date'], 'date').date(), 'net': _exact_net(raw)}
+                      if (raw['account_id'], raw['txn_id']) in priced else {})
                   for raw, txn in zip(transactions, txns)}
         for event in reviewed_options['events'] if reviewed_options else []:
             record = events[(event['account_id'], event['txn_id'])]
