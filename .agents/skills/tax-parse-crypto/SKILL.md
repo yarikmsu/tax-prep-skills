@@ -270,6 +270,10 @@ collectibles or QOF box, net proceeds, an identifier, a nonzero contract amount
 or barter receipts refuses the spot-crypto import. Box 6's gross checkbox
 cannot clear the option-exercise screen. Add a `resolutions` entry
 only when the user confirms, with evidence, which figure is correct.
+If one broker sale covers several imported partial fills, use the optional
+`fill_groups` links in that contract and point its form at the group ID. Obtain
+the single-sale confirmation; do not combine similar-looking trades. Matching
+still runs on the original events, and group-level resolutions are refused.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.
 

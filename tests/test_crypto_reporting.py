@@ -666,6 +666,130 @@ def test_reconciled_rows_keep_input_order_and_identity():
     assert [(row['txn_id'], row['box']) for row in rows(r)] == [('sale2', 'I'), ('sale', 'K')]
 
 
+FILLS = [BASE[0], event('A', 'fill1', 'sell', '2025-03-01', qty='0.4', usd=60),
+         event('A', 'fill2', 'sell', '2025-03-01', qty='0.6', usd=90)]
+
+
+def fill_reporting():
+    return {**reporting(form(txn_id='order1')),
+            'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                 evidence='single-sale-confirmation')]}
+
+
+def test_a_reviewed_broker_sale_links_multiple_fills_without_changing_fifo_identity():
+    result = resolved(run(fill_reporting(), FILLS))
+    assert [(r['txn_id'], r['form_id'], r['box']) for r in rows(result)] == [
+        ('fill1', 'da-1', 'K'), ('fill2', 'da-1', 'K')]
+    assert [(r['proceeds'], r['cost_basis'], r['gain_loss']) for r in rows(result)] == [
+        (60, 40, 20), (90, 60, 30)]
+    record, = result['broker_reporting']['forms']
+    assert record['txn_id'] == 'order1'
+    assert record['fifo_proceeds'] == record['broker_proceeds'] == 150
+    assert result['broker_reporting']['fill_groups'] == fill_reporting()['fill_groups']
+    assert result['broker_reporting']['schedule_d_routing']['K']['rows'] == 2
+
+
+@pytest.mark.parametrize('year', [2023, 2024])
+def test_linked_fills_also_use_the_reviewed_1099b_regime(year):
+    tx = [event('A', 'buy', 'buy', f'{year - 2}-01-01', usd=100),
+          event('A', 'fill1', 'sell', f'{year}-03-01', qty='0.4', usd=60),
+          event('A', 'fill2', 'sell', f'{year}-03-01', qty='0.6', usd=90)]
+    block = fill_reporting()
+    block['forms'] = [form_1099b(txn_id='order1', date_sold=f'{year}-03-01')]
+    result = resolved(run(block, tx, year))
+    assert [(r['box'], r['gain_loss']) for r in rows(result)] == [('D', 20), ('D', 30)]
+
+
+@pytest.mark.parametrize('change', [
+    lambda b: b.update(fill_groups={}),
+    lambda b: b['fill_groups'][0].update(txn_ids=['fill1']),
+    lambda b: b['fill_groups'][0].update(txn_ids=['fill1', 'fill1']),
+    lambda b: b['fill_groups'][0].update(txn_ids=['fill1', 'missing']),
+    lambda b: b['fill_groups'][0].update(txn_ids=['fill1', 'buy']),
+    lambda b: b['fill_groups'][0].update(group_id='fill1'),
+    lambda b: b['fill_groups'][0].update(account_id='elsewhere'),
+    lambda b: b['fill_groups'][0].update(evidence=''),
+    lambda b: b['fill_groups'][0].update(unknown=True),
+    lambda b: b['fill_groups'].append({**b['fill_groups'][0], 'group_id':'overlap'}),
+    lambda b: b['accounts']['A'].update(not_reported=['fill1']),
+    lambda b: b['forms'].clear(),
+    lambda b: b['forms'].append(form(form_id='direct', txn_id='fill1', quantity='0.4', proceeds=60)),
+])
+def test_fill_groups_refuse_ambiguous_missing_or_contradictory_evidence(change):
+    block = fill_reporting()
+    change(block)
+    with pytest.raises(C.CryptoImportError):
+        run(block, FILLS)
+
+
+@pytest.mark.parametrize('change', [
+    lambda tx: tx[2].update(date='2025-03-02'),
+    lambda tx: tx[2].update(asset='ETH'),
+])
+def test_fills_must_be_one_same_asset_same_day_sale(change):
+    tx = copy.deepcopy(FILLS)
+    change(tx)
+    with pytest.raises(C.CryptoImportError):
+        run(fill_reporting(), tx)
+
+
+def test_grouped_fill_totals_still_require_exact_form_reconciliation():
+    block = fill_reporting()
+    block['forms'][0]['proceeds'] = 150.01
+    blocked(run(block, FILLS), 'proceeds differ')
+    block = fill_reporting()
+    block['forms'][0]['quantity'] = '0.999'
+    blocked(run(block, FILLS), 'units differ')
+
+
+def test_grouping_never_moves_an_intervening_acquisition_before_the_first_fill():
+    tx = [event('A', 'old', 'buy', '2023-01-01', qty='0.4', usd=20),
+          event('A', 'fill1', 'sell', '2025-03-01T12:00:00Z', qty='0.4', usd=60),
+          event('A', 'new', 'buy', '2025-03-01T12:01:00Z', qty='0.6', usd=30),
+          event('A', 'fill2', 'sell', '2025-03-01T12:02:00Z', qty='0.6', usd=90)]
+    result = resolved(run(fill_reporting(), tx))
+    actual = {r['txn_id']: (r['date_acquired'], r['box'], r['cost_basis'], r['gain_loss'])
+              for r in rows(result)}
+    assert actual == {'fill1': ('2023-01-01', 'K', 20, 40), 'fill2': ('2025-03-01', 'H', 30, 60)}
+
+
+def test_group_corrections_cannot_spread_an_adjustment_across_fill_holding_periods():
+    # Long fill: $60 - $1 fee - $20 basis = $39; short fill: $90 - $30 = $60.
+    # Spreading the aggregate $1 fee by 0.4/0.6 units would produce $39.60
+    # long and $59.40 short, moving gain between tax-rate classes.
+    tx = [event('A', 'old', 'buy', '2023-01-01', qty='0.4', usd=20),
+          event('A', 'fill1', 'sell', '2025-03-01T12:00:00Z', qty='0.4', usd=60, fee_usd=1),
+          event('A', 'new', 'buy', '2025-03-01T12:01:00Z', qty='0.6', usd=30),
+          event('A', 'fill2', 'sell', '2025-03-01T12:02:00Z', qty='0.6', usd=90)]
+    block = fill_reporting()
+    block['resolutions'] = {'da-1': dict(proceeds='transaction_costs', evidence='reviewed-fees')}
+    with pytest.raises(C.CryptoImportError, match='group-level resolutions are not supported'):
+        run(block, tx)
+
+
+def test_grouped_fills_preserve_the_existing_reported_basis_holding_period_split():
+    tx = [event('A', 'old', 'buy', '2023-01-01', qty='0.4', usd=20),
+          event('A', 'new', 'buy', '2025-01-01', qty='0.6', usd=30), *FILLS[1:]]
+    block = fill_reporting()
+    block['forms'] = [form(form_id='long', txn_id='order1', quantity='0.4', proceeds=60,
+                            cost_basis=20, basis_reported_to_irs=True, term='long'),
+                      form(form_id='short', txn_id='order1', quantity='0.6', proceeds=90,
+                            cost_basis=30, basis_reported_to_irs=True, term='short')]
+    result = resolved(run(block, tx))
+    assert {r['txn_id']: (r['form_id'], r['box'], r['gain_loss']) for r in rows(result)} == {
+        'fill1': ('long', 'J', 40), 'fill2': ('short', 'G', 60)}
+
+
+def test_a_fill_group_does_not_clear_an_unreviewed_reporting_year():
+    tx = copy.deepcopy(FILLS)
+    for fill in tx[1:]:
+        fill['date'] = '2026-03-01'
+    block = fill_reporting()
+    block['forms'][0]['date_sold'] = '2026-03-01'
+    with pytest.raises(C.CryptoImportError, match='no reviewed Form 8949 reporting regime'):
+        run(block, tx, 2026)
+
+
 def test_markdown_schedule_d_shows_the_column_g_adjustment():
     block = reporting(form(basis_reported_to_irs=True, cost_basis=80, term='long'),
                       resolutions={'da-1': dict(basis='taxpayer_records', evidence='fifo-basis-workpaper')})
