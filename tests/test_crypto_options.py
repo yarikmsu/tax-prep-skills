@@ -453,3 +453,15 @@ def test_a_purchased_put_refuses_while_any_same_asset_lot_takes_the_married_put_
             compute(source)
     else:
         resolved(compute(source))
+
+
+@pytest.mark.parametrize('bought,sent', [('2024-08-01', '2024-09-01'), ('2024-01-01', '2024-07-01')])
+def test_a_lot_sent_to_the_taxpayers_own_wallet_still_counts_for_the_married_put_rule(bought, sent):
+    # Bought after the put, or five months old when it was bought, then sent
+    # to an outside wallet the taxpayer owns: still held, still reached.
+    source = inputs('purchased_put')
+    source['transactions'] += [event('B', 'other', 'buy', bought, usd=40),
+                               event('B', 'out', 'send', sent, external_transfer_confirmed=True)]
+    source['broker_reporting']['accounts']['B'] = dict(forms_received=False, evidence='statement-B')
+    with pytest.raises(C.CryptoImportError, match='married-put'):
+        compute(source)

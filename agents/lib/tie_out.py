@@ -1027,14 +1027,27 @@ def _manual_disposals_on_the_return(result: dict) -> list[str]:
     if not isinstance(pending, list) or any(not isinstance(entry, dict) for entry in pending):
         return ['crypto_summary.manual_disposals is malformed; copy it from the import']
     form = result.get('form_8949')
-    merged = {(row.get('account_id'), row.get('txn_id'))
-              for part in ('part_i_short_term', 'part_ii_long_term')
-              for row in ((form.get(part) or []) if isinstance(form, dict) else [])
-              if isinstance(row, dict) and row.get('box') is not None}
-    return [f"crypto disposal {entry.get('account_id')}/{entry.get('txn_id')} was left for manual preparation "
-            'and is not on the return; merge its hand-prepared Form 8949 row with its account_id, txn_id, '
-            'box and broker_proceeds'
-            for entry in pending if (entry.get('account_id'), entry.get('txn_id')) not in merged]
+    merged: dict = {}
+    for part in ('part_i_short_term', 'part_ii_long_term'):
+        for row in ((form.get(part) or []) if isinstance(form, dict) else []):
+            if isinstance(row, dict) and row.get('box') is not None:
+                key = (row.get('account_id'), row.get('txn_id'))
+                broker = row.get('broker_proceeds')
+                merged[key] = merged.get(key, 0) + (round(broker * 100) if _whole_cents(broker) else 0)
+    problems = []
+    for entry in pending:
+        key = (entry.get('account_id'), entry.get('txn_id'))
+        claimed = entry.get('broker_proceeds')
+        if key not in merged:
+            problems.append(f'crypto disposal {key[0]}/{key[1]} was left for manual preparation and is not on '
+                            'the return; merge its hand-prepared Form 8949 rows with their account_id, txn_id, '
+                            'box and broker_proceeds')
+        elif not _whole_cents(claimed) or merged[key] != round(claimed * 100):
+            # Every slice of it, not one: the rows' broker figures must add to
+            # the forms' proceeds the import recorded.
+            problems.append(f'crypto disposal {key[0]}/{key[1]} is only partly on the return: its merged rows\' '
+                            'broker_proceeds do not add to the proceeds of the forms the import recorded')
+    return problems
 
 
 def _digital_rows_match_form_8949(result: dict) -> list[str]:

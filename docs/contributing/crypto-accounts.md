@@ -316,7 +316,9 @@ amounts must reconcile under the existing exact checks, with one exact
 exception: each fill rounds to cents on its own, while a broker reporting the
 order rounds it once. A single form whose proceeds equal the fills' exact
 total, net of fees, rounded once takes the form's figure, the difference
-landing on the largest row; any other difference is unresolved. Group-level
+landing on the largest row, when every fill's rows share one holding period;
+moving those cents between short- and long-term rows would move gain between
+parts, so a mixed-term group, and any other difference, stays unresolved. Group-level
 `resolutions` are refused: spreading an adjustment across differently priced
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
@@ -334,13 +336,18 @@ import, though only its own disposal needs the special treatment. List that
 disposal instead in the optional `broker_reporting.manual_disposals`:
 
 ```json
-{"account_id": "exchange-A", "txn_id": "nft-sale-1", "evidence": "first-sale-nft-workpaper"}
+{"account_id": "exchange-A", "txn_id": "sale-7", "evidence": "ordinary-gain-workpaper"}
 ```
 
 Each entry names a filing-year disposal (or a fill group's `group_id`), and at
 least one of its forms must fill an unmodeled box: the path never stands in
-for reconciling a form the engine can model. FIFO still consumes the
-disposal's lots, so later sales and inventory are right. Its rows leave the
+for reconciling a form the engine can model. Three boxes refuse it, because
+their treatment reaches beyond the one disposal: a reported wash sale
+(§1091(d) moves the disallowed loss into a replacement lot's basis), a CUSIP
+(a tokenized security, whose other sales face the wash-sale rules too), and
+box 11c's first-sale NFT proceeds (a ledger category tie-out blocks on by
+itself); prepare such an import externally. FIFO still consumes the
+disposal's lots, so later sales and inventory keep their FIFO basis. Its rows leave the
 import's Form 8949 rows, its Schedule D totals and its box routing, and
 `broker_reporting.manual_disposals` records its form ids, the unmodeled boxes,
 the forms' proceeds and the FIFO slices to start the preparation from. The
@@ -348,10 +355,12 @@ output opens with a `MANUAL` caveat, and `crypto_summary.manual_disposals`
 lists the disposals.
 
 Prepare each by hand under the form's own instructions, then merge its Form
-8949 row with its `account_id`, `txn_id`, `box` and `broker_proceeds` (the
-form's proceeds), adding the same amounts into that box's Schedule D digital
-row. Tie-out fails until every listed disposal is merged that way, whether or
-not the parse ledger still holds its form. An option-reviewed import cannot
+8949 rows with their `account_id`, `txn_id`, `box` and `broker_proceeds`
+(their share of the form's proceeds), adding the same amounts into each box's
+Schedule D digital row. `crypto_summary.manual_disposals` keeps each
+disposal's forms' proceeds, and tie-out fails until the merged rows' broker
+figures add to exactly that, whether or not the parse ledger still holds the
+form: one slice of a two-lot sale is not the sale. An option-reviewed import cannot
 also leave a disposal manual, since its tie-out rebuilds every account row from
 the source.
 
@@ -673,8 +682,9 @@ sales, spending, exchanges, transfers and remaining inventory. An option-caused
 disposal itself must be a direct USD `sell`; a `trade` also creates a new asset's
 basis and is outside this path. A purchased put additionally requires every
 sold lot to have been held long-term already on `option_opened`, and no lot of
-the same asset in any account to be held one year or less on that date or
-bought after it and no later than the exercise. Pub. 550's married-put rule
+the same asset in any account, a lot sent to the taxpayer's own outside
+wallet included, to be held one year or less on that date or bought after it
+and no later than the exercise. Pub. 550's married-put rule
 makes such holdings short-term and restarts their holding period, which the
 engine does not model, so the import refuses and that case is prepared
 externally. Opening inventory with

@@ -940,6 +940,13 @@ def _form_cents(value, label) -> int:
     return int(amount * 100)
 
 
+# Boxes whose treatment reaches beyond the disposal a manual entry replaces:
+# §1091(d) adds a disallowed wash-sale loss to the replacement lot's basis; a
+# CUSIP marks a tokenized security, so its OTHER sales face §1091 too; and
+# box 11c's first-sale NFT proceeds are a ledger category tie-out blocks on.
+_BOXES_REACHING_OTHER_SALES = {'wash_sale_loss_disallowed', 'cusip', 'primary_sale_proceeds'}
+
+
 def _manual_disposals_input(reporting, events) -> dict:
     """Disposals the preparer files by hand, keyed (account, txn): evidence."""
     raw = reporting.get('manual_disposals', [])
@@ -978,9 +985,16 @@ def _broker_reporting_input(reporting, events, regime, tax_year):
     for key in manual:
         # The path exists for a form the engine cannot model, never as a way
         # around reconciling one it can.
-        if not any((form['account_id'], form['txn_id']) == key and form['unmodeled'] for form in forms):
+        boxes = {box for form in forms if (form['account_id'], form['txn_id']) == key for box in form['unmodeled']}
+        if not boxes:
             raise CryptoImportError('A manual disposal must be reported by a broker form that fills a box this '
                                     'engine does not model; reconcile any other disposal instead')
+        reaching = sorted(boxes & _BOXES_REACHING_OTHER_SALES)
+        if reaching:
+            raise CryptoImportError(f'A manual disposal cannot isolate {reaching}: a wash sale moves its loss into '
+                                    'a replacement lot, a tokenized security subjects its other sales to the '
+                                    'wash-sale rules, and first-sale NFT proceeds block the tie-out gate on their '
+                                    'own; prepare this import externally')
     return accounts, forms, _resolutions_input(raw_resolutions, ids), manual
 
 
@@ -1252,8 +1266,10 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     split = len(forms) > 1
     proceeds_cent = split and sum(form['proceeds'] for form in forms) == sum(_cents(row.proceeds) for row in rows)
     # A single disposal's rows already add to its once-rounded total, so this
-    # can move only a fill group's cents.
-    rounded_once = not split and event.get('net') is not None and forms[0]['proceeds'] == _cents(event['net'])
+    # can move only a fill group's cents, and only within one holding period:
+    # cents moved between short and long rows would move gain between parts.
+    rounded_once = (len({row.holding_period for row in rows}) == 1 and event.get('net') is not None
+                    and forms[0]['proceeds'] == _cents(event['net']))
     basis_cent = split and (all(form['reported'] for form in forms) and sum(
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
     # The only costs a form can leave unreflected are the fee the import
@@ -1616,7 +1632,7 @@ def _apply_option_premiums(transactions, raw_review, account_mode, tax_year):
                          unsupported_items=[], source_url=_OPTION_SOURCES[tax_year], evidence=evidence, events=records)
 
 
-def _check_put_holding_periods(rows, review, assets=None, inventory=None):
+def _check_put_holding_periods(rows, review, assets=None, inventory=None, transfers=None):
     """A purchased put's sale keeps its lots' long-term holding period only
     when no same-asset lot was held one year or less when the put was bought,
     or bought before it was exercised: Pub. 550's married-put rule makes such
@@ -1636,17 +1652,18 @@ def _check_put_holding_periods(rows, review, assets=None, inventory=None):
             continue
         asset = assets[(event['account_id'], event['txn_id'])]
         exercised = datetime.date.fromisoformat(selected[0].date_sold)
-        if _married_put_lots(rows, assets, inventory or {}, asset, opened, exercised):
+        if _married_put_lots(rows, assets, inventory or {}, asset, opened, exercised, transfers or []):
             raise CryptoImportError('Purchased put needs external holding-period treatment: a same-asset lot in some '
                                     'account was held one year or less when the put was bought, or bought before '
                                     'it was exercised (Pub. 550 married-put rule)')
 
 
-def _married_put_lots(rows, assets, inventory, asset, opened, exercised) -> bool:
+def _married_put_lots(rows, assets, inventory, asset, opened, exercised, transfers=()) -> bool:
     """Whether any lot of `asset`, in any account, is one the married-put rule
     reaches: still held on `opened` with a short-term holding period then, or
     acquired after `opened` and no later than `exercised`. A lot is its slices
-    across the rows plus what inventory still holds, keyed by its origin."""
+    across the rows, plus what inventory still holds, plus what an external
+    send moved to a wallet the taxpayer still owns, keyed by its origin."""
     lots: 'dict[tuple, list]' = {}
     for row in rows:
         if assets.get((row.account_id, row.txn_id)) != asset:
@@ -1656,7 +1673,8 @@ def _married_put_lots(rows, assets, inventory, asset, opened, exercised) -> bool
         entry[0] += row.quantity_exact or 0
         if datetime.date.fromisoformat(row.date_sold) < opened:
             entry[1] += row.quantity_exact or 0
-    for held in inventory.values():
+    held_elsewhere = [entry['slices'] for entry in transfers if entry['external'] and entry['asset'] == asset]
+    for held in [*inventory.values(), *({asset: slices} for slices in held_elsewhere)]:
         for lot in held.get(asset, []):
             key = (lot['origin_account_id'], lot['origin_txn_id'], lot['acquired_tax_date'] or 'UNKNOWN')
             exact = lot['quantity_exact']
@@ -1987,7 +2005,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, reviewed_options,
         assets={(raw['account_id'], raw['txn_id']): txn.asset for raw, txn in zip(transactions, txns)}
         if account_mode else None,
-        inventory=account_report['inventory'] if account_report else None)
+        inventory=account_report['inventory'] if account_report else None,
+        transfers=account_report['transfer_ledger'] if account_report else None)
     # FIFO orders by instant while each row's dates are read in its own
     # record's offset, so records exported in different offsets can fund a
     # sale from a lot whose printed acquisition date is later than the sale's.
@@ -2082,7 +2101,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
     # Digital-asset question: Yes if any REPORTED (filing-year) disposal OR income receipt;
     # else No. Uses the filtered sets so an out-of-year-only history doesn't force a Yes on
     # a year with no actual digital-asset activity. (rows are disposals; incomes is filtered.)
-    digital_asset = "Yes" if (rows or incomes) else "No"
+    # A disposal left for manual preparation is still a disposal this year.
+    digital_asset = "Yes" if (rows or incomes or reporting.get('manual_disposals')) else "No"
 
     result = {
         "schema": SCHEMA,
@@ -2167,7 +2187,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
             raise CryptoImportError('An option-reviewed import cannot also leave a disposal for manual '
                                     'preparation; prepare that import externally')
         result['crypto_summary']['manual_disposals'] = [
-            {'account_id': entry['account_id'], 'txn_id': entry['txn_id']} for entry in manual]
+            {'account_id': entry['account_id'], 'txn_id': entry['txn_id'],
+             'broker_proceeds': entry['broker_proceeds']} for entry in manual]
         boxes = sorted({box for entry in manual for box in entry['unmodeled_boxes']})
         result['caveats'].insert(0, f'MANUAL: {len(manual)} disposal(s) carry a broker-form box this engine '
                                     f"does not model ({', '.join(boxes)}); they are left out of Form 8949 and "
