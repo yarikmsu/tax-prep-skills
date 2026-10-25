@@ -559,3 +559,30 @@ class TestTheSavedYearOverYearReport:
                          encoding="utf-8")
         text, why = pdf_render.saved_yoy_report(ws, _result())
         assert text is None and "its title names other years" in why
+
+    @pytest.mark.parametrize("damage,why", [
+        ("bytes", "it could not be read"), ("row", "its headline table is missing or malformed")])
+    def test_a_damaged_saved_report_costs_the_section_not_the_pdf(self, tmp_path, damage, why):
+        ws = self._workspace(tmp_path)
+        saved = self._save(ws)
+        if damage == "bytes":
+            saved.write_bytes(b"\xff\xfe not text")
+        else:
+            text = saved.read_text(encoding="utf-8")
+            saved.write_text(text.replace("| AGI | $100,000 | $118,000 |", "| AGI | $118,000 |"),
+                             encoding="utf-8")
+        out = TestTheCli()._run(ws)
+        assert out.returncode == 0, out.stderr
+        page1 = " ".join(_text(ws / "Tax_Return_2026_Summary.pdf", pages=[0]).split())
+        assert f"is left out: {why}" in page1
+
+    @pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
+    def test_a_linked_reviews_directory_is_named_not_followed(self, tmp_path):
+        ws = self._workspace(tmp_path)
+        saved = self._save(ws)
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-reviews"
+        (ws / "reviews").rename(outside)
+        (ws / "reviews").symlink_to(outside, target_is_directory=True)
+        text, why = pdf_render.saved_yoy_report(ws, _result())
+        assert text is None and "not inside this workspace" in why
+        assert saved.name in why

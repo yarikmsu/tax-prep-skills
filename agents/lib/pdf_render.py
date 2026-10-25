@@ -409,10 +409,19 @@ def saved_yoy_report(workspace: Path, result: dict) -> "tuple[str | None, str | 
     if type(year) is not int:
         return None, None
     name = f"yoy_diff_{year - 1}_to_{year}.md"
-    path = resolve_under_workspace(f"reviews/{name}", workspace)
-    if not path.is_file():
-        return None, None
-    text = path.read_text(encoding="utf-8")
+    left_out = (f"The saved year-over-year report (reviews/{name}) is left out: {{}}. "
+                "Re-run yoy_diff with --save to include it.")
+    # An optional input: whatever is wrong with it costs the section, never
+    # the PDF.
+    try:
+        path = resolve_under_workspace(f"reviews/{name}", workspace)
+        if not path.is_file():
+            return None, None
+        text = path.read_text(encoding="utf-8")
+    except WorkspaceError:
+        return None, left_out.format("it is not inside this workspace")
+    except (OSError, UnicodeDecodeError):
+        return None, left_out.format("it could not be read")
     lines = text.splitlines()
     why = None
     if not lines or lines[0] != f"## YoY What-Changed — TY{year - 1} → TY{year}":
@@ -425,16 +434,16 @@ def saved_yoy_report(workspace: Path, result: dict) -> "tuple[str | None, str | 
         rows = {row[0]: row for row in table}
         for label in ("AGI", "Taxable income", "Total tax", "Total payments", "Refund / (Owed)"):
             wanted = yoy_diff._fmt_money(values[label])
-            if header is None or f"TY{year}" not in header or label not in rows:
-                why = "its headline table is missing"
+            if (header is None or f"TY{year}" not in header or label not in rows
+                    or len(rows[label]) != len(header)):
+                why = "its headline table is missing or malformed"
                 break
             shown = rows[label][header.index(f"TY{year}")]
             if shown != wanted:
                 why = f"it shows TY{year} {label} {shown}, and this return {wanted}"
                 break
     if why:
-        return None, (f"The saved year-over-year report (reviews/{name}) is left out: {why}. "
-                      "Re-run yoy_diff with --save to include it.")
+        return None, left_out.format(why)
     return text, None
 
 
