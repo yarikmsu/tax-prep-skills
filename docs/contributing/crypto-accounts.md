@@ -251,9 +251,26 @@ requires source-bound evidence and tie-out recomputation of the merged gains.
 `/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
 `capital_proceeds`. The tie sums the form-backed digital-asset rows with the
 1099-B rows and leaves out the no-form rows of lines 3 and 10, so it compares
-like with like; the documented `proceeds_above_forms`
-excess comes off the result side, which it can only lower, and the key alone
-meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
+like with like. Each routed Form 8949 row retains `broker_proceeds` allocated
+from its own form in whole cents, and each Schedule D digital row sums those
+figures. These are audit amounts, separate from Form 8949 column (d): a correct,
+higher disposal price stays in column (d), and code E still uses the form's
+gross proceeds there. A form spanning several lot slices is allocated once;
+the broker allocations never reprice those slices. No-form rows carry null.
+
+Active form-backed rows without `broker_proceeds` must be rebuilt from the
+reviewed import and source forms. Never infer a missing figure by subtracting
+the old scalar. Broker figures must be finite, nonnegative whole-cent amounts;
+an explicit zero is meaningful. Rebuild all digital rows from the complete
+normalized input on a rerun so old tax amounts and new audit amounts cannot
+be merged separately. Equity rows stay separate.
+
+The tie sums the digital rows' own broker figures alongside equity proceeds;
+it never subtracts `crypto_summary.reporting_proceeds_above_forms`. That legacy
+scalar remains informational in import workpapers; sums and advisories use
+current rows. If present it still requires valid finite, nonnegative numeric
+data. A non-zero
+no-form row keeps the tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
 
 ### Linked partial fills (AA47)

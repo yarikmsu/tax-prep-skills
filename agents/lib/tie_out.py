@@ -889,18 +889,73 @@ def _category_target(result: dict, category: str):
     return CATEGORY_TARGETS[category]
 
 
-def _crypto_proceeds_above_forms(result: dict) -> float:
-    """Proceeds the crypto importer reported ABOVE their broker forms, each
-    with reviewed evidence (Form 8949 column (d) takes the correct, higher
-    figure). The ledger holds the forms' own figure, so the tie subtracts the
-    excess. Never negative: an excess can only lower the result side, so a
-    crafted figure cannot hide an under-report."""
-    crypto = result.get("crypto_summary")
-    value = crypto.get("reporting_proceeds_above_forms", 0) if isinstance(crypto, dict) else 0
-    if not _is_figure(value):
-        raise TieOutError("crypto_summary.reporting_proceeds_above_forms must be a "
-                          "finite non-negative amount")
+def _digital_row_placement_checks(result: dict) -> list[str]:
+    from agents.lib.crypto_importer import _SCHEDULE_D_TARGETS
+    targets = {target[1]: target[0] for target in _SCHEDULE_D_TARGETS.values()}
+    section = result.get('schedule_d')
+    for part_key in ('part_i_short_term', 'part_ii_long_term'):
+        part = section.get(part_key) if isinstance(section, dict) else None
+        if isinstance(part, dict) and any(key.endswith(_DIGITAL_ASSET_ROW_SUFFIX) and (
+                key not in targets or targets[key] != part_key or not isinstance(row, dict))
+                for key, row in part.items()):
+            return ['Unknown, misplaced or malformed Schedule D digital-asset row; rebuild from the routed import']
+    return []
+
+
+def _digital_broker_proceeds(name: str, row: dict) -> float:
+    value = row.get('broker_proceeds')
+    if name in _NO_BROKER_FORM_DIGITAL_ROWS:
+        if value is not None:
+            raise TieOutError('A no-form digital-asset row cannot claim broker_proceeds')
+        return 0.0
+    active = any(row.get(field) not in (None, 0, '') for field in (
+        'proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code', 'source'))
+    if value is None and not active:
+        return 0.0  # untouched template scaffold
+    try:
+        valid = _is_figure(value) and round(value, 2) == value
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise TieOutError(f'{name}.broker_proceeds needs a finite non-negative whole-cent amount; '
+                          'rebuild digital-asset rows from the reviewed import, never infer it from the legacy excess scalar')
     return float(value)
+
+
+def _crypto_proceeds_above_forms(result: dict) -> float:
+    """Informational only; derive from the rows, never the legacy scalar.
+
+    The capital-proceeds tie sums each form-backed row's own broker figure.
+    An unrelated equity row cannot be offset by stale crypto excess metadata.
+    """
+    summary = result.get('crypto_summary')
+    if isinstance(summary, dict) and 'reporting_proceeds_above_forms' in summary:
+        try:
+            valid = _is_figure(summary['reporting_proceeds_above_forms'])
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise TieOutError('Legacy reporting_proceeds_above_forms must still be finite and non-negative; it is never used in a tie')
+    reported, broker = [], []
+    for name, row in _digital_asset_rows(result):
+        own_broker = _digital_broker_proceeds(name, row)
+        if name not in _NO_BROKER_FORM_DIGITAL_ROWS:
+            proceeds = row.get('proceeds', 0)
+            try:
+                valid = _is_figure(proceeds) and round(proceeds, 2) == proceeds
+            except OverflowError:
+                valid = False
+            if not valid:
+                raise TieOutError('Digital-asset proceeds must be finite non-negative whole-cent amounts')
+            reported.append(proceeds)
+            broker.append(own_broker)
+    try:
+        difference = round(math.fsum(reported) - math.fsum(broker), 2)
+    except OverflowError:
+        raise TieOutError('Digital-asset proceeds totals must remain finite') from None
+    if difference < 0:
+        raise TieOutError('Digital-asset column (d) is below its broker proceeds; rebuild the reconciled rows')
+    return difference
 
 
 # Digital-asset sales keep Schedule D rows of their own beside the 1099-B rows
@@ -1057,8 +1112,8 @@ def _result_total(result: dict, category: str) -> "float | None":
         # return. A broker row misfiled into one under-counts the result side →
         # ledger > result → still FAILS (the safe direction). Digital-asset
         # rows a broker form DOES report (Box G/H/J/K, or A/B/D/E before
-        # TY2025) tie with the 1099-DA's ledgered proceeds, less the
-        # documented excess the importer reported ABOVE those forms.
+        # TY2025) tie using their own allocated broker proceeds, instead of
+        # subtracting one global excess from unrelated Schedule D proceeds.
         # A non-zero no-form row still makes the tie VERIFIABLE while adding
         # nothing to it: otherwise a broker form answered "no form received"
         # and filed there left every other row zero, and the dropped proceeds
@@ -1071,13 +1126,19 @@ def _result_total(result: dict, category: str) -> "float | None":
             for row_key, row in part.items():
                 if isinstance(row, dict):
                     p = row.get("proceeds")
+                    if row_key.endswith(_DIGITAL_ASSET_ROW_SUFFIX):
+                        broker = _digital_broker_proceeds(row_key, row)
+                        if broker or any(row.get(k) not in (None, 0, '') for k in ('proceeds', 'cost', 'adjustment', 'gain')):
+                            found = True
+                        total += broker
+                        continue
                     if isinstance(p, (int, float)) and not isinstance(p, bool):
                         if p != 0:
                             found = True
                         if ("box_c" not in row_key and "box_f" not in row_key
                                 and row_key not in _NO_BROKER_FORM_DIGITAL_ROWS):
                             total += float(p)
-        return total - _crypto_proceeds_above_forms(result) if found else None
+        return total if found else None
     if category == "employer_stock_basis_adjustment":
         # Sum the SIGNED `adjustment` across the Schedule D box detail rows
         # flagged `employer_stock`, then NEGATE: employer-stock corrections are
@@ -2500,6 +2561,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # evidence. A summary predating it — whose only mark of crypto is a
     # non-zero `disposals` count — or one that dropped the keys, or merged
     # digital-asset rows with no summary at all, still owes the reconciliation.
+    missing_targets.extend(_digital_row_placement_checks(result))
     digital_rows = _digital_asset_rows(result)
     missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):
@@ -2509,6 +2571,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # A zero-proceeds loss is still a disposal. Empty template rows are not.
     merged_crypto = account_rows or any(
         any(row.get(key) not in (None, 0) for key in ('proceeds', 'cost', 'adjustment', 'gain'))
+        or row.get('broker_proceeds') is not None
         or row.get('adjustment_code') not in (None, '') or row.get('source') not in (None, '')
         for _, row in digital_rows)
     crypto_present = merged_crypto or summary.get("disposals", 0) != 0 or any(key in summary for key in (
@@ -2522,7 +2585,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         if above:
             advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
                               "column (d) shows the correct figure under reviewed evidence; the "
-                              "capital_proceeds tie subtracts it, so confirm it against the forms")
+                              "capital_proceeds tie sums each digital row's own broker_proceeds; confirm them against the forms")
     # AA59: the import no longer refuses box 3a's "Gross", so the option
     # question is all that catches a disposal an option's exercise caused. The
     # capability gate asks it only once has_crypto is set, in skill prose; the

@@ -350,6 +350,13 @@ classifications and deductions in the WA compute reference before confirming
 the WA return engine still refuses part-year/nonresident domicile changes.
 
 Update `result.json` from the main session only — never from a delegated sub-task:
+On a rerun, rebuild all crypto rows from the complete normalized input. Use the
+existing import workpapers to identify and replace the prior crypto Form 8949
+rows and reset the `line_*_digital_assets` amounts before adding the new import.
+Do not retain a stale tax total beside a newly copied broker figure. Preserve
+the equity rows. An old digital row missing broker figures needs a reviewed
+re-import; never infer them from `reporting_proceeds_above_forms`.
+
 1. **`form_1040.digital_asset_question`** ← result `digital_asset_question`. This is mandatory
    and independent of the dollars.
 2. **`form_8949.part_i_short_term` / `part_ii_long_term`** ← APPEND the crypto rows to any
@@ -357,7 +364,10 @@ Update `result.json` from the main session only — never from a delegated sub-t
 3. **`schedule_d`** — for each box in `broker_reporting.schedule_d_routing`, ADD its
    `proceeds`, `cost`, `adjustment` and `gain` into the same keys of the
    `line_*_digital_assets` row it names, and set that row's `adjustment_code` to
-   the box's. Each is part of its Schedule D line, and of line 7 or 15, like any other row; recompute them and
+   the box's. Also sum its `broker_proceeds` into that row for form-backed boxes;
+   leave it null for no-form boxes. This is the broker's audit figure, separate
+   from column (d). Tie-out uses it directly, never the legacy excess scalar.
+   Each is part of its Schedule D line, and of line 7 or 15, like any other row; recompute them and
    `line_16_combined`. Never merge crypto into a 1099-B row: those carry the
    `employer_stock` flag, whose tie reads the row's whole adjustment. A row without a box is
    never merged: the importer gives one only from reconciled evidence, and a year

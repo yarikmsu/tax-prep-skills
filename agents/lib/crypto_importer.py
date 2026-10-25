@@ -400,6 +400,7 @@ class Form8949Row:
     adjustment_code: str | None = None
     form_id: str | None = None
     fifo_cost_basis: float | None = None
+    broker_proceeds: float | None = None  # audit allocation from this row's form, never column (d)
 
 
 class _OpenLot:
@@ -1162,6 +1163,7 @@ def _treat_term(t, form, group, basis_gap, resolution) -> None:
 
 def _routed_rows(form, group, t, regime, fifo_basis) -> 'dict[int, Form8949Row]':
     routed = {}
+    broker_proceeds = _spread(form['proceeds'], [row.quantity_exact for row in group])
     for i, row in enumerate(group):
         adjustment = t.costs[i] + t.corrections[i]
         routed[id(row)] = replace(
@@ -1169,7 +1171,8 @@ def _routed_rows(form, group, t, regime, fifo_basis) -> 'dict[int, Form8949Row]'
             proceeds=_money(t.proceeds[i] / 100), cost_basis=_money(t.column_e[i] / 100),
             adjustment=_money(adjustment / 100), adjustment_code=''.join(sorted(t.codes | t.term_codes[i])) or None,
             gain_loss=_money((t.proceeds[i] - t.column_e[i] + adjustment) / 100),
-            form_id=form['form_id'], fifo_cost_basis=_money(fifo_basis[i] / 100))
+            form_id=form['form_id'], fifo_cost_basis=_money(fifo_basis[i] / 100),
+            broker_proceeds=_money(broker_proceeds[i] / 100))
     return routed
 
 
@@ -1420,14 +1423,19 @@ def _schedule_d_routing(rows) -> 'dict[str, dict]':
             continue
         part, target, line = _SCHEDULE_D_TARGETS[row.box]
         entry = routing.setdefault(row.box, {'part': part, 'row': target, 'schedule_d_line': line,
-                                             **dict.fromkeys(_ROUTED_AMOUNTS, 0), 'rows': 0})
+                                             **dict.fromkeys(_ROUTED_AMOUNTS, 0), 'rows': 0,
+                                             'broker_proceeds': None if row.broker_proceeds is None else 0})
         for key, value in zip(_ROUTED_AMOUNTS, (row.proceeds, row.cost_basis, row.adjustment, row.gain_loss)):
             entry[key] += _cents(value)
+        if row.broker_proceeds is not None:
+            entry['broker_proceeds'] += _cents(row.broker_proceeds)
         entry['rows'] += 1
         codes.setdefault(row.box, set()).update(row.adjustment_code or '')
     for box, entry in routing.items():
         for key in _ROUTED_AMOUNTS:
             entry[key] = _money(entry[key] / 100)
+        if entry['broker_proceeds'] is not None:
+            entry['broker_proceeds'] = _money(entry['broker_proceeds'] / 100)
         entry['adjustment_code'] = ''.join(sorted(codes[box])) or None
     return dict(sorted(routing.items()))
 
@@ -2092,7 +2100,8 @@ def _row_dict(r: Form8949Row) -> dict:
         **({"account_id": r.account_id, "txn_id": r.txn_id,
             "origin_account_id": r.origin_account_id, "origin_txn_id": r.origin_txn_id,
             "adjustment_code": r.adjustment_code, "adjustment": r.adjustment,
-            "fifo_cost_basis": r.fifo_cost_basis, "form_id": r.form_id}
+            "fifo_cost_basis": r.fifo_cost_basis, "form_id": r.form_id,
+            "broker_proceeds": r.broker_proceeds}
            if r.account_id is not None else {}),
     }
 
