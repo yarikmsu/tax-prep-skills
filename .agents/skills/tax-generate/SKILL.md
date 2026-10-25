@@ -187,8 +187,12 @@ There is nothing to write and nothing to check by hand:
 sh agents/lib/run.sh -m agents.lib.pdf_render --result result.json
 ```
 
-It reads every value from `result.json` and takes nothing from anywhere else, so
-the taxpayer's name reaches the page as data and never as source. It renders the
+It reads every value of the return from `result.json`, so the taxpayer's name
+reaches the page as data and never as source. Its one other input is a saved
+year-over-year report, `reviews/yoy_diff_{prior}_to_{year}.md` (`yoy_diff
+--save`, AA46): appended as the last section while its title years and every
+current-year dollar headline still match `result.json`, and otherwise named on
+page 1 as left out, so re-run `yoy_diff --save` after the return changes. It renders the
 `meta.limitations` manifest as the page-1 **Scope & Limitations** box before any
 dollar figure, treats a null as ABSENT rather than as a value, skips an optional
 section nobody filled in, keeps the official line numbers in its labels, names

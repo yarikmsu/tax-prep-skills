@@ -496,3 +496,66 @@ def test_schedule_a_inputs_stay_off_the_summary():
     assert not any("input" in label or "tax year" in label
                    for label in labels), rows
     assert labels.count("medical expenses") == 1, rows
+
+
+class TestTheSavedYearOverYearReport:
+    """AA46: a `yoy_diff --save` report rides along in the summary PDF while
+    it still describes this return; a stale one is named on page 1 instead."""
+
+    def _workspace(self, tmp_path):
+        ws = TestTheCli()._workspace(tmp_path, validated=True)
+        prior = _result()
+        prior["meta"] = dict(prior["meta"], tax_year=2025)
+        prior["form_1040"] = dict(prior["form_1040"], line_11_agi=100000.0, line_1z_total_wages=95000.0)
+        archive = ws / "archive" / "2025"
+        archive.mkdir(parents=True)
+        (archive / "result.json").write_text(json.dumps(prior))
+        (archive / "taxpayer_profile.json").write_text(json.dumps({"filing_status": "MFJ"}))
+        return ws
+
+    def _save(self, ws):
+        from agents.lib import yoy_diff
+        assert yoy_diff._main(["--prior", "archive/2025", "--current", str(ws), "--year", "2026",
+                               "--save"]) == 0
+        return ws / "reviews" / "yoy_diff_2025_to_2026.md"
+
+    def test_a_current_saved_report_is_the_last_section(self, tmp_path, capsys):
+        ws = self._workspace(tmp_path)
+        self._save(ws)
+        out = TestTheCli()._run(ws)
+        assert out.returncode == 0, out.stderr
+        text = _text(ws / "Tax_Return_2026_Summary.pdf")
+        assert "YoY What-Changed — TY2025 to TY2026" in text
+        # Δ and → are outside the font, so the PDF says them in words.
+        assert "Change %" in text and "Δ" not in text and "→" not in text
+        assert "AGI $100,000 $118,000 +$18,000 +18%" in text
+        # Nothing the report prints falls outside the font once translated.
+        report = (ws / "reviews" / "yoy_diff_2025_to_2026.md").read_text(encoding="utf-8")
+        for symbol, words in pdf_render._YOY_WORDS:
+            report = report.replace(symbol, words)
+        pdf_render._register_fonts()
+        assert pdf_render._unrenderable(report) == set()
+
+    def test_a_report_saved_before_the_return_changed_is_named_and_left_out(self, tmp_path):
+        ws = self._workspace(tmp_path)
+        saved = self._save(ws)
+        saved.write_text(saved.read_text(encoding="utf-8").replace("$118,000", "$117,000"), encoding="utf-8")
+        out = TestTheCli()._run(ws)
+        assert out.returncode == 0, out.stderr
+        page1 = _text(ws / "Tax_Return_2026_Summary.pdf", pages=[0])
+        assert "is left out: it shows TY2026 AGI $117,000, and this return $118,000" in " ".join(page1.split())
+        assert "YoY What-Changed" not in _text(ws / "Tax_Return_2026_Summary.pdf")
+
+    def test_no_saved_report_adds_nothing(self, tmp_path):
+        ws = self._workspace(tmp_path)
+        assert pdf_render.saved_yoy_report(ws, _result()) == (None, None)
+        out = TestTheCli()._run(ws)
+        assert out.returncode == 0 and "YoY" not in _text(ws / "Tax_Return_2026_Summary.pdf")
+
+    def test_a_report_for_other_years_is_left_out(self, tmp_path):
+        ws = self._workspace(tmp_path)
+        saved = self._save(ws)
+        saved.write_text(saved.read_text(encoding="utf-8").replace("TY2025 → TY2026", "TY2024 → TY2025", 1),
+                         encoding="utf-8")
+        text, why = pdf_render.saved_yoy_report(ws, _result())
+        assert text is None and "its title names other years" in why
