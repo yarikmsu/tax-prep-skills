@@ -441,9 +441,10 @@ Record that fact in the optional `broker_reporting.source_corrections` list:
 
 Each entry requires exactly those five keys. `expected` copies the original
 date, asset, kind and every financial field being corrected. `corrected`
-changes only `quantity` and/or `usd_amount`, retaining full decimal precision
+changes `quantity` and/or `usd_amount`, retaining full decimal precision
 where the source supplies it: a corrected `quantity` is a decimal string, since
-a JSON number reaches the engine already rounded. Account and transaction IDs must be explicit and
+a JSON number reaches the engine already rounded. A `date` change requires the
+separate calendar review below. Account and transaction IDs must be explicit and
 unique. Missing, stale, repeated, unchanged, nonfinite or unsupported changes
 refuse. A transfer does not use `usd_amount`; its basis and ownership evidence
 must be prepared through the existing transfer path.
@@ -464,12 +465,51 @@ uncorrected history. Review it for Form 1040-X through `/tax-amend`, so both
 years carry the same basis.
 
 Review and preserve `source_corrections` with the import's secured workpaper in
-`summaries/`. Dates, account identities, fees, lot selection and special form
+`summaries/`. Account identities, fees, lot selection and special form
 treatments are outside this correction path. It does not clear the option
-exercise screen or unsupported boxes. Those cases, calendar corrections and
+exercise screen or unsupported boxes. Those cases and
 optional annual reporting remain AA47 follow-ups.
 Corrections live inside the broker-review object so an older engine's closed
 key set refuses them instead of silently ignoring a new top-level input.
+
+### Reviewed filing dates
+
+An import and a broker can put the same instant on opposite sides of year-end.
+The [TY2025 Form 8949 instructions, column (c)](https://www.irs.gov/pub/irs-prior/i8949--2025.pdf)
+ask for the disposition date; a broker date alone does not establish the
+filing calendar. Obtain an externally reviewed workpaper establishing the
+correct dates for this return, including every account's acquisitions,
+disposals and income, and original acquisition dates carried by transfers.
+Record the taxpayer's confirmation and evidence.
+
+Under `broker_reporting`, supply that review and the precise source correction:
+
+```json
+{"tax_calendar_review": {"calendar_label": "reviewed-filing-calendar",
+  "all_account_dates_reviewed": true, "evidence": "all-account-tax-date-workpaper"},
+ "source_corrections": [{"account_id": "exchange-A", "txn_id": "sale-1",
+  "expected": {"date": "2026-01-01T01:00:00+08:00", "asset": "BTC", "kind": "sell"},
+  "corrected": {"date": "2025-12-31T17:00:00Z"}, "evidence": "reviewed-sale-timestamp"}]}
+```
+
+The label identifies the workpaper's calendar; the engine never derives a
+timezone or chooses a year from it. Original and corrected timestamps must
+represent exactly the same UTC instant, with a calendar date one day apart.
+The instant check retains fractional-second digits beyond microseconds.
+The corrected timestamp must have an explicit offset. An original timestamp
+without an offset requires documented confirmation that its source used UTC,
+recorded as the additional boolean `naive_timestamps_are_utc: true` in the
+review. A date without a time cannot establish an instant; never invent
+midnight or choose a timestamp merely to match a form or obtain a preferred year.
+
+FIFO still orders the actual instants. The reviewed date also controls
+acquisition holding periods, income and filing-year selection. Reconcile the
+original acquisition dates as well: a known acquisition date after its
+disposal refuses, and missing inventory still blocks. An unused calendar
+review, a changed instant, an unconfirmed UTC assumption or an unreviewed
+form year refuses. Preserve `tax_calendar_review` and the before/after
+`source_corrections` with the secured import workpaper. Source arrays and
+exports remain unchanged.
 
 ## Primary authorities
 
