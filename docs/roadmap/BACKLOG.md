@@ -251,7 +251,12 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   documented TurboTax/FreeTaxUSA PDF forms, explicit year and worksheet mappings,
   masked identity and user-reviewed provenance. Missing carryover worksheets
   stay unresolved instead of being reconstructed from summary lines. Proprietary
-  software formats require a separate supported-format decision.
+  software formats require a separate supported-format decision. A design is
+  proposed in its own pull request and awaits the owner's approval and format
+  choice (owner, 2026-10-25): read the official IRS and FTB form pages every
+  program prints, by form header, tax year and line number, cross-check the
+  forms' own arithmetic, mask identity at the parse boundary, and write a seed
+  archive that `/tax-rollover` uses only after the filer confirms each figure.
   Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
 
 - **AA45 (P3, L): Model multi-year Roth conversion plans.**
