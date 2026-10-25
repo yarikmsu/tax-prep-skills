@@ -133,7 +133,16 @@ the individual exclusion evidence is corrected.
 
 `projection/states.py` consumes **`projection_inputs.json.state_projection`**,
 separate from a scenario's return-bound `state_planning_inputs`. Initial
-reviewed form year is TY2025 for NY/NC. The complete interview and field list
+reviewed form year is TY2025 for NY/NC. TY2026 waits for that year's IT-201,
+IT-196 and D-401 instructions (AA79, reviewed 2026-10-25): the
+[2026 IT-2105 instructions](https://www.tax.ny.gov/pdf/2026/inc/it2105i_2026.pdf)
+print the rate schedule, recapture bases, MCTMT threshold and standard
+deduction, but not the household credit tables, the §615 itemized-deduction
+limitation or the subtraction caps the forecast reads, and direct the 2025
+returns and instructions as a guide. A TY2026 cache holding those from 2025 is
+the prior-year inference AGENTS.md §2 forbids. NC's 2026 estimator worksheet
+keeps the 2025 structure, but `nc.py` refuses a year whose D-401 it was not
+read against. The complete interview and field list
 is [tax-project's state-estimates reference](../../.agents/skills/tax-project/references/state-estimates.md).
 This is a full-year household/calendar-year forecast; residency/source moves,
 IT-203, Schedule PN, mixed local spouses, IT-360.1 and Y-203 refuse. Missing

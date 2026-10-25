@@ -88,7 +88,7 @@ Trigger and range behavior is documented in
 | **1. California filers: ready now** | **AA47** — the 1099-DA cases that still block. **AA50** — the narrower event map AA41 filed. | Nothing here waits on a publication; every item is federal work a CA filer reaches. AA47 turns a permanent block into a return. AA50 is a performance change, so it needs a before-and-after benchmark. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | AA44-AA46 — prior-return import, multi-year Roth planning and the YoY report's PDF embed. | Larger product extensions; AA46's embed waits on a pipeline-order decision. |
-| **4. Other states** | **AA79** — review TY2026 for the NY and NC payment forecasts. **AA63** — say when a local tax is withheld that no return here claims. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 moves up the day one does, since the last 2026 estimate is due 2027-01-15. |
+| **4. Other states** | **AA63** — say when a local tax is withheld that no return here claims. **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -173,20 +173,24 @@ Trigger and range behavior is documented in
 
 
 - **AA79 (P2, M): Review TY2026 for the NY and NC payment forecasts.** AA43
-  shipped for the TY2025 form year only: `_REVIEWED_YEARS` in
-  `agents/lib/tax_computations/state/planning.py` holds 2025 for CA, NY and
-  NC, and `/tax-project` refuses a TY2026 NY or NC forecast ("State forecast
-  form year has not been reviewed"). TY2025's extended deadline passed on
-  2026-10-15, so a TY2025 forecast prices no payment still to be made, while
-  the last 2026 estimate is due 2027-01-15. As of a live check on 2026-10-24,
-  New York's [2026 IT-2105 instructions](https://www.tax.ny.gov/pdf/2026/inc/it2105i_2026.pdf)
-  and North Carolina's [2026 estimator worksheet](https://www.ncdor.gov/taxes-forms/individual-income-tax/estimated-income-tax/2026-individual-income-tax-estimator-worksheet)
-  are published. Decide whether the review can rest on those, re-reading the
-  TY2025 forms' deduction, credit and local contracts against them, or must
-  wait for the TY2026 IT-201 and D-400; if it must wait, add AA79 to the
-  blocked table. CA's TY2026 reviews are AA83, for the return, and AA84, for
-  planning. P2 while no current user files in NY or NC (owner, 2026-10-24);
-  the 2027-01-15 estimate makes it P1 the day one does. Found by AA43's review.
+  shipped for the TY2025 form year only. Reviewed live 2026-10-25 and BLOCKED
+  (blocked table). New York's [2026 IT-2105 instructions](https://www.tax.ny.gov/pdf/2026/inc/it2105i_2026.pdf)
+  print the rate schedule (every rate below 6.85% down a tenth of a point),
+  recapture bases, the $150,000 MCTMT threshold and the standard deduction,
+  but not the household credit tables, the §615 itemized-deduction limitation
+  or the subtraction caps the forecast reads, nor the IT-201 tax table the
+  engine uses at or below the entry threshold; they direct the 2025 returns
+  and instructions as a guide, and caching 2025 figures for TY2026 is the
+  inference AGENTS.md §2 forbids. North Carolina's
+  [2026 estimator worksheet](https://www.ncdor.gov/taxes-forms/individual-income-tax/estimated-income-tax/2026-individual-income-tax-estimator-worksheet)
+  keeps the 2025 structure at 3.99%, but `nc.py` reads Schedule S lines and the
+  IRC conformity date per year from the D-401. When the TY2026 instructions
+  publish, add the year to `planning._REVIEWED_YEARS` after reading them; the
+  review must also make `compute_ny_itemized` honour each charitable tier's
+  `first_year`/`last_year`, which nothing reads today, so a lapsed §615(g) tier
+  cannot halve the deduction. The last 2026 voucher is 2027-01-15; NY usually
+  publishes the IT-201 instructions in December. P2 while no current user
+  files in NY or NC. Found by AA43's review.
 
 - **AA80 (P2, M): Review AA74's part-year return for TY2026, with the renter's
   credit six-month test.** AA74 computes a reviewed CA part-year return for
@@ -323,6 +327,8 @@ and vendor-CI rulings remain closed.
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
 | **AA83** | FTB publishing the 2026 Form 540 booklet and the year's Schedule CA and FTB 5805 instructions. The booklet's year-pinned URL returned 404 on 2026-10-24. |
 | **AA84** | FTB publishing the TY2026 indexed amounts. Its October 2026 Tax News returned 404 on 2026-10-24. |
+| **AA79** | North Carolina publishing the TY2026 D-401, whose Schedule S lines and IRC conformity date `nc.py` reads per year; the NY part shipped. The 2026 estimator worksheet alone was live on 2026-10-25. |
+| **AA79** | The TY2026 IT-201 and IT-196 instructions (NY) and D-401 (NC), which print the household credit tables, the §615 limitation, the subtraction caps, the IT-201 tax table and NC's Schedule S lines and conformity date; the 2026 IT-2105 and NC estimator worksheet alone were live on 2026-10-25. |
 | **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. Its year-pinned URL returned 404 on 2026-10-24. |
 
 ## Declined, with the reasoning kept so it is not re-proposed
