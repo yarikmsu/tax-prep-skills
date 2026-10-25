@@ -118,7 +118,7 @@ def test_form_with_matching_reported_basis_routes_j():
     assert only(r)['box'] == 'J'
     assert r['broker_reporting']['schedule_d_routing']['J'] == dict(
         part='part_ii_long_term', row='line_8b_digital_assets', schedule_d_line='8b',
-        proceeds=150, cost=100, adjustment=0, adjustment_code=None, gain=50, rows=1)
+        proceeds=150, broker_proceeds=150, cost=100, adjustment=0, adjustment_code=None, gain=50, rows=1)
 
 
 def test_tax_year_2024_routes_a_1099b_reported_basis_to_box_d():
@@ -998,7 +998,7 @@ def _rsu_and_crypto(**crypto_row):
     # An RSU code-B correction of (5,000) on the Box A row, and a 1099-DA
     # code-B correction of +300 on the digital-asset row for the same line 1b.
     rsu = dict(proceeds=20000, cost=15000, adjustment=-5000, adjustment_code='B', employer_stock=True, gain=0)
-    crypto = dict(proceeds=600, cost=300, adjustment=300, adjustment_code='B', gain=600, **crypto_row)
+    crypto = dict(proceeds=600, broker_proceeds=600, cost=300, adjustment=300, adjustment_code='B', gain=600, **crypto_row)
     return {'crypto_summary': COMPLETE, 'schedule_d': {'part_i_short_term': {
         'line_1a_1099b_box_a': rsu, 'line_1b_digital_assets': crypto}}}
 
@@ -1025,7 +1025,7 @@ def test_a_routing_entry_adds_key_for_key_into_its_template_row():
     r = resolved(run(reporting(form(basis_reported_to_irs=True, cost_basis=100, term='long'))))
     (entry,) = r['broker_reporting']['schedule_d_routing'].values()
     merged = set(entry) - {'part', 'row', 'schedule_d_line', 'rows'}
-    assert merged == {*C._ROUTED_AMOUNTS, 'adjustment_code'}
+    assert merged == {*C._ROUTED_AMOUNTS, 'adjustment_code', 'broker_proceeds'}
     assert merged <= set(template['schedule_d'][entry['part']][entry['row']])
 
 
@@ -1053,7 +1053,7 @@ def test_a_summary_from_before_aa41_still_owes_the_reconciliation(summary):
 
 
 def test_merged_digital_asset_rows_without_a_summary_owe_the_reconciliation():
-    result = {'schedule_d': {'part_ii_long_term': {'line_9_digital_assets': dict(proceeds=150, cost=100, gain=50)}}}
+    result = {'schedule_d': {'part_ii_long_term': {'line_9_digital_assets': dict(proceeds=150, broker_proceeds=150, cost=100, gain=50)}}}
     report = tie_out.evaluate([], result, [], option_exercise_answer=False, specific_identification_answer=False)
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
@@ -1070,17 +1070,185 @@ def _broker_ledger(proceeds):
         key_boxes={'capital_proceeds': proceeds}, skipped=None)]})
 
 
-def _with_box_k(proceeds, above):
+def _with_box_k(proceeds, above, *, broker=140):
     return {'crypto_summary': {**COMPLETE, 'reporting_proceeds_above_forms': above},
-            'schedule_d': {'part_ii_long_term': {'line_9_digital_assets': dict(proceeds=proceeds, cost=100, gain=50)}}}
+            'schedule_d': {'part_ii_long_term': {'line_9_digital_assets': dict(proceeds=proceeds, broker_proceeds=broker, cost=100, gain=50)}}}
+
+
+def test_stale_crypto_excess_cannot_hide_an_unrelated_equity_overmerge():
+    # Actual DA proceeds150, broker140: legitimate excess10. A stale20 plus
+    # equity proceeds1010 (broker1000) made the old aggregate tie1140==1140.
+    ledger = _broker_ledger(140) + tie_out.load_ledger({'records': [dict(
+        doc_id='equities', file='documents/1099B.pdf', form_type='1099-B', payer='Broker',
+        person='primary', key_boxes={'capital_proceeds': 1000}, skipped=None)]})
+    result = _with_box_k(150, 20)
+    result['schedule_d']['part_ii_long_term']['line_9_digital_assets']['broker_proceeds'] = 140
+    result['schedule_d']['part_i_short_term'] = {
+        'line_1a_1099b_box_a': dict(proceeds=1010, cost=500, gain=510)}
+    report = tie_out.evaluate(ledger, result, ['documents/1099DA.pdf', 'documents/1099B.pdf'],
+                              option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    check = next(c for c in report.sum_checks if c.category == 'capital_proceeds')
+    assert (check.ledger_total, check.result_total) == (1140, 1150)
+
+
+def test_each_routed_row_retains_its_allocated_broker_proceeds():
+    result = resolved(run(reporting(form(proceeds=140), resolutions={
+        'da-1': dict(proceeds='taxpayer_records', evidence='trade-confirmation')})))
+    assert only(result)['broker_proceeds'] == 140
+    route = result['broker_reporting']['schedule_d_routing']['K']
+    assert (route['proceeds'], route['broker_proceeds'], route['gain']) == (150, 140, 50)
+
+
+def test_one_form_spanning_holding_periods_allocates_its_broker_cents_once():
+    # One form150.01, two equal unit slices:15001 cents ->7501+7500.
+    # The broker allocation is audit metadata; it never reprices either FIFO fill.
+    block = reporting(form(quantity=2, proceeds=150.01))
+    tx = copy.deepcopy(SPLIT)
+    tx[1]['quantity'] = 1
+    tx[-1].update(quantity=2, usd_amount=150.01)
+    result = resolved(run(block, tx))
+    assert sorted(row['broker_proceeds'] for row in rows(result)) == [75, 75.01]
+    assert sum(route['broker_proceeds'] for route in result['broker_reporting']['schedule_d_routing'].values()) == 150.01
+    assert sum(row['proceeds'] for row in rows(result)) == 150.01
+
+
+def test_two_forms_keep_their_own_broker_figures_before_box_aggregation():
+    tx = copy.deepcopy(BASE)
+    tx[0].update(quantity=2, usd_amount=200)
+    tx.append(event('A', 'second', 'sell', '2025-04-01', usd=110))
+    result = resolved(run(reporting(form(proceeds=140), form(form_id='da-2', txn_id='second',
+        date_sold='2025-04-01', proceeds=100), resolutions={
+            'da-1': dict(proceeds='taxpayer_records', evidence='sale-confirmation'),
+            'da-2': dict(proceeds='taxpayer_records', evidence='second-confirmation')}), tx))
+    assert [(row['txn_id'], row['broker_proceeds']) for row in rows(result)] == [('sale', 140), ('second', 100)]
+    route = result['broker_reporting']['schedule_d_routing']['K']
+    assert (route['proceeds'], route['broker_proceeds'], route['gain']) == (260, 240, 60)
+
+
+def test_no_form_rows_have_no_broker_proceeds_to_feed_the_ledger_tie():
+    result = resolved(run(reporting(received=False)))
+    assert only(result)['broker_proceeds'] is None
+    assert result['broker_reporting']['schedule_d_routing']['L']['broker_proceeds'] is None
+    merged = {'crypto_summary': COMPLETE, 'schedule_d': {'part_ii_long_term': {
+        'line_10_digital_assets': dict(proceeds=150, cost=100, gain=50, broker_proceeds=150)}}}
+    report = tie_out.evaluate([], merged, [], option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed and any('no-form' in t for t in report.missing_result_targets)
+    # A no-form row the merge reset to 0 claims nothing.
+    merged['schedule_d']['part_ii_long_term']['line_10_digital_assets']['broker_proceeds'] = 0
+    report = tie_out.evaluate([], merged, [], option_exercise_answer=False, specific_identification_answer=False)
+    assert not any('no-form' in t for t in report.missing_result_targets)
+
+
+def test_old_rows_must_be_rebuilt_instead_of_inferred_from_the_scalar():
+    result = _with_box_k(150, 10)
+    del result['schedule_d']['part_ii_long_term']['line_9_digital_assets']['broker_proceeds']
+    # Reported as a missing target (exit 2), not raised: a raise reads as a
+    # malformed ledger and hides every other finding in the report.
+    report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'], option_exercise_answer=False,
+                              specific_identification_answer=False)
+    assert report.failed and any(re.search('rebuild.*never infer', t) for t in report.missing_result_targets)
+
+
+def test_the_imports_excess_must_be_the_rows_own_excess():
+    # Column (d) 150 over a 140 broker figure: an excess of 10, which the
+    # import must have reported. The sum ties on broker figures alone, so this
+    # is what holds column (d) itself to the forms.
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert not report.failed
+    assert any('exceed their broker forms by 10.00' in note for note in report.advisories)
+
+
+@pytest.mark.parametrize('claimed', [0, 20, 999, 140])
+def test_an_excess_the_import_did_not_report_fails(claimed):
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, claimed), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('from one import' in t for t in report.missing_result_targets)
+
+
+@pytest.mark.parametrize('proceeds,cost,gain', [(300, 100, 200), (280, 600, -320), (1150, 100, 1050)])
+def test_an_overmerged_column_d_cannot_pass_on_its_broker_figure(proceeds, cost, gain):
+    # A sale merged twice, a loss merged twice, or unrelated proceeds folded
+    # into the row: each leaves its 140 broker figure, and the 10 the import
+    # reported, intact while column (d) moves.
+    result = _with_box_k(proceeds, 10)
+    result['schedule_d']['part_ii_long_term']['line_9_digital_assets'].update(cost=cost, gain=gain)
+    report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed and any('from one import' in t for t in report.missing_result_targets)
+
+
+def test_a_stale_broker_figure_cannot_offset_an_equity_overmerge():
+    # Equity merged at 1,010 against its 1,000 form, and a stale 130 broker
+    # figure on a 140 form: the sum is 1,140 either way, but column (d)'s 150
+    # is then 20 above its broker figure where the import reported 10.
+    ledger = _broker_ledger(140) + tie_out.load_ledger({'records': [dict(
+        doc_id='equities', file='documents/1099B.pdf', form_type='1099-B', payer='Broker',
+        person='primary', key_boxes={'capital_proceeds': 1000}, skipped=None)]})
+    result = _with_box_k(150, 10, broker=130)
+    result['schedule_d']['part_i_short_term'] = {'line_1a_box_a': {'proceeds': 1010, 'cost': 900, 'gain': 110}}
+    report = tie_out.evaluate(ledger, result, ['documents/1099DA.pdf', 'documents/1099B.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed and any('from one import' in t for t in report.missing_result_targets)
+
+
+@pytest.mark.parametrize('claimed', [None, 'stale', float('nan'), float('inf'), True, -10, 1 << 4096, 10.001])
+def test_the_imports_excess_must_be_a_whole_cent_amount(claimed):
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, claimed), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('must be a finite non-negative amount' in t for t in report.missing_result_targets)
+
+
+def test_an_absent_excess_reads_as_none_reported():
+    result = _with_box_k(150, 10)
+    del result['crypto_summary']['reporting_proceeds_above_forms']
+    assert tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False).failed
+    result = _with_box_k(140, 10)
+    del result['crypto_summary']['reporting_proceeds_above_forms']
+    assert not tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False).failed
+
+
+def test_a_zero_proceeds_form_loss_is_still_verifiable():
+    result = _with_box_k(0, 0, broker=0)
+    result['schedule_d']['part_ii_long_term']['line_9_digital_assets']['gain'] = -100
+    report = tie_out.evaluate(_broker_ledger(1), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False, tolerance=0)
+    assert report.failed and 'capital_proceeds' not in report.unverifiable
+    assert next(c for c in report.sum_checks if c.category == 'capital_proceeds').result_total == 0
+
+
+@pytest.mark.parametrize('key,part,row', [
+    ('line_9_digital_assets', 'part_i_short_term', dict(proceeds=150, broker_proceeds=140)),
+    ('line_unknown_digital_assets', 'part_ii_long_term', dict(proceeds=150, broker_proceeds=140)),
+    ('line_9_digital_assets', 'part_ii_long_term', 'malformed'),
+])
+def test_broker_metadata_cannot_be_merged_into_an_unknown_or_wrong_part(key, part, row):
+    report = tie_out.evaluate([], {'crypto_summary': COMPLETE, 'schedule_d': {part: {key: row}}}, [],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('Unknown, misplaced or malformed' in message for message in report.missing_result_targets)
+
+
+def test_broker_metadata_alone_cannot_hide_a_dropped_tax_merge():
+    result = {'schedule_d': {'part_ii_long_term': {
+        'line_9_digital_assets': dict(proceeds=0, cost=0, gain=0, broker_proceeds=140)}}}
+    report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed and any('below its broker proceeds' in t for t in report.missing_result_targets)
 
 
 def test_proceeds_above_their_form_tie_to_the_form_and_say_so():
     report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False)
     assert not report.failed
     assert any('exceed their broker forms by 10.00' in note for note in report.advisories)
-    # Without the documented excess the form's own figure no longer ties.
+    # The import's excess must be the rows' own: 0 here leaves the 10 unexplained.
     assert tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 0), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False).failed
+    assert tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10, broker=150), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False).failed
 
 
 @pytest.mark.parametrize('row', ['line_10_digital_assets', 'line_10_1099b_box_f'])
@@ -1105,16 +1273,16 @@ def test_an_excess_alone_is_crypto_metadata_and_meets_the_gate():
     assert any('Form 8949 reporting' in target for target in report.missing_result_targets)
 
 
-def test_a_claimed_excess_can_only_lower_the_result_side():
-    # Rows never merged: the result side is short of the form, and an
-    # excess makes it shorter still — it cannot hide the dropped form.
-    assert tie_out.evaluate(_broker_ledger(150), _with_box_k(0.01, 10), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False).failed
+def test_a_dropped_crypto_merge_cannot_claim_more_broker_proceeds_than_column_d():
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(0.01, 10), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed and any('below its broker proceeds' in t for t in report.missing_result_targets)
 
 
-@pytest.mark.parametrize('above', [-1, float('nan'), float('inf'), True, '10'])
-def test_excess_must_be_a_finite_non_negative_amount(above):
-    with pytest.raises(tie_out.TieOutError):
-        tie_out.evaluate(_broker_ledger(140), _with_box_k(150, above), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False)
+@pytest.mark.parametrize('broker', [None, -1, float('nan'), float('inf'), True, '140', 140.001, 1 << 4096])
+def test_each_broker_figure_must_be_finite_non_negative_and_whole_cents(broker):
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(150, 10, broker=broker), ['documents/1099DA.pdf'], option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('broker_proceeds needs a finite non-negative whole-cent amount' in t for t in report.missing_result_targets)
 
 
 def test_every_reviewed_year_and_source_is_documented():
@@ -1766,3 +1934,82 @@ def test_mixed_offsets_cannot_print_an_acquisition_after_its_sale():
     tx[0] = {**tx[0], 'date': '2025-06-01T16:30:00Z'}
     row = only(resolved(run(reporting(received=False), tx)))
     assert (row['date_acquired'], row['date_sold']) == ('2025-06-01', '2025-06-01')
+
+
+def test_a_groups_broker_figure_follows_each_fills_own_price():
+    # One 300 form over fills at 100 (a long-term lot) and 200 (a short-term
+    # lot). Split by units, each box would get 150 of the broker's figure and
+    # neither would match its own column (d).
+    tx = [event('A', 'old', 'buy', '2023-01-01', usd=50), event('A', 'new', 'buy', '2025-01-02', usd=50),
+          event('A', 'fill1', 'sell', '2025-03-01', qty='0.5', usd=100),
+          event('A', 'fill2', 'sell', '2025-03-01', qty='0.5', usd=200)]
+    tx[0]['quantity'] = tx[1]['quantity'] = '0.5'
+    block = {**reporting(form(txn_id='order1', proceeds=300)),
+             'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                  evidence='single-sale-confirmation')]}
+    routing = resolved(run(block, tx))['broker_reporting']['schedule_d_routing']
+    assert {box: (route['proceeds'], route['broker_proceeds']) for box, route in routing.items()} == {
+        'H': (200, 200), 'K': (100, 100)}
+
+
+@pytest.mark.parametrize('proceeds', [150.001, float('nan'), -150, '150'])
+def test_a_digital_rows_column_d_must_be_a_whole_cent_amount(proceeds):
+    report = tie_out.evaluate(_broker_ledger(140), _with_box_k(proceeds, 10), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('whole-cent amounts' in t for t in report.missing_result_targets)
+
+
+def _merged(built):
+    # result.json as tax-parse-crypto merges an import: its Form 8949 rows, its
+    # summary, and each routed box added into the Schedule D row it names.
+    schedule = {'part_i_short_term': {}, 'part_ii_long_term': {}}
+    for route in built['broker_reporting']['schedule_d_routing'].values():
+        schedule[route['part']][route['row']] = {key: route[key] for key in (
+            'proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code', 'broker_proceeds')}
+    return {'crypto_summary': built['crypto_summary'], 'form_8949': built['form_8949'], 'schedule_d': schedule}
+
+
+def _split_import():
+    # One sale of 2 BTC for 300 from a long and a short lot, one 1099-DA each.
+    tx = [event('A', 'old', 'buy', '2023-01-01', 1, 50), event('A', 'new', 'buy', '2025-01-02', 1, 50),
+          event('A', 'sale', 'sell', '2025-03-01', 2, 300)]
+    forms = [form(form_id='lt', quantity='1', proceeds=150, term='long'),
+             form(form_id='st', quantity='1', proceeds=150, term='short')]
+    return resolved(run(reporting(*forms), tx))
+
+
+def test_a_merged_import_ties_box_by_box_to_its_own_form_8949_rows():
+    report = tie_out.evaluate(_broker_ledger(300), _merged(_split_import()), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert not report.failed, report.missing_result_targets
+
+
+@pytest.mark.parametrize('damage', ['shift_short_to_long', 'swap_rows', 'loss_merged_twice'])
+def test_schedule_d_digital_rows_cannot_move_away_from_their_form_8949_rows(damage):
+    # Each change keeps every proceeds total, so only the box-by-box tie sees it.
+    result = _merged(_split_import())
+    short, long = (result['schedule_d'][part][row] for part, row in (
+        ('part_i_short_term', 'line_2_digital_assets'), ('part_ii_long_term', 'line_9_digital_assets')))
+    if damage == 'shift_short_to_long':
+        for key in ('proceeds', 'gain', 'broker_proceeds'):
+            short[key] -= 60
+            long[key] += 60
+    elif damage == 'swap_rows':
+        short['cost'], long['cost'] = long['cost'] + 10, short['cost'] - 10
+        short['gain'], long['gain'] = long['gain'] - 10, short['gain'] + 10
+    else:
+        short['cost'] *= 2
+        short['gain'] = short['proceeds'] - short['cost']
+    report = tie_out.evaluate(_broker_ledger(300), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('sum of its routed Form 8949 digital rows' in t for t in report.missing_result_targets)
+
+
+def test_a_missing_broker_figure_is_reported_once_not_as_a_second_excess():
+    result = _with_box_k(150, 10)
+    del result['schedule_d']['part_ii_long_term']['line_9_digital_assets']['broker_proceeds']
+    report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert not any('exceeds its rows' in t for t in report.missing_result_targets)

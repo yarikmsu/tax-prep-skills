@@ -251,9 +251,38 @@ requires source-bound evidence and tie-out recomputation of the merged gains.
 `/tax-parse` ledgers a 1099-DA in `documents/` with its box 1f total as
 `capital_proceeds`. The tie sums the form-backed digital-asset rows with the
 1099-B rows and leaves out the no-form rows of lines 3 and 10, so it compares
-like with like; the documented `proceeds_above_forms`
-excess comes off the result side, which it can only lower, and the key alone
-meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
+like with like. Each routed Form 8949 row retains `broker_proceeds` allocated
+from its own form in whole cents, and each Schedule D digital row sums those
+figures. These are audit amounts, separate from Form 8949 column (d): a correct,
+higher disposal price stays in column (d), and code E still uses the form's
+gross proceeds there. A form spanning several lot slices is allocated once;
+the broker allocations never reprice those slices. No-form rows carry null.
+
+Active form-backed rows without `broker_proceeds` must be rebuilt from the
+reviewed import and source forms. Never infer a missing figure by subtracting
+the old scalar. Broker figures must be finite, nonnegative whole-cent amounts;
+an explicit zero is meaningful. Rebuild all digital rows from the complete
+normalized input on a rerun so old tax amounts and new audit amounts cannot
+be merged separately. Equity rows stay separate.
+
+The tie sums the digital rows' own broker figures alongside equity proceeds;
+it never subtracts `crypto_summary.reporting_proceeds_above_forms`, so a stale
+scalar cannot offset an equity over-merge. Column (d) is held to the forms
+separately: the form-backed digital rows' column (d) may exceed their broker
+figures only by exactly that scalar, the excess the import reported with
+reviewed evidence. A column (d) merged twice, or a broker figure that went
+stale, leaves a difference no import reported and fails, as does column (d)
+below its broker figures. The scalar must be a finite, nonnegative whole-cent
+amount; absent, it reads as zero. A row's broker figure is allocated from its
+form in proportion to its own column (d), so fills of one order at different
+prices each keep their own. Where the merged Form 8949 account rows are
+present, each Schedule D digital row must also equal their sum for its box, in
+proceeds, cost, adjustment, gain and broker figure, to the cent: the totals
+alone cannot see column (d) and gain moved from a short-term row to a
+long-term one, or a $0 loss merged twice. A stale import whose own figures
+still agree with each other is the one case these checks cannot see; only a
+rebuild from the current forms shows it. A non-zero
+no-form row keeps the tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
 
 ### Linked partial fills (AA47)
