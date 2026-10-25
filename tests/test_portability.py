@@ -6431,8 +6431,12 @@ class TestTheBacklogSaysWhatIsOpen:
         text = self._text()
         blocked = text[text.index("\n## Blocked on an owner ACTION"):
                        text.index("\n## Declined,")]
-        named = set(re.findall(rf"^\| \*\*({self._ID})\*\* \|", blocked, re.M))
+        listed = re.findall(rf"^\| \*\*({self._ID})\*\* \|", blocked, re.M)
+        named = set(listed)
         assert named, "the blocked table parses as empty"
+        # One row per item: a second row is a second, possibly stale, account
+        # of what the item waits on (AA79's first draft left one behind).
+        assert len(listed) == len(named), sorted(i for i in named if listed.count(i) > 1)
         opened = set(self.ENTRY.findall(self._open_section()))
         orphans = sorted(named - opened)
         assert not orphans, (
