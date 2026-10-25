@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents.lib.yoy_diff import (
@@ -543,3 +545,152 @@ class TestStateMoversAreKeyedPerSection:
                 head, _, field = path.partition(".")
                 assert head == section, path
                 assert field in template[section], path
+
+
+# --- AA46: earlier-year columns and the saved report --------------------------
+
+def _older(year, agi, wages):
+    doc = _prior()
+    doc["meta"]["tax_year"] = year
+    doc["form_1040"].update(line_11_agi=agi, line_1z_total_wages=wages)
+    return doc
+
+
+def test_earlier_years_add_columns_without_changing_any_delta_or_mover():
+    plain = compute_yoy_diff(_prior(), _current(), TAX_LAW)
+    earlier = [(2023, _older(2023, 150000, 130000), TAX_LAW),
+               (2024, _older(2024, 165000, 145000), None)]
+    report = compute_yoy_diff(_prior(), _current(), TAX_LAW, earlier=earlier)
+    assert report.trend_years == (2023, 2024)
+    by_label = {m.label: m for m in report.headlines}
+    assert by_label["AGI"].history == (150000, 165000)
+    # TY2024 carries no tax law, so it shows no bracket rather than one
+    # priced on another year's schedule; TY2023's 152,500 is 22% on TAX_LAW.
+    assert by_label["Marginal bracket"].history == (22.0, None)
+    assert [(m.label, m.prior, m.current, m.delta, m.delta_pct) for m in report.headlines] == [
+        (m.label, m.prior, m.current, m.delta, m.delta_pct) for m in plain.headlines]
+    assert [m.label for m in report.line_movers] == [m.label for m in plain.line_movers]
+    wages = next(m for m in report.line_movers if m.json_path == "form_1040.line_1z_total_wages")
+    assert wages.history == (130000, 145000)
+
+
+def test_an_earlier_year_without_the_state_section_shows_no_state_figure():
+    p, c = _prior(), _current()
+    p["california_540"] = {"ca_total_tax": 5000}
+    c["california_540"] = {"ca_total_tax": 9000}
+    older = _older(2024, 165000, 145000)  # filed in another state that year
+    report = compute_yoy_diff(p, c, TAX_LAW, earlier=[(2024, older, TAX_LAW)])
+    state = next(m for m in report.line_movers if m.label == "State total tax")
+    assert state.history == (None,)
+
+
+@pytest.mark.parametrize("years", [(2024, 2023), (2024, 2024), (2025,)])
+def test_earlier_years_must_be_distinct_ordered_and_before_the_prior_year(years):
+    with pytest.raises(ValueError, match="oldest first"):
+        compute_yoy_diff(_prior(), _current(), TAX_LAW,
+                         earlier=[(y, _older(y, 1, 1), None) for y in years])
+
+
+def test_render_puts_earlier_columns_before_the_compared_years():
+    report = compute_yoy_diff(_prior(), _current(), TAX_LAW,
+                              earlier=[(2024, _older(2024, 165000, 145000), None)])
+    md = render_markdown(report)
+    assert "every Δ is TY2025 → TY2026" in md
+    assert "| Metric | TY2024 | TY2025 | TY2026 | Δ | Δ % |" in md
+    assert "| AGI | $165,000 | $180,000 | $215,200 | +$35,200 | +19.6% |" in md
+    assert "| Marginal bracket | — | 22% | 22% | +0 pts | — |" in md
+
+
+def test_cli_trend_years_reads_each_earlier_archive(tmp_path):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    older = _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))
+    _write_archive(tmp_path, 2023, _older(2023, 150000, 130000))
+    # TY2024's own schedule puts its 152,500 of taxable income at 12%, where
+    # the prior or current year's TAX_LAW would say 22%. TY2023 has no law.
+    law_2024 = {"federal": {"filing_statuses": {"mfj": {"brackets": [
+        {"rate": 0.10, "min": 0, "max": 100000}, {"rate": 0.12, "min": 100001, "max": None}]}}}}
+    (older / "tax_law_2024.json").write_text(json.dumps(law_2024))
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--trend-years", "2", "--json"])
+    assert res.returncode == 0, res.stderr
+    payload = json.loads(res.stdout)
+    assert payload["trend_years"] == [2023, 2024]
+    by_label = {m["label"]: m for m in payload["headlines"]}
+    assert by_label["AGI"]["history"] == [150000, 165000]
+    assert by_label["Marginal bracket"]["history"] == [None, 12.0]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
+def test_cli_trend_years_refuses_an_archive_linked_outside_the_workspace(tmp_path):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-2024"
+    outside.mkdir()
+    (outside / "result.json").write_text(json.dumps(_older(2024, 999999, 1)))
+    (outside / "taxpayer_profile.json").write_text(json.dumps({"filing_status": "MFJ"}))
+    (tmp_path / "archive" / "2024").symlink_to(outside, target_is_directory=True)
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--trend-years", "1"])
+    assert res.returncode == 1 and "999,999" not in res.stdout
+
+
+@pytest.mark.parametrize("damage", ["law_is_a_list", "meta_is_null"])
+def test_cli_malformed_trend_archive_refuses_cleanly(tmp_path, damage):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    older = _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))
+    if damage == "law_is_a_list":
+        (older / "tax_law_2024.json").write_text(json.dumps([{"federal": {}}]))
+    else:
+        doc = _older(2024, 165000, 145000)
+        (older / "result.json").write_text(json.dumps({**doc, "meta": None}))
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--trend-years", "1"])
+    assert res.returncode == 1 and res.stderr.startswith("ERROR") and "Traceback" not in res.stderr
+
+
+@pytest.mark.parametrize("args,fragment", [
+    (["--trend-years", "2"], "archive"), (["--trend-years", "4"], "invalid choice")])
+def test_cli_trend_years_refuses_a_missing_archive_or_more_than_three(tmp_path, args, fragment):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))  # no 2023
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", *args])
+    assert res.returncode != 0 and fragment in res.stderr
+
+
+def test_cli_save_writes_the_printed_report_owner_only(tmp_path):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    base = ["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path), "--year", "2026"]
+    res = _run_cli(base)
+    assert res.returncode == 0 and not (tmp_path / "reviews").exists()
+    res = _run_cli([*base, "--save"])
+    assert res.returncode == 0, res.stderr
+    saved = tmp_path / "reviews" / "yoy_diff_2025_to_2026.md"
+    assert saved.read_text(encoding="utf-8") + "\n" == res.stdout
+    assert "yoy_diff_2025_to_2026.md" in res.stderr
+    if os.name == "posix":
+        assert saved.stat().st_mode & 0o777 == 0o600
+        assert (tmp_path / "reviews").stat().st_mode & 0o777 == 0o700
+        # An existing reviews/ left listable is tightened, not trusted.
+        (tmp_path / "reviews").chmod(0o755)
+        assert _run_cli([*base, "--save"]).returncode == 0
+        assert (tmp_path / "reviews").stat().st_mode & 0o777 == 0o700
+    # Never beside the per-document summaries a parse aggregates.
+    assert not (tmp_path / "summaries").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
+def test_cli_save_refuses_a_linked_reviews_directory(tmp_path):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    elsewhere = tmp_path.parent / f"{tmp_path.name}-outside"
+    elsewhere.mkdir()
+    (tmp_path / "reviews").symlink_to(elsewhere, target_is_directory=True)
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--save"])
+    assert res.returncode == 1 and "symlink or junction" in res.stderr
+    assert list(elsewhere.iterdir()) == []

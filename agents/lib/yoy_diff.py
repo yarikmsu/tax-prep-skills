@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """YoY What-Changed diff for /tax-review.
 
-Read-only: never writes workspace files. Pure compute functions + a markdown
-renderer + a CLI. Reuses load_prior/_get_path/etc from rollover.py.
+Read-only unless `--save`, which writes the one owner-only report under
+`reviews/`, beside the /tax-review workpaper and away from `summaries/`, whose
+`*.md` files the parse and compute steps read as source-document figures. Pure compute functions + a markdown renderer + a CLI. Reuses
+load_prior/_get_path/etc from rollover.py.
 """
 
 import json
 import math
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,12 @@ from agents.lib.rollover import (  # noqa: E402
     _validate_year_arg,
     load_prior,
 )
-from agents.lib.secure_fs import redact  # noqa: E402
+from agents.lib.secure_fs import (  # noqa: E402
+    is_reparse_point,
+    redact,
+    secure_path,
+    write_secure,
+)
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
 )
@@ -41,6 +48,9 @@ class HeadlineMetric:
     delta: Any
     delta_pct: float | None
     unit: str
+    # Values for the report's `trend_years`, oldest first; None where that
+    # year's figure is unknown (a marginal bracket without that year's law).
+    history: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +60,7 @@ class LineMover:
     current: float
     prior: float
     delta: float
+    history: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +77,9 @@ class YoYReport:
     headlines: list
     line_movers: list
     sections_changed: list
+    # Archived years before `prior_year`, oldest first. They add columns;
+    # every delta, and the choice of movers, stays prior year to this year.
+    trend_years: tuple = ()
 
 
 _MFJ_LIKE = {"MFJ", "QSS"}
@@ -184,40 +198,48 @@ def _pct_change(prior: float, current: float) -> float | None:
     return round((current - prior) / abs(prior) * 100, 1)
 
 
+# (label, unit, whether a percentage change is shown), in report order.
+_HEADLINES = (("AGI", "$", True), ("Taxable income", "$", True),
+              ("Marginal bracket", "pts", False), ("Effective rate", "pts", False),
+              ("Total tax", "$", True), ("Total payments", "$", True),
+              ("Refund / (Owed)", "$", False))
+
+
+def _headline_values(doc: dict, tax_law: dict | None) -> dict:
+    """One year's headline figures. With `tax_law` None (a trend year read
+    without its own law) there is no marginal bracket rather than one priced on
+    another year's schedule; the prior year's fallback is compute_headlines'."""
+    agi = _num(doc, "form_1040.line_11_agi")
+    ti = _num(doc, "form_1040.line_15_taxable_income")
+    tax = _num(doc, "form_1040.line_24_total_tax")
+    return {
+        "AGI": agi, "Taxable income": ti,
+        "Marginal bracket": (_marginal_bracket(ti, tax_law, doc.get("meta", {}).get("filing_status"))
+                             if tax_law is not None else None),
+        "Effective rate": round(tax / agi * 100, 1) if agi else None,
+        "Total tax": tax, "Total payments": _num(doc, "form_1040.line_33_total_payments"),
+        "Refund / (Owed)": (_num(doc, "form_1040.line_35a_refund")
+                            - _num(doc, "form_1040.line_37_amount_owed")),
+    }
+
+
 def compute_headlines(prior: dict, current: dict, tax_law: dict,
                       prior_tax_law: dict | None = None) -> list:
-    p_agi = _num(prior, "form_1040.line_11_agi")
-    c_agi = _num(current, "form_1040.line_11_agi")
-    p_ti = _num(prior, "form_1040.line_15_taxable_income")
-    c_ti = _num(current, "form_1040.line_15_taxable_income")
-    p_tax = _num(prior, "form_1040.line_24_total_tax")
-    c_tax = _num(current, "form_1040.line_24_total_tax")
-    p_pay = _num(prior, "form_1040.line_33_total_payments")
-    c_pay = _num(current, "form_1040.line_33_total_payments")
-    p_net = _num(prior, "form_1040.line_35a_refund") - _num(prior, "form_1040.line_37_amount_owed")
-    c_net = _num(current, "form_1040.line_35a_refund") - _num(current, "form_1040.line_37_amount_owed")
-
-    p_eff = round(p_tax / p_agi * 100, 1) if p_agi else None
-    c_eff = round(c_tax / c_agi * 100, 1) if c_agi else None
-    eff_delta = round(c_eff - p_eff, 1) if (p_eff is not None and c_eff is not None) else None
-
     # Prior bracket must use the prior year's schedule — brackets inflation-adjust
     # annually, so reusing the current-year tax_law would misreport the prior
     # marginal rate (and the Δ) near bracket boundaries. Fall back to current-year
     # law only when the prior year's law isn't available.
-    p_mb = _marginal_bracket(p_ti, prior_tax_law or tax_law, prior.get("meta", {}).get("filing_status"))
-    c_mb = _marginal_bracket(c_ti, tax_law, current.get("meta", {}).get("filing_status"))
-    mb_delta = round(c_mb - p_mb, 1) if (p_mb is not None and c_mb is not None) else None
-
-    return [
-        HeadlineMetric("AGI", c_agi, p_agi, c_agi - p_agi, _pct_change(p_agi, c_agi), "$"),
-        HeadlineMetric("Taxable income", c_ti, p_ti, c_ti - p_ti, _pct_change(p_ti, c_ti), "$"),
-        HeadlineMetric("Marginal bracket", c_mb, p_mb, mb_delta, None, "pts"),
-        HeadlineMetric("Effective rate", c_eff, p_eff, eff_delta, None, "pts"),
-        HeadlineMetric("Total tax", c_tax, p_tax, c_tax - p_tax, _pct_change(p_tax, c_tax), "$"),
-        HeadlineMetric("Total payments", c_pay, p_pay, c_pay - p_pay, _pct_change(p_pay, c_pay), "$"),
-        HeadlineMetric("Refund / (Owed)", c_net, p_net, c_net - p_net, None, "$"),
-    ]
+    p = _headline_values(prior, prior_tax_law or tax_law)
+    c = _headline_values(current, tax_law)
+    metrics = []
+    for label, unit, with_pct in _HEADLINES:
+        pv, cv = p[label], c[label]
+        if unit == "pts":
+            delta = round(cv - pv, 1) if (pv is not None and cv is not None) else None
+        else:
+            delta = cv - pv
+        metrics.append(HeadlineMetric(label, cv, pv, delta, _pct_change(pv, cv) if with_pct else None, unit))
+    return metrics
 
 
 def _state_fields_present(prior: dict, current: dict) -> list:
@@ -306,16 +328,40 @@ def compute_section_changes(prior: dict, current: dict) -> list:
     return changes
 
 
+_STATE_SECTION_OF = {path: section for section, fields in STATE_MOVER_FIELDS.items()
+                     for _, path in fields}
+
+
+def _mover_history(path: str, earlier) -> tuple:
+    """A mover's value in each earlier year; None for a state row whose
+    section that year does not carry, rather than a zero read off its absence."""
+    section = _STATE_SECTION_OF.get(path)
+    return tuple(None if section and not _section_present(doc, section) else _num(doc, path)
+                 for _, doc, _ in earlier)
+
+
 def compute_yoy_diff(prior: dict, current: dict, tax_law: dict,
-                     threshold: float = 1000, prior_tax_law: dict | None = None) -> YoYReport:
+                     threshold: float = 1000, prior_tax_law: dict | None = None,
+                     earlier=()) -> YoYReport:
+    """`earlier` is (year, result, tax_law or None) for each archived year
+    before the prior one, oldest first; each adds a column, never a delta."""
     prior_year = int(prior.get("meta", {}).get("tax_year", 0))
     current_year = int(current.get("meta", {}).get("tax_year", 0))
+    years = tuple(year for year, _, _ in earlier)
+    if list(years) != sorted(set(years)) or (years and years[-1] >= prior_year):
+        raise ValueError("earlier years must be distinct, oldest first, and before the prior year")
+    trend = [_headline_values(doc, law) for _, doc, law in earlier]
+    headlines = [replace(m, history=tuple(values[m.label] for values in trend))
+                 for m in compute_headlines(prior, current, tax_law, prior_tax_law)]
+    movers = [replace(m, history=_mover_history(m.json_path, earlier))
+              for m in compute_line_movers(prior, current, threshold)]
     return YoYReport(
         current_year=current_year,
         prior_year=prior_year,
-        headlines=compute_headlines(prior, current, tax_law, prior_tax_law),
-        line_movers=compute_line_movers(prior, current, threshold),
+        headlines=headlines,
+        line_movers=movers,
         sections_changed=compute_section_changes(prior, current),
+        trend_years=years,
     )
 
 
@@ -355,24 +401,29 @@ def _fmt_pct(v) -> str:
 
 def render_markdown(report: YoYReport) -> str:
     lines = [f"## YoY What-Changed — TY{report.prior_year} → TY{report.current_year}", ""]
+    trend_heads = "".join(f" TY{year} |" for year in report.trend_years)
+    trend_rule = "---:|" * len(report.trend_years)
+    if report.trend_years:
+        lines += [f"_Earlier years are shown for context; every Δ is TY{report.prior_year} → "
+                  f"TY{report.current_year}._", ""]
 
     lines += ["### Headlines", "",
-              f"| Metric | TY{report.prior_year} | TY{report.current_year} | Δ | Δ % |",
-              "|---|---:|---:|---:|---:|"]
+              f"| Metric |{trend_heads} TY{report.prior_year} | TY{report.current_year} | Δ | Δ % |",
+              f"|---|{trend_rule}---:|---:|---:|---:|"]
     for m in report.headlines:
-        if m.unit == "pts":
-            cur, pri, dlt = _fmt_pts(m.current), _fmt_pts(m.prior), _fmt_delta_pts(m.delta)
-        else:
-            cur, pri, dlt = _fmt_money(m.current), _fmt_money(m.prior), _fmt_delta_money(m.delta)
-        lines.append(f"| {m.label} | {pri} | {cur} | {dlt} | {_fmt_pct(m.delta_pct)} |")
+        fmt = _fmt_pts if m.unit == "pts" else _fmt_money
+        dlt = _fmt_delta_pts(m.delta) if m.unit == "pts" else _fmt_delta_money(m.delta)
+        earlier = "".join(f" {fmt(v)} |" for v in m.history)
+        lines.append(f"| {m.label} |{earlier} {fmt(m.prior)} | {fmt(m.current)} | {dlt} | {_fmt_pct(m.delta_pct)} |")
     lines.append("")
 
     lines += ["### Line movers (sorted by |Δ|)", ""]
     if report.line_movers:
-        lines += [f"| Line | TY{report.prior_year} | TY{report.current_year} | Δ |",
-                  "|---|---:|---:|---:|"]
+        lines += [f"| Line |{trend_heads} TY{report.prior_year} | TY{report.current_year} | Δ |",
+                  f"|---|{trend_rule}---:|---:|---:|"]
         for mv in report.line_movers:
-            lines.append(f"| {mv.label} | {_fmt_money(mv.prior)} | {_fmt_money(mv.current)} | {_fmt_delta_money(mv.delta)} |")
+            earlier = "".join(f" {_fmt_money(v)} |" for v in mv.history)
+            lines.append(f"| {mv.label} |{earlier} {_fmt_money(mv.prior)} | {_fmt_money(mv.current)} | {_fmt_delta_money(mv.delta)} |")
     else:
         lines.append("_No line items moved ≥ threshold._")
     lines.append("")
@@ -398,10 +449,31 @@ def _load_tax_law(workspace: Path, year: int) -> dict:
     return _read_json(path) if path.exists() else {}
 
 
+def save_report(workspace: Path, report: YoYReport) -> Path:
+    """Write the markdown report owner-only to `reviews/`, the one file
+    `--save` creates. A linked `reviews/` would carry the write, and the
+    chmod, outside the workspace, so it refuses."""
+    reviews = workspace / "reviews"
+    try:
+        linked = is_reparse_point(reviews)
+    except OSError as e:
+        raise RolloverError(f"Could not inspect {redact(reviews)}: {redact(e)}") from None
+    if linked:
+        raise RolloverError(f"{redact(reviews)} is a symlink or junction; refusing to write through it")
+    try:
+        reviews.mkdir(mode=0o700, exist_ok=True)
+        secure_path(reviews)
+        return write_secure(reviews / f"yoy_diff_{report.prior_year}_to_{report.current_year}.md",
+                            render_markdown(report))
+    except OSError as e:
+        raise RolloverError(f"Could not save the YoY report: {redact(e)}") from None
+
+
 def _report_to_dict(r: YoYReport) -> dict:
     return {
         "current_year": r.current_year,
         "prior_year": r.prior_year,
+        "trend_years": list(r.trend_years),
         "headlines": [vars(m) for m in r.headlines],
         "line_movers": [vars(m) for m in r.line_movers],
         "sections_changed": [vars(c) for c in r.sections_changed],
@@ -420,6 +492,13 @@ def _main(argv: list) -> int:
                         help="minimum absolute dollar change to include in line movers (default: 1000)")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON instead of markdown")
+    parser.add_argument("--trend-years", type=int, default=0, choices=range(0, 4),
+                        metavar="{0..3}",
+                        help="add columns for up to three archived years before the prior one, "
+                             "read from archive/{year} under the workspace (default: 0)")
+    parser.add_argument("--save", action="store_true",
+                        help="also write the markdown report owner-only to "
+                             "reviews/yoy_diff_{prior}_to_{year}.md")
     args = parser.parse_args(argv)
 
     # argparse type=float accepts nan/inf; reject them — a nan threshold makes every
@@ -448,12 +527,31 @@ def _main(argv: list) -> int:
         # Prior-year tax law lives in the archive (moved there by /tax-archive);
         # used so the prior marginal bracket reflects that year's schedule.
         prior_tax_law = _load_tax_law(prior_dir, year - 1)
+        earlier = []
+        for back in range(args.trend_years, 0, -1):
+            older = year - 1 - back
+            # Under the workspace, as --prior is: a linked archive/{year}
+            # must not bring another directory's figures into the report.
+            older_dir = resolve_under_workspace(f"archive/{older}", workspace)
+            # An asked-for column is never silently dropped: every year named
+            # must have its archive, which load_prior checks for that year.
+            earlier.append((older, load_prior(older_dir, older).result,
+                            _load_tax_law(older_dir, older) or None))
+        report = compute_yoy_diff(prior.result, current, tax_law, threshold=args.threshold,
+                                  prior_tax_law=prior_tax_law, earlier=earlier)
+        saved = save_report(workspace, report) if args.save else None
     except (WorkspaceError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
+    except (OSError, AttributeError, TypeError) as e:
+        # An unreadable archive file, or a result or law that is not the
+        # object it should be: a clean refusal, never a traceback whose
+        # OSError would carry the raw path.
+        print(f"ERROR: could not read the archived returns: {redact(e)}", file=sys.stderr)
+        return 1
 
-    report = compute_yoy_diff(prior.result, current, tax_law,
-                              threshold=args.threshold, prior_tax_law=prior_tax_law)
+    if saved is not None:
+        print(f"Saved {saved.relative_to(workspace)}", file=sys.stderr)
     if args.json:
         print(json.dumps(_report_to_dict(report), indent=2, default=str))
     else:

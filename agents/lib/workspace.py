@@ -204,8 +204,9 @@ ABANDONED_NAME = ".tax-workspace.abandoned"
 #
 # The PLANNING skills are not here for the same reason from the other side:
 # `scenario`, `projection`, `withholding`, `loss_harvest`, `roth_ladder`,
-# `retirement_dashboard`, `ptet` and `yoy_diff` write into their own
-# directories under AGENTS.md §6 and share nothing. Two of them in parallel is
+# `retirement_dashboard`, `ptet` and `yoy_diff` write only files of their own
+# under AGENTS.md §6 (`yoy_diff --save` beside the review workpaper in
+# `reviews/`, under its own name) and share nothing. Two of them in parallel is
 # a person exploring, not a race.
 LOCKED_CLIS = (
     "tax_law_fetcher",

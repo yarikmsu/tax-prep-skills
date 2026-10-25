@@ -293,7 +293,7 @@ _(Covered by checklist rows 9-22 above. Additionally check:)_
 
 ### 3.5. YoY What-Changed
 
-Produce a deterministic year-over-year diff against the prior return. This step is read-only — `yoy_diff.py` never writes workspace files.
+Produce a deterministic year-over-year diff against the prior return. This step is read-only — run as below, `yoy_diff.py` never writes workspace files.
 
 1. Compute `prior_year = {year} - 1`.
 2. If `archive/{prior_year}/` does NOT exist (or is missing `result.json` / `taxpayer_profile.json` — `/tax-archive` writes both together):
@@ -307,7 +307,7 @@ Produce a deterministic year-over-year diff against the prior return. This step 
 4. **Exit code 0:** embed stdout verbatim as the "YoY What-Changed" block in the Step 4 report.
 5. **Exit code non-zero:** record `_YoY diff skipped: {stderr message}_` and proceed to Step 4.
 
-A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output.
+A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output. `--trend-years N` (1-3) adds columns for the archived years before the prior one, each read from `archive/{year}` and refused if missing; every Δ and the choice of movers stay prior year to this year. `--save` also writes the markdown, owner-only, to `reviews/yoy_diff_{prior_year}_to_{year}.md` as a standalone deliverable — never to `summaries/`, whose files later steps read as source documents.
 
 ### 3.6. PTET Election Opportunity (SALT-cap workaround)
 
