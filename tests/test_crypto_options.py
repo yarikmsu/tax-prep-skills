@@ -260,7 +260,8 @@ def merged(source):
                   form_8949=built['form_8949'], schedule_d={'part_i_short_term': {}, 'part_ii_long_term': {}})
     for key, route in built['broker_reporting']['schedule_d_routing'].items():
         part = 'part_i_short_term' if key in 'GHIABC' else 'part_ii_long_term'
-        result['schedule_d'][part][route['row']] = {k: route[k] for k in ('proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code')}
+        result['schedule_d'][part][route['row']] = {k: route[k] for k in (
+            'proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code', 'broker_proceeds') if k in route}
     return result
 
 
