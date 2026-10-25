@@ -85,6 +85,21 @@ def test_transfer_chain_roundtrip_does_not_duplicate_basis():
     assert all(row['date_acquired'] == '2023-01-01' for row in rows(r))
 
 
+def test_a_returned_slice_queues_behind_its_origins_remainder():
+    # 0.3 of the lot stays in A and 0.7 comes back: both share the lot's FIFO
+    # key, so arrival order alone decides which the sale takes first. The
+    # remainder was there first, so a 0.7 sale is two rows, not one.
+    tx = [event('A', 'buy', 'buy', '2023-01-01', 1, 100),
+          *transfer('A', 'B', '0.7', 'T1', '2025-02-01'),
+          *transfer('B', 'A', '0.7', 'T2', '2025-02-02'),
+          event('A', 'sale', 'sell', '2025-03-01', '0.7', 140)]
+    r = C.build_crypto_import(tx, transfer_links=evidence('T1', 'T2'), tax_year=2025,
+                              specific_identification=False)
+    assert r['account_fifo']['complete']
+    assert [(row['proceeds'], row['cost_basis']) for row in rows(r)] == [(60, 30), (80, 40)]
+    assert [lot['quantity'] for lot in r['account_fifo']['inventory']['A']['BTC']] == ['0.3']
+
+
 def test_transfer_arrival_cannot_borrow_future_source_buy():
     tx = [*transfer(), event('A', 'later', 'buy', '2025-03-01', usd=100),
           event('B', 'sale', 'sell', '2025-04-01', usd=200)]
