@@ -1084,6 +1084,9 @@ def _form_input(label, form, events, accounts, regime, tax_year, manual=None) ->
                      else datetime.date.fromisoformat(form['date_sold']))
     except (TypeError, ValueError):
         raise CryptoImportError(f'{label}.date_sold must be YYYY-MM-DD') from None
+    if aggregate is not None and date_sold is not None and date_sold.year != tax_year:
+        raise CryptoImportError(f"{label} is an optional aggregate for TY{tax_year}; a date sold it prints "
+                                'falls in that year')
     quantity = _exact(form['quantity'], f'{label}.quantity')
     if quantity <= 0:
         raise CryptoImportError(f'{label}.quantity must be positive')
@@ -1200,17 +1203,17 @@ def _exact_net(raw) -> 'Fraction | None':
 
 
 def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left,
-                    premium_left=0, rounded_once=False) -> 'tuple[int, int]':
+                    premium_left=0, rounded_once=None) -> 'tuple[int, int]':
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
     recorded fee and reviewed written-call premium still left to explain a
     later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
         t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
-    elif gap and rounded_once:
-        # A group's fills each round to cents, while the broker rounded the
-        # order once; the form equals that exact total rounded, so the gap is
-        # those roundings alone and the form's figure stands.
-        t.proceeds = _absorb(t.proceeds, -gap)
+    elif gap and rounded_once is not None:
+        # A group's sales each round to cents, while the broker rounded their
+        # exact total once; the form equals it, so the gap is those roundings
+        # alone and the form's figure stands, spread a cent per sale.
+        t.proceeds = list(rounded_once)
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
         t.used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
         t.above += gap
@@ -1285,6 +1288,30 @@ def _routed_rows(form, group, t, regime, fifo_basis) -> 'dict[int, Form8949Row]'
     return routed
 
 
+def _rounded_once(rows, event, target) -> 'list[int] | None':
+    """A group's rows, each sale rounded to cents on its own, set against a
+    form that rounded the sales' exact total once. Within one holding period,
+    the sales whose own rounding fell furthest the other way each move one
+    cent, on their largest row, until the rows add to the form: no sale moves
+    more than a cent and none crosses a term. None when that is not the case."""
+    nets = event.get('member_nets')
+    if (not nets or None in nets.values() or len({row.holding_period for row in rows}) != 1
+            or target != _cents(sum(nets.values()))):
+        return None
+    cents = [_cents(row.proceeds) for row in rows]
+    gap = target - sum(cents)
+    posted = {txn: sum(c for row, c in zip(rows, cents) if row.txn_id == txn) for txn in nets}
+    step = 1 if gap > 0 else -1
+    # Each sale's own rounding is within half a cent and the form's within
+    # another half, so the gap is at most (sales + 1) / 2 cents: a cent apiece
+    # always suffices.
+    order = sorted(nets, key=lambda txn: -step * (nets[txn] * 100 - posted[txn]))
+    for txn in order[:abs(gap)]:
+        i = max((i for i, row in enumerate(rows) if row.txn_id == txn), key=lambda i: cents[i])
+        cents[i] += step
+    return cents
+
+
 def _reconcile_forms(rows, forms, event, regime, resolutions):
     """One disposal's rows against the broker forms that report it.
 
@@ -1306,8 +1333,7 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     # A single disposal's rows already add to its once-rounded total, so this
     # can move only a fill group's cents, and only within one holding period:
     # cents moved between short and long rows would move gain between parts.
-    rounded_once = (len({row.holding_period for row in rows}) == 1 and event.get('net') is not None
-                    and forms[0]['proceeds'] == _cents(event['net']))
+    rounded_once = _rounded_once(rows, event, forms[0]['proceeds']) if len(forms) == 1 else None
     basis_cent = split and (all(form['reported'] for form in forms) and sum(
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
     # The only costs a form can leave unreflected are the fee the import
@@ -1444,9 +1470,10 @@ def _fill_group_rows(reporting, by_txn, events):
     if not fills and not aggregates:
         return by_txn, events, []
     grouped, expanded, records, used = dict(by_txn), dict(events), [], set()
-    for entry, method in [(entry, None) for entry in fills] + [(entry, entry['method']) for entry in aggregates]:
-        kind = 'fill group' if method is None else 'optional aggregate'
-        if method is not None and method not in _AGGREGATE_METHODS:
+    for entry, kind in [(entry, 'fill group') for entry in fills] + [(entry, 'optional aggregate')
+                                                                       for entry in aggregates]:
+        method = entry.get('method')
+        if kind == 'optional aggregate' and (not isinstance(method, str) or method not in _AGGREGATE_METHODS):
             raise CryptoImportError('An optional aggregate reconciles qualifying_stablecoins forms only; a '
                                     'specified-NFT aggregate form needs external preparation')
         account = _account_id(entry['account_id'], f'{kind} account_id')
@@ -1472,6 +1499,7 @@ def _fill_group_rows(reporting, by_txn, events):
         nets = [e['net'] for e in source]
         expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source),
                          'net': None if None in nets else sum(nets),
+                         'member_nets': {txn: e['net'] for (_, txn), e in zip(keys, source)},
                          **({} if method is None else {'aggregate': method, 'transactions': len(keys)})}
         for member in keys:
             del grouped[member]

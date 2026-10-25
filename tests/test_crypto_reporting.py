@@ -2430,3 +2430,61 @@ def test_an_option_caused_sale_cannot_sit_in_an_optional_aggregate():
     block['option_exercise_review'] = option_review(USDC[2], 'written_call')
     with pytest.raises(C.CryptoImportError, match='Grouped option-caused disposals'):
         run(block, USDC)
+
+
+@pytest.mark.parametrize('price,count,big,form_total', [
+    ('1.005', 400, 50, '452.00'),   # each sale rounds up; the form rounds the exact 452.00 once
+    ('0.005', 200, 0, '1.00'),      # each sale rounds to 0.01; the form's 1.00 is half of that
+])
+def test_a_years_rounding_moves_no_sale_more_than_a_cent(price, count, big, form_total):
+    # One holding period, so the form's once-rounded total stands; spread a
+    # cent per sale rather than onto one row, no sale's figure moves more
+    # than its own rounding, and none goes negative.
+    tx = [{**event('A', 'lot', 'buy', '2025-01-02', qty='1000', usd=1000), 'asset': 'USDC'}]
+    tx += [{**event('A', f's{i}', 'sell', '2025-06-01', qty='1', usd=price), 'asset': 'USDC'} for i in range(count)]
+    members = [f's{i}' for i in range(count)]
+    if big:
+        tx.append({**event('A', 'big', 'sell', '2025-07-01', qty=str(big), usd=big), 'asset': 'USDC'})
+        members.append('big')
+    units = count + big
+    block = reporting(form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity=str(units),
+                           date_sold=None, proceeds=form_total, optional_method='qualifying_stablecoins',
+                           transactions=len(members)))
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=members, evidence='usdc-annual-statement')]
+    result = resolved(run(block, tx))
+    sold = {r['txn_id']: r['proceeds'] for r in rows(result)}
+    exact = float(price)
+    assert all(abs(sold[f's{i}'] - exact) < 0.01 and sold[f's{i}'] >= 0 for i in range(count))
+    assert (not big or sold['big'] == big) and round(sum(sold.values()), 2) == float(form_total)
+
+
+@pytest.mark.parametrize('method', [None, ['qualifying_stablecoins'], 'specified_nfts'])
+def test_an_optional_aggregate_must_name_a_supported_method(method):
+    block = aggregate_reporting()
+    block['optional_aggregates'][0]['method'] = method
+    with pytest.raises(C.CryptoImportError, match='qualifying_stablecoins forms only'):
+        run(block, USDC)
+
+
+@pytest.mark.parametrize('date', ['2024-12-31', '2026-01-05'])
+def test_an_aggregates_printed_date_sold_falls_in_the_filing_year(date):
+    with pytest.raises(C.CryptoImportError, match='a date sold it prints falls in that year'):
+        run(aggregate_reporting(date_sold=date), USDC)
+
+
+def test_the_cent_moves_on_the_sale_whose_rounding_went_furthest_the_other_way():
+    # 1.004 posts 1.00 and each 1.005 posts 1.01: 3.02 against the form's
+    # once-rounded 3.014 = 3.01. The cent comes off a 1.005 sale, which ends
+    # half a cent from its exact figure; taking it from the 1.004 sale, first
+    # in the list, would leave that one 1.4 cents off.
+    prices = {'a': '1.004', 'b': '1.005', 'c': '1.005'}
+    tx = [{**event('A', 'lot', 'buy', '2025-01-02', qty='10', usd=10), 'asset': 'USDC'}]
+    tx += [{**event('A', txn, 'sell', '2025-06-01', qty='1', usd=price), 'asset': 'USDC'}
+           for txn, price in prices.items()]
+    block = reporting(form(form_id='da-usdc', txn_id='usdc-2025', asset='USDC', quantity='3', date_sold=None,
+                           proceeds='3.01', optional_method='qualifying_stablecoins', transactions=3))
+    block['optional_aggregates'] = [dict(account_id='A', group_id='usdc-2025', method='qualifying_stablecoins',
+                                         txn_ids=list(prices), evidence='usdc-annual-statement')]
+    sold = {r['txn_id']: r['proceeds'] for r in rows(resolved(run(block, tx)))}
+    assert sold['a'] == 1.00 and sorted([sold['b'], sold['c']]) == [1.00, 1.01]

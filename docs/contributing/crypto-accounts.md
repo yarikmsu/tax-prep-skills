@@ -316,10 +316,12 @@ and evidence. Fees are summed once for the group's reconciliation. Units and
 amounts must reconcile under the existing exact checks, with one exact
 exception: each fill rounds to cents on its own, while a broker reporting the
 order rounds it once. A single form whose proceeds equal the fills' exact
-total, net of fees, rounded once takes the form's figure, the difference
-landing on the largest row, when every fill's rows share one holding period;
-moving those cents between short- and long-term rows would move gain between
-parts, so a mixed-term group, and any other difference, stays unresolved. Group-level
+total, net of fees, rounded once takes the form's figure when every fill's
+rows share one holding period: the fills whose own rounding fell furthest the
+other way each move one cent, on their largest row, so no fill moves more than
+a cent from its own figure. Moving those cents between short- and long-term
+rows would move gain between parts, so a mixed-term group, and any other
+difference, stays unresolved. Group-level
 `resolutions` are refused: spreading an adjustment across differently priced
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
@@ -360,10 +362,12 @@ The members are filing-year disposals of one asset in one account, on no
 other form and in no fill group, and the group is linked by exactly one form
 whose `optional_method` names the same method and whose `transactions` is a
 whole number. The form reconciles as a fill group's does, against the
-members' own rows: units and proceeds exactly, the number of transactions
-against the members, and its date sold, if any, against nothing. Each sale
-keeps its own Form 8949 rows in its own holding period's box, with its share
-of box 1f. A difference stays unresolved, since group-level resolutions are
+members' own rows: units exactly, the number of transactions against the
+members, and proceeds exactly or, within one holding period, as the sales'
+exact total rounded once, no sale moving more than a cent. A date sold it
+prints must fall in the filing year and is compared with nothing else. Each
+sale keeps its own Form 8949 rows in its own holding period's box, with its
+share of box 1f. A difference stays unresolved, since group-level resolutions are
 refused. A designated sale the form leaves out, or every sale when the year's
 total was at or under the threshold, goes on no form: declare it under the
 account's `not_reported` with its evidence, as any sale no form reports.
@@ -603,8 +607,9 @@ Review and preserve `source_corrections` with the import's secured workpaper in
 `summaries/`. Account identities, fees, lot selection and special form
 treatments are outside this correction path. It does not clear the option
 exercise screen or unsupported boxes. The separate option review below handles
-plain USD premiums; other manual treatments and optional annual reporting
-remain AA47 follow-ups.
+plain USD premiums; [manual disposals](#manual-disposals-aa47) and
+[optional aggregate forms](#optional-aggregate-forms-aa47) take the cases this
+path cannot, and specified-NFT aggregate forms remain an AA47 follow-up.
 Corrections live inside the broker-review object so an older engine's closed
 key set refuses them instead of silently ignoring a new top-level input.
 
