@@ -408,7 +408,9 @@ REQUIRED_ANSWERS: "tuple[RequiredAnswer, ...]" = (
         question="What CA estimates, extension payments, K-1 allocations and prior applied "
                  "overpayment are credited to this tax year? Confirm their dates, account ownership "
                  "and claimable shares from source records, including an explicit none; identify "
-                 "the opening applied credit separately from new payments.",
+                 "the opening applied credit separately from new payments. Review the credited-year "
+                 "payment count and total before setting ca_verified; record matching-row "
+                 "questions and their source-confirmed resolutions in answers.md.",
         asked_by="tax-compute state-return.md", required_when="this run selects a CA return",
         when=_ca_return_needed,
     ),

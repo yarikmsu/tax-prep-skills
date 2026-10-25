@@ -274,7 +274,17 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
     list and the record contract in `docs/contributing/state-module-ca.md`:
     `payment_id`, state, credited tax year, actual date (or explicit null),
     kind, claimable amount and account owner. Verify allocations and reconcile
-    MyFTB/receipts/K-1s; set `estimated_payments.ca_verified` only after doing so.
+    MyFTB/receipts/K-1s. Before asking for `estimated_payments.ca_verified`, run
+    `sh agents/lib/run.sh -m agents.lib.return_builder --review-ca-payments`.
+    Present the credited tax year, CA payment count and total claimed, with
+    the new payments and opening applied credit separately. Record these
+    figures under **[ca_state_payments]** in `answers.md`. For each
+    `matching_record_groups` entry (zero-based list positions), record a
+    question and its source-confirmed resolution in `answers.md`: do rows
+    sharing state, credited year, kind, person, date and amount represent
+    distinct payments? Matching rows do not refuse the build or authorize
+    deleting either payment. Set `estimated_payments.ca_verified` only after
+    reconciling the displayed claim with the account and resolving questions.
     Keep `prior_year.ca_estimated_payments_applied` outside that list. The builder
     derives line72 and the payment workpaper, excludes other states/years with
     a disclosure, and refuses unverified or contradictory inputs. Never type a

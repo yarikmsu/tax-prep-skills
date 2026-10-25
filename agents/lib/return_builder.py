@@ -1250,6 +1250,18 @@ def load(workspace: Path) -> tuple:
 
 def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | None]:
     """Reviewed Form540 line72 sources, never a second manually typed total."""
+    totals, note, _ = _ca_payment_sources(profile, year, status)
+    if totals["total"] > 0 and profile.get("estimated_payments", {}).get("ca_verified") is not True:
+        raise ValueError("reconcile claimable CA payment amounts, ownership/allocation and credited year; set estimated_payments.ca_verified")
+    return totals, note
+
+
+def _ca_payment_sources(profile: dict, year: int, status: str) -> tuple[dict, str | None, list]:
+    """Validate and summarize sources before asking for account reconciliation.
+
+    Matching rows are a question, not proof of duplication. Use list positions
+    in the review, never print opaque payment ids or account/source identity.
+    """
     import datetime
     from agents.lib.capabilities import _USPS_STATES
     status = _full_status_key(status)
@@ -1287,6 +1299,7 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
     kinds = {"estimate": "estimates", "extension": "extension", "k1_estimate": "k1_allocations"}
     keys = {"payment_id", "state", "tax_year", "date", "kind", "amount", "person"}
     ids = set()
+    matching: dict[tuple, list[int]] = {}
     joint_separate = individual_joint = False
     for index, record in enumerate(payments.get("state", [])):
         where = f"estimated_payments.state[{index}]"
@@ -1318,6 +1331,8 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
             except ValueError:
                 raise ValueError(f"{where}: date must be an actual ISO payment date, not in the future, or explicit null") from None
         amount = money(record["amount"], where + ".amount")
+        match_key = (state, destination, kind, person, date, amount)
+        matching.setdefault(match_key, []).append(index)
         if not amount:
             continue
         if state != "CA" or destination != year:
@@ -1337,8 +1352,6 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
         totals[key] = round(totals[key], 2)
     if answered != (totals["total"] > 0):
         raise ValueError("ca_has_nonw2_payments disagrees with the current-year CA payments/opening credit; reconcile the sources")
-    if answered and payments.get("ca_verified") is not True:
-        raise ValueError("reconcile claimable CA payment amounts, ownership/allocation and credited year; set estimated_payments.ca_verified")
     notes = []
     if totals["unknown_date_count"]:
         notes.append("Some credited payments have unknown dates; FTB5805 timing is not computed.")
@@ -1348,7 +1361,24 @@ def _ca_payments(profile: dict, year: int, status: str) -> tuple[dict, str | Non
         notes.append("Confirm the joint-estimate allocation was arranged with FTB before separate filing.")
     if individual_joint:
         notes.append("Attach the required Form540 explanation for individual-account payments combined onto a joint return.")
-    return totals, ("CA payments: " + " ".join(notes)) if notes else None
+    return (totals, ("CA payments: " + " ".join(notes)) if notes else None,
+            [indices for indices in matching.values() if len(indices) > 1])
+
+
+def ca_payment_review(profile: dict) -> dict:
+    """The proposed credited-year claim, with questions to record in answers.md.
+
+    This does not set ca_verified, build a return or certify a validation gate.
+    """
+    year = _tax_year({}, profile)
+    totals, note, matches = _ca_payment_sources(profile, year, _filing_status(profile, {}))
+    return {"tax_year": year, **totals, "note": note,
+            "matching_record_groups": matches,
+            "questions": [
+                "Do estimated_payments.state rows " + ", ".join(str(i) for i in group)
+                + " represent distinct payments? Reconcile source confirmations and record "
+                  "the question and resolution under [ca_state_payments] in answers.md."
+                for group in matches]}
 
 
 def derive_ca_5805(form: dict, profile: dict, state: dict, year: int, status: str,
@@ -2088,7 +2118,11 @@ def _main(argv: list) -> int:
         description="Derive Form 1040 lines 1-38 from the parsed records, the "
                     "profile and the tax-law cache.")
     add_workspace_argument(parser)
-    parser.add_argument("--check", action="store_true",
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--review-ca-payments", action="store_true",
+                      help="show the proposed CA payment count/total and matching-row "
+                           "questions before ca_verified; read only the profile, write nothing")
+    modes.add_argument("--check", action="store_true",
                         help="report the lines that disagree and write nothing; "
                              "exit 2 if any do. This mode, and only this mode, "
                              "records Step 12.6's verdict in the validation "
@@ -2109,6 +2143,14 @@ def _main(argv: list) -> int:
         return 1
     inputs = None
     try:
+        if args.review_ca_payments:
+            profile = _read_json(workspace / PROFILE_NAME, PROFILE_NAME)
+            try:
+                review = ca_payment_review(profile)
+            except (ValueError, TypeError) as e:
+                raise ReturnBuilderError(redact(e)) from None
+            print(json.dumps(review, indent=2))
+            return 0
         result, profile, ledger, tax_law, contents = load(workspace)
         if args.check:
             # The digests this verdict will be bound to, taken from THE BYTES
