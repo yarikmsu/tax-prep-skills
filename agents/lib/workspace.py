@@ -211,6 +211,7 @@ ABANDONED_NAME = ".tax-workspace.abandoned"
 LOCKED_CLIS = (
     "tax_law_fetcher",
     "rollover",
+    "prior_return",  # publishes a two-file archive seed plus its review audit
     "parse_records",
     "return_builder",
     "tie_out",

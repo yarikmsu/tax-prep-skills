@@ -512,7 +512,7 @@ def imported_changes(prior, current) -> list:
 
 def _main(argv=None) -> int:
     from agents.lib.workspace import (
-        add_workspace_argument, hold_workspace, resolve_workspace, resolve_under_workspace,
+        WorkspaceError, add_workspace_argument, hold_workspace, resolve_workspace, resolve_under_workspace,
     )
     parser = argparse.ArgumentParser(description=__doc__)
     add_workspace_argument(parser)
@@ -545,6 +545,9 @@ def _main(argv=None) -> int:
             write_secure(workspace / "summaries" / f"prior_return_{args.year}.md", review_report(result))
             print("Wrote the owner-only prior-return review workpaper in summaries/.")
         return 0
+    except WorkspaceError:
+        print("Prior-return import refused: workspace unavailable or busy.", file=sys.stderr)
+        return 2
     except Exception:
         # Source paths and free text are sensitive. Parser/JSON exceptions can
         # quote entire source tokens, so no exception text is emitted here.
