@@ -390,9 +390,115 @@ def _taxpayer_line(result: dict) -> str:
     return " and ".join(names)
 
 
+# The built-in font draws neither Δ nor →, which the YoY report uses; the PDF
+# says the same thing in words rather than printing empty boxes.
+_YOY_WORDS = (("|Δ|", "size of change"), ("Δ %", "Change %"), ("Δ", "Change"), ("→", "to"))
+
+
+def saved_yoy_report(workspace: Path, result: dict) -> "tuple[str | None, str | None]":
+    """The `yoy_diff --save` report for this return's year when one exists
+    and still describes this return, else None and, if one exists, why it
+    was left out. Its title years and the current-year column of every dollar
+    headline must be what this result.json gives, printed by the report's own
+    formatter: a report saved before the return last changed is left out
+    rather than printed beside figures it contradicts."""
+    from agents.lib import yoy_diff
+
+    meta = result.get("meta")
+    year = meta.get("tax_year") if isinstance(meta, dict) else None
+    if type(year) is not int:
+        return None, None
+    name = f"yoy_diff_{year - 1}_to_{year}.md"
+    left_out = (f"The saved year-over-year report (reviews/{name}) is left out: {{}}. "
+                "Re-run yoy_diff with --save to include it.")
+    # An optional input: whatever is wrong with it costs the section, never
+    # the PDF.
+    try:
+        path = resolve_under_workspace(f"reviews/{name}", workspace)
+        if not path.is_file():
+            return None, None
+        text = path.read_text(encoding="utf-8")
+    except WorkspaceError:
+        return None, left_out.format("it is not inside this workspace")
+    except (OSError, UnicodeDecodeError):
+        return None, left_out.format("it could not be read")
+    lines = text.splitlines()
+    why = None
+    if not lines or lines[0] != f"## YoY What-Changed — TY{year - 1} → TY{year}":
+        why = "its title names other years"
+    else:
+        table = [[cell.strip() for cell in line.strip().strip("|").split("|")]
+                 for line in lines if line.startswith("| ")]
+        header = next((row for row in table if row and row[0] == "Metric"), None)
+        values = yoy_diff._headline_values(result, None)
+        rows = {row[0]: row for row in table}
+        for label in ("AGI", "Taxable income", "Total tax", "Total payments", "Refund / (Owed)"):
+            wanted = yoy_diff._fmt_money(values[label])
+            if (header is None or f"TY{year}" not in header or label not in rows
+                    or len(rows[label]) != len(header)):
+                why = "its headline table is missing or malformed"
+                break
+            shown = rows[label][header.index(f"TY{year}")]
+            if shown != wanted:
+                why = f"it shows TY{year} {label} {shown}, and this return {wanted}"
+                break
+    if why:
+        return None, left_out.format(why)
+    return text, None
+
+
+def _yoy_story(text: str, styles, cell) -> list:
+    """The saved YoY markdown as flowables: its headings, notes, bullets and
+    pipe tables, the only constructs yoy_diff's renderer writes."""
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    for symbol, words in _YOY_WORDS:
+        text = text.replace(symbol, words)
+    story: list = []
+    table: "list[list[str]]" = []
+
+    def flush():
+        if not table:
+            return
+        width = 6.5 * inch
+        first = 2.2 * inch if len(table[0]) > 2 else 4.2 * inch
+        rest = (width - first) / max(len(table[0]) - 1, 1)
+        grid = Table([[cell(value) for value in row] for row in table],
+                     colWidths=[first] + [rest] * (len(table[0]) - 1), splitInRow=1, repeatRows=1)
+        grid.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ]))
+        story.extend([grid, Spacer(1, 8)])
+        table.clear()
+
+    for line in text.splitlines():
+        if line.startswith("| "):
+            row = [value.strip() for value in line.strip().strip("|").split("|")]
+            if not all(set(value) <= set("-:") for value in row):  # the markdown rule row
+                table.append(row)
+            continue
+        flush()
+        plain = line.replace("**", "")
+        if plain.startswith("## "):
+            story.append(Paragraph(_escape(plain[3:]), styles["Heading2"]))
+        elif plain.startswith("### "):
+            story.append(Paragraph(_escape(plain[4:]), styles["Heading3"]))
+        elif plain.startswith("- "):
+            story.append(cell("• " + plain[2:]))
+        elif plain.strip():
+            story.append(cell(plain.strip().strip("_")))
+    flush()
+    return story
+
+
 def build_story(result: dict, styles, *,
                 draft_reasons: "list[str] | None" = None,
-                notes: "list[str] | None" = None) -> list:
+                notes: "list[str] | None" = None,
+                yoy: "str | None" = None) -> list:
     """The flowables, in order. Separated from the write so a test can read the
     document's structure without a file, and so the null-safety rule above is
     checkable on `result_template.json` directly."""
@@ -414,7 +520,7 @@ def build_story(result: dict, styles, *,
         return Paragraph(_escape(text), styles[style])
 
     _register_fonts()
-    for name in ("Title", "Heading2", "Normal", "BodyText"):
+    for name in ("Title", "Heading2", "Heading3", "Normal", "BodyText"):
         styles[name].fontName = _FONT
     meta = result.get("meta")
     if not isinstance(meta, dict):
@@ -479,6 +585,10 @@ def build_story(result: dict, styles, *,
         body.append(table)
         body.append(Spacer(1, 10))
 
+    if yoy:
+        # Last: a comparison with another year, never a figure of this return.
+        body.extend(_yoy_story(yoy, styles, cell))
+
     # PAGE ONE, before any dollar figure: what this return does not cover. The
     # draft banner sits in the same box, because a reader who reads one box
     # reads this one.
@@ -542,7 +652,8 @@ def build_story(result: dict, styles, *,
 
 def render(result: dict, out_path: Path, *,
            draft_reasons: "list[str] | None" = None,
-           notes: "list[str] | None" = None) -> Path:
+           notes: "list[str] | None" = None,
+           yoy: "str | None" = None) -> Path:
     """Write the summary PDF, owner-only. Returns the path.
 
     Refuses a result carrying a non-finite number. `json.loads` admits the NaN
@@ -580,7 +691,7 @@ def render(result: dict, out_path: Path, *,
             "with sh agents/lib/run.sh -m pip install -r requirements.txt") from e
     styles = getSampleStyleSheet()
     story = build_story(result, styles, draft_reasons=list(draft_reasons or ()),
-                        notes=list(notes or ()))
+                        notes=list(notes or ()), yoy=yoy)
     meta = result.get("meta")
     year = meta.get("tax_year") if isinstance(meta, dict) else None
     # Built into a SECURED temp file beside the target and renamed
@@ -651,8 +762,11 @@ def _main(argv: list) -> int:
         # thing the moment the first line changed.
         out = resolve_under_workspace(
             args.out or f"Tax_Return_{year}_Summary.pdf", workspace)
+        # A saved year-over-year report rides along when it still describes
+        # this return; one that does not is named on page 1 instead (AA46).
+        yoy, stale = saved_yoy_report(workspace, result)
         render(result, out, draft_reasons=reasons if args.draft else None,
-               notes=checked.notes)
+               notes=checked.notes + ([stale] if stale else []), yoy=yoy)
         print(f"wrote {redact(out)}")
         return 0
     except (WorkspaceError, PdfRenderError, RolloverError, receipt.ReceiptError, OSError,

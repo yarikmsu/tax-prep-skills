@@ -307,7 +307,7 @@ Produce a deterministic year-over-year diff against the prior return. This step 
 4. **Exit code 0:** embed stdout verbatim as the "YoY What-Changed" block in the Step 4 report.
 5. **Exit code non-zero:** record `_YoY diff skipped: {stderr message}_` and proceed to Step 4.
 
-A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output. `--trend-years N` (1-3) adds columns for the archived years before the prior one, each read from `archive/{year}` and refused if missing; every Δ and the choice of movers stay prior year to this year. `--save` also writes the markdown, owner-only, to `reviews/yoy_diff_{prior_year}_to_{year}.md` as a standalone deliverable — never to `summaries/`, whose files later steps read as source documents.
+A power user can run the same command with `--threshold 500` for a finer-grained diff or `--json` for machine-readable output. `--trend-years N` (1-3) adds columns for the archived years before the prior one, each read from `archive/{year}` and refused if missing; every Δ and the choice of movers stay prior year to this year. `--save` also writes the markdown, owner-only, to `reviews/yoy_diff_{prior_year}_to_{year}.md` as a standalone deliverable — never to `summaries/`, whose files later steps read as source documents. `/tax-generate`'s summary PDF then includes it while it still matches the return.
 
 ### 3.6. PTET Election Opportunity (SALT-cap workaround)
 
