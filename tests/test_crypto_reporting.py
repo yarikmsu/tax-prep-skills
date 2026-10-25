@@ -2070,11 +2070,13 @@ def test_a_form_the_engine_cannot_model_refuses_unless_its_disposal_is_manual():
     entry, = result['broker_reporting']['manual_disposals']
     assert (entry['txn_id'], entry['form_ids'], entry['unmodeled_boxes'], entry['broker_proceeds']) == (
         'nft', ['da-2'], ['ordinary'], 260)
-    # FIFO still consumed its lot: the slice the preparer starts from.
-    assert [(r['date_acquired'], r['proceeds'], r['cost_basis']) for r in entry['fifo_rows']] == [
-        ('2023-02-01', 260, 200)]
+    # FIFO still consumed its lot: the slice the preparer starts from, with
+    # its term and its share of the form's proceeds.
+    assert [(r['date_acquired'], r['proceeds'], r['cost_basis'], r['holding_period'], r['broker_proceeds'])
+            for r in entry['fifo_rows']] == [('2023-02-01', 260, 200, 'long', 260)]
     assert result['crypto_summary']['manual_disposals'] == [
         {'account_id': 'A', 'txn_id': 'nft', 'broker_proceeds': 260,
+         'broker_proceeds_by_term': {'short': 0, 'long': 260},
          'fifo_cost_basis': {'short': 0, 'long': 200}}]
     assert result['caveats'][0].startswith('MANUAL: 1 disposal') and 'ordinary' in result['caveats'][0]
 
@@ -2163,10 +2165,10 @@ def test_a_manual_disposal_merged_in_part_or_without_a_box_fails_tie_out():
     assert not any('A/nft' in t for t in check()), check()
 
 
-def _two_term_manual_sale():
+def _two_term_manual_sale(new_lot=None):
     # 0.5 of a 2023 lot and 0.5 of a 2025 lot, sold together under one 260 form.
     tx = [event('A', 'old', 'buy', '2023-02-01', qty='0.5', usd=100),
-          event('A', 'new', 'buy', '2025-01-02', qty='0.5', usd=100),
+          new_lot or event('A', 'new', 'buy', '2025-01-02', qty='0.5', usd=100),
           event('A', 'nft', 'sell', '2025-04-01', qty='1', usd=260)]
     block = reporting(form(form_id='da-2', txn_id='nft', date_sold='2025-04-01', proceeds=260, ordinary=True))
     block['manual_disposals'] = [dict(account_id='A', txn_id='nft', evidence='nft-workpaper')]
@@ -2198,22 +2200,57 @@ def test_a_two_term_manual_sale_merged_as_one_long_term_row_fails_tie_out():
         {**long_slice, 'box': 'K', 'proceeds': 260, 'cost_basis': 200, 'gain_loss': 60, 'broker_proceeds': 260})
     targets = _manual_targets(result, 'A/nft')
     assert len(targets) == 1 and 'other holding periods than its lots' in targets[0], targets
-    assert '100.00 in Part I and 100.00 in Part II' in targets[0]
-    result['form_8949']['part_ii_long_term'][-1]['fifo_cost_basis'] = 200
-    assert 'other holding periods' in _manual_targets(result, 'A/nft')[0]
+    assert 'broker_proceeds must be 130.00 in Part I and 130.00 in Part II' in targets[0]
+
+
+def test_a_manual_slice_whose_box_names_the_other_part_fails_tie_out():
+    # Schedule D routes a row by its box: a short slice in Part I with a
+    # long-term box would reach line 9 while every per-part total held.
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'].append({**long_slice, 'box': 'K'})
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': 'K'})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'box routes it to the other part' in targets[0], targets
+    result['form_8949']['part_i_short_term'][-1]['box'] = 'H'
+    assert not _manual_targets(result, 'A/nft')
+
+
+def test_a_zero_basis_slice_cannot_change_its_term_unseen():
+    # A $0-basis short-term receive adds nothing to either term's FIFO basis;
+    # its broker share is what pins it to Part I.
+    result, long_slice, short_slice = _two_term_manual_sale(
+        event('A', 'fork', 'receive', '2025-01-02', qty='0.5', basis_usd=0, acquired='2025-01-02',
+              external_transfer_confirmed=True))
+    assert short_slice['cost_basis'] == 0 and short_slice['holding_period'] == 'short'
+    result['form_8949']['part_ii_long_term'] += [{**long_slice, 'box': 'K'}, {**short_slice, 'box': 'K'}]
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'other holding periods than its lots' in targets[0], targets
+
+
+def test_a_manual_sale_keeps_each_terms_fifo_basis():
+    # The broker shares in their parts, the basis moved between them.
+    result, long_slice, short_slice = _two_term_manual_sale()
+    result['form_8949']['part_ii_long_term'].append({**long_slice, 'box': 'K', 'fifo_cost_basis': 200})
+    result['form_8949']['part_i_short_term'].append({**short_slice, 'box': 'H', 'fifo_cost_basis': 0})
+    targets = _manual_targets(result, 'A/nft')
+    assert len(targets) == 1 and 'fifo_cost_basis must be 100.00 in Part I and 100.00 in Part II' in targets[0]
+    result['form_8949']['part_i_short_term'][-1]['fifo_cost_basis'] = None
+    assert 'without its fifo_cost_basis' in _manual_targets(result, 'A/nft')[0]
 
 
 def test_a_manual_entry_without_its_fifo_basis_is_malformed():
     result, long_slice, short_slice = _two_term_manual_sale()
     del result['crypto_summary']['manual_disposals'][0]['fifo_cost_basis']
     targets = _manual_targets(result, 'A/nft')
-    assert len(targets) == 1 and 'is malformed; copy it from the import' in targets[0], targets
+    assert len(targets) == 1 and 'is malformed or from an older import; re-run the import' in targets[0], targets
 
 
 def test_a_manual_fill_group_merges_its_slices_as_given():
+    # Two fills of one order at different prices: each slice's broker share
+    # follows its own proceeds, not its units.
     tx = [event('A', 'old', 'buy', '2023-01-01', '1', 100),
-          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '75'),
-          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '75')]
+          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '70'),
+          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '80')]
     block = {**reporting(form(txn_id='order1', proceeds=150, ordinary=True)),
              'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
                                   evidence='order-confirmation')],
@@ -2221,10 +2258,10 @@ def test_a_manual_fill_group_merges_its_slices_as_given():
     built = resolved(run(block, tx))
     slices = built['broker_reporting']['manual_disposals'][0]['fifo_rows']
     # Keyed by the group, as the summary and tie-out key it.
-    assert [r['txn_id'] for r in slices] == ['order1', 'order1']
+    assert [(r['txn_id'], r['broker_proceeds']) for r in slices] == [('order1', 70), ('order1', 80)]
     result = _merged(built)
     assert _manual_targets(result, 'A/order1')
-    result['form_8949']['part_ii_long_term'] += [{**r, 'box': 'K', 'broker_proceeds': 75} for r in slices]
+    result['form_8949']['part_ii_long_term'] += [{**r, 'box': 'K'} for r in slices]
     assert not _manual_targets(result, 'A/order1')
 
 

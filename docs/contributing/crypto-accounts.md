@@ -351,22 +351,26 @@ itself); prepare such an import externally. FIFO still consumes the
 disposal's lots, so later sales and inventory keep their FIFO basis. Its rows leave the
 import's Form 8949 rows, its Schedule D totals and its box routing, and
 `broker_reporting.manual_disposals` records its form ids, the unmodeled boxes,
-the forms' proceeds and the FIFO slices to start the preparation from. The
-output opens with a `MANUAL` caveat, and `crypto_summary.manual_disposals`
-lists the disposals.
+the forms' proceeds, and per holding period its share of those proceeds
+(`broker_proceeds_by_term`) and its FIFO basis (`fifo_cost_basis`). Its
+`fifo_rows` are the slices to start the preparation from, each with its
+`holding_period` and its `broker_proceeds` share, spread over the slices as a
+routed disposal's would be. The output opens with a `MANUAL` caveat, and
+`crypto_summary.manual_disposals` lists the disposals with the same figures.
 
-Prepare each by hand under the form's own instructions, starting from its
+Prepare each by hand under the form's own instructions, then merge each of its
 `fifo_rows` (keyed by the entry's own `txn_id`, a fill group's `group_id`
-included), then merge each slice as a Form 8949 row with its `account_id`,
-`txn_id`, `box`, `broker_proceeds` (its share of the form's proceeds) and
+included) as a Form 8949 row in its holding period's part, with its
+`account_id`, `txn_id`, a box of that part, `broker_proceeds` and
 `fifo_cost_basis`, adding the same amounts into each box's Schedule D digital
-row. `crypto_summary.manual_disposals` keeps each disposal's forms' proceeds
-and its FIFO basis per holding period, and tie-out fails until the merged
-rows' broker figures add to exactly the first, once, and their
-`fifo_cost_basis` puts exactly the second in Part I and Part II, whether or
-not the parse ledger still holds the form: one slice of a two-lot sale is not
-the sale, and a short-term slice merged into Part II is not its term. The
-money columns are the preparer's; the term is the lot's. An option-reviewed import cannot
+row. Tie-out fails, whether or not the parse ledger still holds the form,
+until every merged row's box routes to the part it sits in, the rows'
+broker figures add to the forms' proceeds, and per part their broker figures
+and FIFO basis are the recorded per-term figures. These are totals, so they
+catch a slice left out or merged twice, a short-term slice in Part II
+(including one with no basis) and a box from the other part; they do not
+check each slice row by row. The money columns are the preparer's; the term
+is the lot's. An option-reviewed import cannot
 also leave a disposal manual, since its tie-out rebuilds every account row from
 the source.
 

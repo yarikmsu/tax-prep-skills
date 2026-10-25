@@ -1435,6 +1435,37 @@ def _check_fill_group_evidence(groups, accounts, forms_by_txn, resolutions):
                                     'group-level resolutions are not supported')
 
 
+def _manual_record(account, txn, evidence, txn_rows, txn_forms) -> dict:
+    """The workpaper for a disposal left for hand preparation. Each FIFO
+    slice's term is fixed by its lot whatever the preparation does to the
+    money columns, so each slice carries its term and its share of the forms'
+    proceeds, spread as a routed disposal's would be, and the record keeps
+    both shares and the FIFO basis per term for tie-out."""
+    total = sum(form['proceeds'] for form in txn_forms)
+    cents = [_cents(row.proceeds) for row in txn_rows]
+    units = [row.quantity_exact or Fraction(0) for row in txn_rows]
+    weights = cents if any(cents) else units if any(units) else [1] * len(txn_rows)
+    shares = _spread(total, weights) if total else [0] * len(txn_rows)
+
+    def by_term(values):
+        return {period: _money(sum(value for row, value in zip(txn_rows, values)
+                                   if row.holding_period == period))
+                for period in ('short', 'long')}
+    return {
+        'account_id': account, 'txn_id': txn, 'evidence': evidence,
+        'form_ids': [form['form_id'] for form in txn_forms],
+        'unmodeled_boxes': sorted({box for form in txn_forms for box in form['unmodeled']}),
+        'broker_proceeds': _money(total / 100),
+        'broker_proceeds_by_term': by_term([share / 100 for share in shares]),
+        'fifo_cost_basis': by_term([row.cost_basis for row in txn_rows]),
+        # Keyed as the summary and tie-out key it, a fill group's group_id
+        # included, so the slices merge as given.
+        'fifo_rows': [{**_row_dict(replace(row, txn_id=txn, fifo_cost_basis=row.cost_basis,
+                                           broker_proceeds=_money(share / 100))),
+                       'holding_period': row.holding_period}
+                      for row, share in zip(txn_rows, shares)]}
+
+
 def _reconcile_broker_reporting(rows, tax_year, events, reporting):
     """Route filing-year account rows to Form 8949 boxes from explicit evidence.
 
@@ -1466,21 +1497,8 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
             # rows is routed or totalled here. The ledger still holds its
             # form, so tie-out fails until the hand-prepared row is merged.
             excluded.update(id(row) for row in txn_rows)
-            txn_forms = forms_by_txn.get((account, txn), [])
-            manual_records.append({
-                'account_id': account, 'txn_id': txn, 'evidence': manual[(account, txn)],
-                'form_ids': [form['form_id'] for form in txn_forms],
-                'unmodeled_boxes': sorted({box for form in txn_forms for box in form['unmodeled']}),
-                'broker_proceeds': _money(sum(form['proceeds'] for form in txn_forms) / 100),
-                # Each FIFO slice's term is fixed by its lot, whatever the
-                # hand preparation does to the money columns.
-                'fifo_cost_basis': {period: _money(sum(row.cost_basis for row in txn_rows
-                                                       if row.holding_period == period))
-                                    for period in ('short', 'long')},
-                # Keyed as the summary and tie-out key it, a fill group's
-                # group_id included, so the slices merge as given.
-                'fifo_rows': [_row_dict(replace(row, txn_id=txn, fifo_cost_basis=row.cost_basis))
-                              for row in txn_rows]})
+            manual_records.append(_manual_record(account, txn, manual[(account, txn)], txn_rows,
+                                                 forms_by_txn.get((account, txn), [])))
         elif declared is None:
             issues.append(_issue('declare whether this account received broker forms for the filing year',
                                  account, txn))
@@ -2197,6 +2215,7 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['crypto_summary']['manual_disposals'] = [
             {'account_id': entry['account_id'], 'txn_id': entry['txn_id'],
              'broker_proceeds': entry['broker_proceeds'],
+             'broker_proceeds_by_term': entry['broker_proceeds_by_term'],
              'fifo_cost_basis': entry['fifo_cost_basis']} for entry in manual]
         boxes = sorted({box for entry in manual for box in entry['unmodeled_boxes']})
         result['caveats'].insert(0, f'MANUAL: {len(manual)} disposal(s) carry a broker-form box this engine '
