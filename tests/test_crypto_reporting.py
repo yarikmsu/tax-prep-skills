@@ -700,6 +700,20 @@ def test_linked_fills_also_use_the_reviewed_1099b_regime(year):
     assert [(r['box'], r['gain_loss']) for r in rows(result)] == [('D', 20), ('D', 30)]
 
 
+def test_same_named_groups_and_fills_in_different_accounts_remain_independent():
+    tx = [*FILLS, *[{**e, 'account_id': 'B'} for e in FILLS]]
+    block = fill_reporting()
+    block['accounts']['B'] = dict(forms_received=True, evidence='broker-statement-B')
+    block['forms'].append(form(account_id='B', txn_id='order1', form_id='da-B'))
+    block['fill_groups'].append({**block['fill_groups'][0], 'account_id': 'B', 'evidence':'confirmation-B'})
+    result = resolved(run(block, tx))
+    assert {(r['account_id'], r['txn_id'], r['form_id']) for r in rows(result)} == {
+        ('A', 'fill1', 'da-1'), ('A', 'fill2', 'da-1'),
+        ('B', 'fill1', 'da-B'), ('B', 'fill2', 'da-B')}
+    assert result['broker_reporting']['schedule_d_routing']['K']['proceeds'] == 300
+    assert result['broker_reporting']['schedule_d_routing']['K']['gain'] == 100
+
+
 @pytest.mark.parametrize('change', [
     lambda b: b.update(fill_groups={}),
     lambda b: b['fill_groups'][0].update(txn_ids=['fill1']),

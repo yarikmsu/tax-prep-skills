@@ -1311,17 +1311,17 @@ def _fill_group_rows(reporting, by_txn, events):
     return grouped, expanded, records
 
 
-def _check_fill_group_evidence(groups, accounts, forms, resolutions):
+def _check_fill_group_evidence(groups, accounts, forms_by_txn, resolutions):
     for group in groups:
         account, alias, members = group['account_id'], group['group_id'], set(group['txn_ids'])
         if members.intersection(accounts.get(account, {}).get('not_reported', ())):
             raise CryptoImportError('A fill group contradicts a member declared not_reported')
-        matching = [form for form in forms if form['account_id'] == account]
-        if any(form['txn_id'] in members for form in matching):
+        if any((account, member) in forms_by_txn for member in members):
             raise CryptoImportError('A grouped fill cannot also have a direct-member broker form')
-        if not any(form['txn_id'] == alias for form in matching):
+        matching = forms_by_txn.get((account, alias), [])
+        if not matching:
             raise CryptoImportError('Every fill group must be linked by a broker form txn_id')
-        if any(form['txn_id'] == alias and form['form_id'] in resolutions for form in matching):
+        if any(form['form_id'] in resolutions for form in matching):
             # Quantity weights assume one disposal price. Different fills can
             # have different prices, fees and holding periods; spreading a
             # group-level correction by units could move gain between terms.
@@ -1343,10 +1343,10 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
         by_txn.setdefault((row.account_id, row.txn_id), []).append(row)
     by_txn, events, fill_groups = _fill_group_rows(reporting, by_txn, events)
     accounts, forms, resolutions = _reporting_inputs(reporting, events, regime, tax_year)
-    _check_fill_group_evidence(fill_groups, accounts, forms, resolutions)
     forms_by_txn: 'dict[tuple, list]' = {}
     for form in forms:
         forms_by_txn.setdefault((form['account_id'], form['txn_id']), []).append(form)
+    _check_fill_group_evidence(fill_groups, accounts, forms_by_txn, resolutions)
     issues = _stray_evidence(forms_by_txn, accounts, by_txn)
     if by_txn and regime is None:
         issues.append(_issue('Form 8949 routing needs the filing year (--year)' if tax_year is None else
