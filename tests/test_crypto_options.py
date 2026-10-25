@@ -391,3 +391,65 @@ def test_a_null_option_review_refuses_rather_than_reading_as_none():
     source['broker_reporting']['option_exercise_review'] = None
     with pytest.raises(C.CryptoImportError, match='never null'):
         compute(source)
+
+
+def _written_call_on_a_gross_form(proceeds=150, resolution='option_premium'):
+    # The call's 10 premium raises the amount realized to 160; the broker's
+    # gross 1099-DA shows the 150 the asset sold for.
+    source = inputs('written_call')
+    resolutions = {'da-1': dict(proceeds=resolution, evidence='call-premium-confirmation')} if resolution else {}
+    source['broker_reporting'].update(reporting(form(proceeds=proceeds), resolutions=resolutions))
+    return source
+
+
+def test_a_written_calls_unreflected_premium_is_code_e_in_column_g():
+    # i8949 (TY2023-2025): the form's proceeds go in column (d), and an option
+    # premium the form does not reflect is code E with the adjustment in (g).
+    row = only(resolved(compute(_written_call_on_a_gross_form())))
+    assert (row['proceeds'], row['adjustment_code'], row['adjustment'], row['gain_loss']) == (150, 'E', 10, 60)
+    report = resolved(compute(_written_call_on_a_gross_form()))['broker_reporting']
+    assert report['proceeds_above_forms'] == 0
+
+
+def test_the_premium_resolution_explains_no_more_than_the_reviewed_premium():
+    result = compute(_written_call_on_a_gross_form(proceeds=140))
+    assert result['crypto_summary']['reporting_complete'] is False
+    assert any('more than the 10.00 of reviewed written-call premium' in issue['reason']
+               for issue in result['broker_reporting']['unresolved'])
+    # Without a resolution the gap is unexplained, as before.
+    result = compute(_written_call_on_a_gross_form(resolution=None))
+    assert any('proceeds differ from the form' in issue['reason']
+               for issue in result['broker_reporting']['unresolved'])
+
+
+def test_the_premium_resolution_needs_a_reviewed_written_call():
+    # A purchased call's premium is basis, never unreflected proceeds.
+    source = inputs('purchased_call')
+    source['broker_reporting'].update(reporting(form(proceeds=140), resolutions={
+        'da-1': dict(proceeds='option_premium', evidence='call-premium-confirmation')}))
+    result = compute(source)
+    assert any('more than the 0.00 of reviewed written-call premium' in issue['reason']
+               for issue in result['broker_reporting']['unresolved'])
+
+
+@pytest.mark.parametrize('other_lot,refused', [
+    (('2024-01-01', '2024-07-01'), True),     # five months old when the put was bought, sold later
+    (('2024-08-01', None), True),             # bought after the put, before exercise
+    (('2023-09-01', '2024-01-15'), False),    # would be short-term at the put, but sold before it
+    (('2022-01-01', None), False),            # long-term when the put was bought
+])
+def test_a_purchased_put_refuses_while_any_same_asset_lot_takes_the_married_put_rule(other_lot, refused):
+    # The put (bought 2024-06-01) is exercised against the 2023-01-01 lot on
+    # 2025-03-01. Another BTC lot, in a second account, decides whether
+    # Pub. 550's married-put rule reaches any holding.
+    source = inputs('purchased_put')
+    bought, sold = other_lot
+    source['transactions'].append(event('B', 'other', 'buy', bought, usd=40))
+    if sold:
+        source['transactions'].append(event('B', 'other-sale', 'sell', sold, usd=45))
+    source['broker_reporting']['accounts']['B'] = dict(forms_received=False, evidence='statement-B')
+    if refused:
+        with pytest.raises(C.CryptoImportError, match='married-put'):
+            compute(source)
+    else:
+        resolved(compute(source))

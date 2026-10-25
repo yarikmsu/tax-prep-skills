@@ -175,6 +175,7 @@ from a form's absence in the import. `broker_reporting` sits beside
 |---|---|---|
 | Proceeds above the form | `proceeds: taxpayer_records` | (d) the correct, higher proceeds; reported as `proceeds_above_forms` |
 | Proceeds below the form, by no more than the recorded fee | `proceeds: transaction_costs` | (d) the form's proceeds; code E; the unreflected costs in (g) |
+| Proceeds above the form, by no more than a reviewed written call's premium | `proceeds: option_premium` | (d) the form's proceeds; code E; the unreflected premium in (g) |
 | Basis reported to the IRS differs | `basis: taxpayer_records` | (e) the reported basis; code B; (g) = reported − FIFO basis |
 | Basis shown but not reported differs | `basis: taxpayer_records` | (e) the FIFO basis; code B; (g) zero |
 | Holding period differs | `term: taxpayer_records` | the correct part; code T; (g) zero |
@@ -636,8 +637,12 @@ The adjustment precedes FIFO across all years. Acquired basis follows partial
 sales, spending, exchanges, transfers and remaining inventory. An option-caused
 disposal itself must be a direct USD `sell`; a `trade` also creates a new asset's
 basis and is outside this path. A purchased put additionally requires every
-sold lot to have been held long-term already on `option_opened`; otherwise its
-holding-period treatment requires external preparation. Opening inventory with
+sold lot to have been held long-term already on `option_opened`, and no lot of
+the same asset in any account to be held one year or less on that date or
+bought after it and no later than the exercise. Pub. 550's married-put rule
+makes such holdings short-term and restarts their holding period, which the
+engine does not model, so the import refuses and that case is prepared
+externally. Opening inventory with
 an externally supplied basis still needs the original exercise and transfer
 history to use this review path.
 
@@ -646,6 +651,11 @@ A direct purchased-put sale can reconcile a form's `net_proceeds: true`.
 That form cannot deduct the put cost again through code E. A gross-proceeds
 form can use the evidenced put cost plus separately recorded commissions to
 explain code E; the existing resolution and evidence are still required.
+A written call's premium raises the amount realized above a gross form's
+proceeds. The Form 8949 instructions (TY2023-2025) put the form's figure in
+column (d) and an option premium the form does not reflect in (g) under code
+E, so `proceeds: option_premium` does that, for no more than the reviewed
+premium; `taxpayer_records` still enters the higher figure in (d) instead.
 Other unsupported filled boxes refuse. Grouped option-caused disposals refuse
 pending external premium allocation; ordinary later sales from an
 option-acquired lot may use reviewed fill groups.

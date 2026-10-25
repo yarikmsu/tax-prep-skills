@@ -893,7 +893,7 @@ _FORM_UNSUPPORTED_BY_TYPE = {
     '1099-DA': frozenset({'net_proceeds', 'qof',
                           'optional_method', 'primary_sale_proceeds', 'cusip'}),
 }
-_RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs'},
+_RESOLUTIONS = {'proceeds': {'taxpayer_records', 'transaction_costs', 'option_premium'},
                 'basis': {'taxpayer_records'}, 'term': {'taxpayer_records'}}
 
 
@@ -1110,9 +1110,11 @@ def _form_groups(rows, forms):
     return groups, None
 
 
-def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> int:
+def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left,
+                    premium_left=0) -> 'tuple[int, int]':
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
-    recorded fee still left to explain a later form's code E."""
+    recorded fee and reviewed written-call premium still left to explain a
+    later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
         t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
@@ -1127,9 +1129,18 @@ def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left) -> 
             t.codes.add('E')
             fee_left += gap
             t.proceeds, t.costs = _spread(form['proceeds'], weights), _spread(gap, weights)
+    elif gap > 0 and resolution.get('proceeds') == 'option_premium':
+        t.used.add('proceeds')
+        if gap > premium_left:
+            t.reasons.append(f'FIFO proceeds exceed the form by {gap / 100:,.2f}, more than the '
+                             f'{premium_left / 100:,.2f} of reviewed written-call premium left to explain it')
+        else:  # i8949 code E: the form's proceeds in (d), the unreflected premium in (g)
+            t.codes.add('E')
+            premium_left -= gap
+            t.proceeds, t.costs = _spread(form['proceeds'], weights), _spread(gap, weights)
     elif gap:
         t.reasons.append(f'proceeds differ from the form by {gap / 100:+,.2f}')
-    return fee_left
+    return fee_left, premium_left
 
 
 def _treat_basis(t, form, gap, weights, fifo_basis, resolution, split_cent) -> None:
@@ -1205,6 +1216,7 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     if event.get('option_cost') and len({form['net_proceeds'] for form in forms}) > 1:
         return _unpaired(rows, forms, 'mixed gross/net option forms require external preparation')
     fee_left = event['fee'] + (event.get('option_cost', 0) if not any(form['net_proceeds'] for form in forms) else 0)
+    premium_left = event.get('option_premium_received', 0)
     routed: 'dict[int, Form8949Row]' = {}
     records: 'list[dict]' = []
     problems: 'list[tuple]' = []
@@ -1223,8 +1235,8 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
         resolution = resolutions.get(form['form_id'], {})
         weights = [row.quantity_exact for row in group]
         t = _FormTreatment(fifo_proceeds, fifo_basis, [0] * len(group), [0] * len(group), [set() for _ in group])
-        fee_left = _treat_proceeds(t, form, sum(fifo_proceeds) - form['proceeds'], weights, resolution,
-                                   proceeds_cent, fee_left)
+        fee_left, premium_left = _treat_proceeds(t, form, sum(fifo_proceeds) - form['proceeds'], weights,
+                                                 resolution, proceeds_cent, fee_left, premium_left)
         basis_gap = 0 if form['cost_basis'] is None else form['cost_basis'] - sum(fifo_basis)
         _treat_basis(t, form, basis_gap, weights, fifo_basis, resolution, basis_cent)
         _treat_term(t, form, group, basis_gap, resolution)
@@ -1542,7 +1554,12 @@ def _apply_option_premiums(transactions, raw_review, account_mode, tax_year):
                          unsupported_items=[], source_url=_OPTION_SOURCES[tax_year], evidence=evidence, events=records)
 
 
-def _check_put_holding_periods(rows, review):
+def _check_put_holding_periods(rows, review, assets=None, inventory=None):
+    """A purchased put's sale keeps its lots' long-term holding period only
+    when no same-asset lot was held one year or less when the put was bought,
+    or bought before it was exercised: Pub. 550's married-put rule makes such
+    holdings short-term and resets their holding period. The engine models
+    neither, so it refuses rather than file a wrong term for any of them."""
     if review is None:
         return
     for event in review['events']:
@@ -1553,6 +1570,44 @@ def _check_put_holding_periods(rows, review):
         if not selected or any(row.needs_basis or row.date_acquired == 'UNKNOWN' or
                 _holding_period(datetime.date.fromisoformat(row.date_acquired), opened) != 'long' for row in selected):
             raise CryptoImportError('Purchased put needs external holding-period treatment: every disposed lot must already be long-term when the put was bought')
+        if assets is None:
+            continue
+        asset = assets[(event['account_id'], event['txn_id'])]
+        exercised = datetime.date.fromisoformat(selected[0].date_sold)
+        if _married_put_lots(rows, assets, inventory or {}, asset, opened, exercised):
+            raise CryptoImportError('Purchased put needs external holding-period treatment: a same-asset lot in some '
+                                    'account was held one year or less when the put was bought, or bought before '
+                                    'it was exercised (Pub. 550 married-put rule)')
+
+
+def _married_put_lots(rows, assets, inventory, asset, opened, exercised) -> bool:
+    """Whether any lot of `asset`, in any account, is one the married-put rule
+    reaches: still held on `opened` with a short-term holding period then, or
+    acquired after `opened` and no later than `exercised`. A lot is its slices
+    across the rows plus what inventory still holds, keyed by its origin."""
+    lots: 'dict[tuple, list]' = {}
+    for row in rows:
+        if assets.get((row.account_id, row.txn_id)) != asset:
+            continue
+        key = (row.origin_account_id, row.origin_txn_id, row.date_acquired)
+        entry = lots.setdefault(key, [Fraction(0), Fraction(0)])
+        entry[0] += row.quantity_exact or 0
+        if datetime.date.fromisoformat(row.date_sold) < opened:
+            entry[1] += row.quantity_exact or 0
+    for held in inventory.values():
+        for lot in held.get(asset, []):
+            key = (lot['origin_account_id'], lot['origin_txn_id'], lot['acquired_tax_date'] or 'UNKNOWN')
+            exact = lot['quantity_exact']
+            lots.setdefault(key, [Fraction(0), Fraction(0)])[0] += Fraction(int(exact['numerator']), int(exact['denominator']))
+    for (_, _, acquired), (total, sold_before) in lots.items():
+        if acquired == 'UNKNOWN':
+            return True
+        bought = datetime.date.fromisoformat(acquired)
+        if opened < bought <= exercised:
+            return True
+        if bought <= opened and total > sold_before and _holding_period(bought, opened) != 'long':
+            return True
+    return False
 
 
 def _tax_calendar_review(raw):
@@ -1866,7 +1921,11 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
     else:
         rows_all = match_lots(acquisitions, disposals)
-    _check_put_holding_periods(rows_all, reviewed_options)
+    _check_put_holding_periods(
+        rows_all, reviewed_options,
+        assets={(raw['account_id'], raw['txn_id']): txn.asset for raw, txn in zip(transactions, txns)}
+        if account_mode else None,
+        inventory=account_report['inventory'] if account_report else None)
     # FIFO orders by instant while each row's dates are read in its own
     # record's offset, so records exported in different offsets can fund a
     # sale from a lot whose printed acquisition date is later than the sale's.
@@ -1912,6 +1971,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
             record.update(option_treatment=event['treatment'], option_txn_id=event['txn_id'])
             if event['treatment'] == 'purchased_put':
                 record['option_cost'] = _form_cents(event['premium_usd'], 'reviewed put cost')
+            elif event['treatment'] == 'written_call':
+                record['option_premium_received'] = _form_cents(event['premium_usd'], 'reviewed call premium')
         rows, reporting = _reconcile_broker_reporting(rows, tax_year, events, broker_reporting)
     else:
         if broker_reporting is not None:
