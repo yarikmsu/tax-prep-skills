@@ -6233,6 +6233,12 @@ class TestTheBacklogSaysWhatIsOpen:
     # to the engine.
     ANY_ROW = re.compile(r"^\| ([^|]+?) \| ([^|]*) \| ([^|]*) \|$", re.M)
     PR = re.compile(r"#(\d+)")
+    # A shipped row's pull request, in this repository's numbering or (with
+    # `old `) the private repository's, which restarted at #1 on 2026-10-10.
+    NUMBERED_PR = re.compile(r"(old )?#(\d+)")
+    # The rewritten private main the recreated repository started from: its
+    # history holds every merge in the old numbering, and only those.
+    RECREATED_FROM = "0a05d0c4aaec308dd3b286b140594cd95f84585d"
 
     def _text(self):
         return self.BACKLOG.read_text(encoding="utf-8")
@@ -6323,14 +6329,26 @@ class TestTheBacklogSaysWhatIsOpen:
         as a shipped item. The squash-merge convention puts `(#N)` at the end of
         the subject, which is what makes this answerable from the clone.
         """
-        subjects = subprocess.run(
-            ["git", "log", "--pretty=%s"], cwd=REPO, capture_output=True,
-            text=True, check=True).stdout
-        merged = set(re.findall(r"\(#(\d+)\)$", subjects, re.M))
-        assert len(merged) >= 100, (
-            f"only {len(merged)} merge subjects parsed — this clone is shallow "
-            "or the convention changed, and the assertion below would pass on "
-            "an empty set")
+        def merged_in(revisions):
+            subjects = subprocess.run(
+                ["git", "log", "--pretty=%s", revisions], cwd=REPO, capture_output=True,
+                text=True, check=True).stdout
+            return set(re.findall(r"\(#(\d+)\)$", subjects, re.M))
+
+        # One set per numbering, split at the recreation (AA56). A single set
+        # let a row naming a new number that never merged pass on an old merge
+        # carrying it, and since #51 every new number has an old namesake.
+        found = subprocess.run(["git", "cat-file", "-e", f"{self.RECREATED_FROM}^{{commit}}"],
+                               cwd=REPO, capture_output=True)
+        assert found.returncode == 0, (
+            "the recreation commit is gone — history was rewritten again; "
+            "re-anchor RECREATED_FROM to the commit the new numbering starts after")
+        merged = {"old": merged_in(self.RECREATED_FROM),
+                  "new": merged_in(f"{self.RECREATED_FROM}..HEAD")}
+        assert len(merged["old"]) >= 100 and len(merged["new"]) >= 40, (
+            f"only {len(merged['old'])} old and {len(merged['new'])} new merge subjects "
+            "parsed — this clone is shallow or the convention changed, and the "
+            "assertion below would pass on an empty set")
 
         rows = [(i, prs) for i, prs, _ in self.ANY_ROW.findall(
             self._shipped_section()) if not set(i) <= set("-| ")
@@ -6347,12 +6365,14 @@ class TestTheBacklogSaysWhatIsOpen:
 
         missing = {}
         for item, prs in rows:
-            unmerged = sorted(set(self.PR.findall(prs)) - merged, key=int)
+            unmerged = sorted({f"{old}#{number}" for old, number in self.NUMBERED_PR.findall(prs)
+                               if number not in merged["old" if old else "new"]})
             if unmerged:
                 missing[item] = unmerged
         assert not missing, (
-            f"{missing} name pull requests with no merge commit in this "
-            "repository — a shipped row is a claim that something landed")
+            f"{missing} name pull requests with no merge commit in their own "
+            "numbering — a shipped row is a claim that something landed, and "
+            "`old #N` is the private repository's, `#N` this one's")
 
     def test_the_open_list_agrees_with_the_plan_and_the_declined_list(self):
         """Rule 2 says an id is in Open or in the shipped index. The file has
