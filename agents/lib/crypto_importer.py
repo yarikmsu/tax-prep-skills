@@ -1721,9 +1721,16 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
     else:
         rows_all = match_lots(acquisitions, disposals)
-    if reviewed_calendar and any(
-            row.date_acquired != 'UNKNOWN' and row.date_acquired > row.date_sold for row in rows_all):
-        raise CryptoImportError('Reviewed calendar leaves an acquisition date after its disposal; reconcile all account dates')
+    # FIFO orders by instant while each row's dates are read in its own
+    # record's offset, so records exported in different offsets can fund a
+    # sale from a lot whose printed acquisition date is later than the sale's.
+    inverted = next((row for row in rows_all
+                     if row.date_acquired != 'UNKNOWN' and row.date_acquired > row.date_sold), None)
+    if inverted is not None:
+        where = (f' (sale {inverted.account_id}/{inverted.txn_id}, lot {inverted.origin_account_id}/'
+                 f'{inverted.origin_txn_id})' if inverted.txn_id else '')
+        raise CryptoImportError(f'An acquisition date falls after its disposal{where}: the records are read in '
+                                'different UTC offsets; restate them in one calendar and reconcile all account dates')
     year_moves = []
     if reviewed_calendar:
         _check_reviewed_calendar(rows_all, transactions, correction_records, reviewed_calendar)

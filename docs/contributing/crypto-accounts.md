@@ -62,6 +62,9 @@ reuse the moved coins. Destination FIFO orders by original acquisition time.
 
 ISO timestamps with offsets are ordered in UTC; dates on forms and year filters
 retain the declared source calendar dates. Confirm the export's date convention.
+Records in different offsets can therefore fund a sale from a lot whose own
+calendar dates it after the sale; such a row refuses, naming the sale and the
+lot, until both are restated in one calendar (AA85).
 At equal timestamps, input order within each account is the caller's declared
 reviewed order; linked sends precede their receives across accounts. If exports
 lack reliable ordering, obtain sequence evidence before importing. Optional
@@ -504,10 +507,10 @@ midnight or choose a timestamp merely to match a form or obtain a preferred year
 
 FIFO still orders the actual instants. The reviewed date also controls
 acquisition holding periods, income and filing-year selection. Reconcile the
-original acquisition dates as well: a known acquisition date after its
-disposal refuses, and missing inventory still blocks. An unused calendar
-review, a changed instant, an unconfirmed UTC assumption, an offset outside
--12:00 to +14:00 or an unreviewed form year refuses. Preserve
+original acquisition dates as well: as on every import, a known acquisition
+date after its disposal refuses, and missing inventory still blocks. An unused
+calendar review, a changed instant, an unconfirmed UTC assumption, an offset
+outside -12:00 to +14:00 or an unreviewed form year refuses. Preserve
 `tax_calendar_review` and the before/after `source_corrections` with the
 secured import workpaper. Source arrays and exports remain unchanged.
 
