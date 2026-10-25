@@ -8,6 +8,7 @@ basis-not-reported form takes the correct basis in (e) with -0- in (g).
 import copy
 import json
 import re
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -2469,7 +2470,7 @@ def test_an_optional_aggregate_must_name_a_supported_method(method):
 
 @pytest.mark.parametrize('date', ['2024-12-31', '2026-01-05'])
 def test_an_aggregates_printed_date_sold_falls_in_the_filing_year(date):
-    with pytest.raises(C.CryptoImportError, match='a date sold it prints falls in that year'):
+    with pytest.raises(C.CryptoImportError, match='a date sold it prints must fall in that year'):
         run(aggregate_reporting(date_sold=date), USDC)
 
 
@@ -2488,3 +2489,57 @@ def test_the_cent_moves_on_the_sale_whose_rounding_went_furthest_the_other_way()
                                          txn_ids=list(prices), evidence='usdc-annual-statement')]
     sold = {r['txn_id']: r['proceeds'] for r in rows(resolved(run(block, tx)))}
     assert sold['a'] == 1.00 and sorted([sold['b'], sold['c']]) == [1.00, 1.01]
+
+
+def test_rounded_once_leaves_a_gap_when_a_sales_rows_miss_its_own_rounding():
+    # The one-cent-per-sale bound rests on each sale's rows adding to its own
+    # rounded net; rows that do not would be moved off the form, so the gap
+    # stays a reason instead.
+    from types import SimpleNamespace
+    rows_ = [SimpleNamespace(txn_id='a', proceeds=1.03, holding_period='long'),
+             SimpleNamespace(txn_id='b', proceeds=1.00, holding_period='long')]
+    event_ = {'member_nets': {'a': Fraction(1), 'b': Fraction(1)}}
+    assert C._rounded_once(rows_, event_, 200) is None
+    rows_[0].proceeds = 1.00
+    assert C._rounded_once(rows_, event_, 200) == [100, 100]  # no gap to spread, no change
+    # 1.005 posts 1.01 and 0.995 posts 1.00 against the exact 2.000: the tie
+    # goes to the sale listed first.
+    event_['member_nets'].update(a=Fraction(1005, 1000), b=Fraction(995, 1000))
+    rows_[0].proceeds = 1.01
+    assert C._rounded_once(rows_, event_, 200) == [100, 100]
+
+
+def test_rounded_once_scales_with_the_number_of_sales():
+    # A year's aggregate can hold tens of thousands of sales; one pass over
+    # the rows per sale was quadratic. Each sale rounds up here, so half of
+    # them move: the result is checked, not timed.
+    from types import SimpleNamespace
+    count = 40000
+    rows_ = [SimpleNamespace(txn_id=f's{i}', proceeds=1.01, holding_period='short') for i in range(count)]
+    nets = {f's{i}': Fraction(1005, 1000) for i in range(count)}
+    moved = C._rounded_once(rows_, {'member_nets': nets}, round(count * 100.5))
+    assert sum(moved) == round(count * 100.5) and sorted(set(moved)) == [100, 101]
+
+
+def test_a_fill_group_whose_rows_add_to_nothing_does_not_divide_by_zero():
+    # A fill whose fee exceeds its amount: the fills' cents add to zero, and
+    # the form's figure is spread by units instead.
+    tx = [event('A', 'lot', 'buy', '2023-01-01', qty='2', usd=10),
+          event('A', 'f1', 'sell', '2025-03-01', qty='1', usd='1.00'),
+          event('A', 'f2', 'sell', '2025-03-01', qty='1', usd='0.50', fee_usd='1.50')]
+    block = {**reporting(form(txn_id='grp', quantity='2', proceeds='0.00')),
+             'fill_groups': [dict(account_id='A', group_id='grp', txn_ids=['f1', 'f2'], evidence='e')]}
+    result = run(block, tx)
+    assert [r['broker_proceeds'] for r in rows(result)] == [0, 0]
+
+
+def test_a_manual_fill_group_whose_rows_add_to_nothing_does_not_divide_by_zero():
+    tx = [event('A', 'lot', 'buy', '2023-01-01', qty='2', usd=10),
+          event('A', 'f1', 'sell', '2025-03-01', qty='1', usd='1.00'),
+          event('A', 'f2', 'sell', '2025-03-01', qty='1', usd='0.50', fee_usd='1.50')]
+    # A manual form is not reconciled, so its 0.02 stands: spread by units.
+    block = {**reporting(form(txn_id='grp', quantity='2', proceeds='0.02', ordinary=True)),
+             'fill_groups': [dict(account_id='A', group_id='grp', txn_ids=['f1', 'f2'], evidence='e')],
+             'manual_disposals': [dict(account_id='A', txn_id='grp', evidence='w')]}
+    entry, = resolved(run(block, tx))['broker_reporting']['manual_disposals']
+    assert [r['broker_proceeds'] for r in entry['fifo_rows']] == [0.01, 0.01]

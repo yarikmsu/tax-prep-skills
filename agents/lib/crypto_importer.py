@@ -1086,7 +1086,7 @@ def _form_input(label, form, events, accounts, regime, tax_year, manual=None) ->
         raise CryptoImportError(f'{label}.date_sold must be YYYY-MM-DD') from None
     if aggregate is not None and date_sold is not None and date_sold.year != tax_year:
         raise CryptoImportError(f"{label} is an optional aggregate for TY{tax_year}; a date sold it prints "
-                                'falls in that year')
+                                'must fall in that year')
     quantity = _exact(form['quantity'], f'{label}.quantity')
     if quantity <= 0:
         raise CryptoImportError(f'{label}.quantity must be positive')
@@ -1274,7 +1274,9 @@ def _routed_rows(form, group, t, regime, fifo_basis) -> 'dict[int, Form8949Row]'
     # Allocate the form's figure in proportion to each row's own column (d),
     # which is the form's figure itself wherever the form reconciles: fills of
     # one order sell at different prices, so units would misattribute it.
-    weights = t.proceeds if any(t.proceeds) else [row.quantity_exact for row in group]
+    # A fill whose fee exceeds its amount can leave rows that add to nothing;
+    # units are the weights then.
+    weights = t.proceeds if sum(t.proceeds) else [row.quantity_exact for row in group]
     broker_proceeds = _spread(form['proceeds'], weights)
     for i, row in enumerate(group):
         adjustment = t.costs[i] + t.corrections[i]
@@ -1299,15 +1301,22 @@ def _rounded_once(rows, event, target) -> 'list[int] | None':
             or target != _cents(sum(nets.values()))):
         return None
     cents = [_cents(row.proceeds) for row in rows]
+    by_sale: 'dict[str, list[int]]' = {}
+    for i, row in enumerate(rows):
+        by_sale.setdefault(row.txn_id, []).append(i)
+    posted = {txn: sum(cents[i] for i in by_sale.get(txn, ())) for txn in nets}
+    # Each sale's rows add to its own rounded net, within half a cent of it,
+    # and the form is within another half of the exact total, so the gap is at
+    # most (sales + 1) / 2 cents and a cent apiece always suffices. That rests
+    # on the first fact, so a sale whose rows do not add to it stays a gap.
+    if any(posted[txn] != _cents(nets[txn]) for txn in nets):
+        return None
     gap = target - sum(cents)
-    posted = {txn: sum(c for row, c in zip(rows, cents) if row.txn_id == txn) for txn in nets}
     step = 1 if gap > 0 else -1
-    # Each sale's own rounding is within half a cent and the form's within
-    # another half, so the gap is at most (sales + 1) / 2 cents: a cent apiece
-    # always suffices.
+    # Ties go to the sale listed first.
     order = sorted(nets, key=lambda txn: -step * (nets[txn] * 100 - posted[txn]))
     for txn in order[:abs(gap)]:
-        i = max((i for i, row in enumerate(rows) if row.txn_id == txn), key=lambda i: cents[i])
+        i = max(by_sale[txn], key=lambda i: cents[i])
         cents[i] += step
     return cents
 
@@ -1331,8 +1340,9 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     split = len(forms) > 1
     proceeds_cent = split and sum(form['proceeds'] for form in forms) == sum(_cents(row.proceeds) for row in rows)
     # A single disposal's rows already add to its once-rounded total, so this
-    # can move only a fill group's cents, and only within one holding period:
-    # cents moved between short and long rows would move gain between parts.
+    # can move only a group's cents (a fill group's or an optional
+    # aggregate's), and only within one holding period: cents moved between
+    # short and long rows would move gain between parts.
     rounded_once = _rounded_once(rows, event, forms[0]['proceeds']) if len(forms) == 1 else None
     basis_cent = split and (all(form['reported'] for form in forms) and sum(
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
@@ -1542,7 +1552,7 @@ def _broker_shares(txn_rows, txn_forms) -> 'list[int]':
         total = form['proceeds'] if form is not None else sum(f['proceeds'] for f in txn_forms)
         cents = [_cents(row.proceeds) for row in group]
         units = [row.quantity_exact or Fraction(0) for row in group]
-        weights = cents if any(cents) else units if any(units) else [1] * len(group)
+        weights = cents if sum(cents) else units if sum(units) else [1] * len(group)
         shares.update(zip(map(id, group), _spread(total, weights) if total else [0] * len(group)))
     return [shares[id(row)] for row in txn_rows]
 

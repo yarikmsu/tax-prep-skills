@@ -318,8 +318,8 @@ exception: each fill rounds to cents on its own, while a broker reporting the
 order rounds it once. A single form whose proceeds equal the fills' exact
 total, net of fees, rounded once takes the form's figure when every fill's
 rows share one holding period: the fills whose own rounding fell furthest the
-other way each move one cent, on their largest row, so no fill moves more than
-a cent from its own figure. Moving those cents between short- and long-term
+other way each move one cent, on their largest row (a tie going to the fill
+listed first), so no fill moves more than a cent from its own figure. Moving those cents between short- and long-term
 rows would move gain between parts, so a mixed-term group, and any other
 difference, stays unresolved. Group-level
 `resolutions` are refused: spreading an adjustment across differently priced
