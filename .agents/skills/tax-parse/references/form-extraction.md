@@ -20,6 +20,10 @@ Note: Foreign tax paid in Box 7 → feeds Form 1116
 
 ### 1099-B Extraction
 Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, boxes 14-16 (state, state tax withheld)
+For TY2023-2024 crypto, also capture boxes 1a-1g, 2-13, 14-16 and CUSIP, keeping blanks explicit.
+Use the reviewed 1099-B input table in `docs/contributing/crypto-accounts.md`:
+an older summary that omitted a special-treatment box must be re-read from
+the form before `/tax-parse-crypto` can route it.
 Note Box type (Form 8949 checkboxes):
 A (short-term, basis reported to IRS), B (short-term, basis NOT reported to IRS),
 C (short-term, no 1099-B received),

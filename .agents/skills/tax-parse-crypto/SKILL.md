@@ -259,11 +259,16 @@ with its evidence; never infer "no form" from a form missing in `documents/`.
 Enter one `forms` entry per reported transaction, linked by `txn_id` to the
 disposal it reports, copying every box and a blank one as null: the importer
 refuses a missing key rather than read it as blank. `asset` is the exception:
-it holds the import's own symbol for the asset box 1b names ("BTC", not
-"Bitcoin"), which must equal the disposal's exactly. A 1099-DA summary that does
+it holds the import's own symbol for the described asset (1099-DA box 1b,
+1099-B box 1a: "BTC", not "Bitcoin"), which must equal the disposal's exactly. A 1099-DA summary that does
 not show boxes 3a, 3b, 8, 11a, 11c and CUSIP never read them: re-read those from
 the form, never copy one as blank from that summary. Box 3a's "Gross proceeds"
-has no key: copy only `net_proceeds`. Add a `resolutions` entry
+has no key: copy only `net_proceeds`. A TY2023-2024 1099-B summary that omits
+boxes 3, 6, 8-11, 13 or CUSIP likewise cannot establish blanks: re-read them
+from the form and copy every key in the reviewed 1099-B table. A checked
+collectibles or QOF box, net proceeds, an identifier, a nonzero contract amount
+or barter receipts refuses the spot-crypto import. Box 6's gross checkbox
+cannot clear the option-exercise screen. Add a `resolutions` entry
 only when the user confirms, with evidence, which figure is correct.
 Immediately after writing, run
 `sh agents/lib/run.sh -m agents.lib.secure_fs crypto_transactions.json`.

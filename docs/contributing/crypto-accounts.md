@@ -143,8 +143,8 @@ from a form's absence in the import. `broker_reporting` sits beside
   time zone, and no UTC offset reaches a full day. The row keeps the import's
   date; the workpaper records both.
   Every key is required. Each key's 1099-DA box is in
-  [the reviewed input table](#reviewed-form-1099-da-inputs-aa55); the 1099-B
-  boxes are given here. `cost_basis` and `term` are null where the form leaves
+  [1099-DA input table](#reviewed-form-1099-da-inputs-aa55) or
+  [1099-B input table](#reviewed-form-1099-b-inputs-aa61). `cost_basis` and `term` are null where the form leaves
   them blank (1099-B box 1e and box 2), never absent, because an omitted term
   would pass a form whose box disagrees with FIFO without code T.
   `basis_reported_to_irs` is 1099-B box 12. A disposal split across forms must
@@ -156,10 +156,10 @@ from a form's absence in the import. `broker_reporting` sits beside
   null or false when blank: `ordinary` (1099-B box 2),
   `accrued_market_discount` (1f), `wash_sale_loss_disallowed` (1g)
   and `loss_not_allowed` (box 7). Filled in, each refuses: report that
-  transaction manually. A 1099-DA carries more under the same rule, each in
-  the table below (AA59). The 1099-B's own boxes are unreviewed (AA61), so it
-  carries none, and a form naming a key outside its type's set is refused.
-  Backup and state withholding (1099-DA boxes 4 and 16) belong to the parse
+  transaction manually. Each form carries additional required keys under the
+  same rule, listed in its reviewed table below. A form naming a key outside
+  its type's set is refused.
+  Backup and state withholding (both forms' boxes 4 and 16) belong to the parse
   ledger, not here.
 - **resolutions** — a difference stays unresolved until a resolution with its
   own evidence names the treatment. Each keeps the FIFO gain in column (h):
@@ -246,6 +246,59 @@ like with like; the documented `proceeds_above_forms`
 excess comes off the result side, which it can only lower, and the key alone
 meets the reporting gate. A non-zero no-form row keeps that tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
+
+### Reviewed Form 1099-B inputs (AA61)
+
+Live review on 2026-10-24 compared every box of the
+[TY2023 form](https://www.irs.gov/pub/irs-prior/f1099b--2023.pdf) with its
+[TY2023 instructions](https://www.irs.gov/pub/irs-prior/i1099b--2023.pdf), and the
+[TY2024 form](https://www.irs.gov/pub/irs-prior/f1099b--2024.pdf) with its
+[TY2024 instructions](https://www.irs.gov/pub/irs-prior/i1099b--2024.pdf).
+The numbered meanings agree; box 9 names the preceding year-end and box 10
+the covered year-end. This is the spot-crypto import contract, not a general
+securities or barter importer. Required unsupported keys must be copied as
+null, false or 0 when blank; a filled value refuses the import, including a
+negative contract amount. An older summary cannot establish those blanks.
+
+| Input key | TY2023 box | TY2024 box | Reviewed meaning and treatment |
+|---|---|---|---|
+| `asset` | 1a | 1a | Match the described property to the imported symbol. |
+| `quantity` | 1a | 1a | Units within the description; reconcile to the disposal. |
+| `date_sold` | 1c | 1c | Broker sale date; reconcile under the existing date rule. |
+| `proceeds` | 1d | 1d | Reported sale amount; reconcile to the imported proceeds. |
+| `cost_basis` | 1e | 1e | Reported basis, null when blank; never invent zero. |
+| `accrued_market_discount` | 1f | 1f | Debt adjustment; nonzero refuses. |
+| `wash_sale_loss_disallowed` | 1g | 1g | Broker loss adjustment; nonzero refuses. |
+| `term` | 2 | 2 | Broker holding-period classification; reconcile against FIFO. |
+| `ordinary` | 2 | 2 | Ordinary treatment; checked refuses. |
+| `collectibles` | 3 | 3 | Collectible treatment is outside the capital-gain pricing here; checked refuses. |
+| `qof` | 3 | 3 | Opportunity-fund disposition; checked refuses. |
+| `net_proceeds` | 6 | 6 | Option-premium reduction; checked refuses. Gross has no key: it cannot establish that no option affected basis or proceeds. The option-exercise capability screen still applies. |
+| `loss_not_allowed` | 7 | 7 | Broker-disallowed loss; checked refuses. |
+| `contract_profit_loss` | 8 | 8 | Closed-contract result; nonzero refuses. |
+| `prior_unrealized_profit_loss` | 9 | 9 | Prior year-end open-contract result; nonzero refuses. |
+| `current_unrealized_profit_loss` | 10 | 10 | Current year-end open-contract result; nonzero refuses. |
+| `aggregate_contract_profit_loss` | 11 | 11 | Annual contract result; nonzero refuses. Boxes 8-11 never become disposal proceeds. |
+| `basis_reported_to_irs` | 12 | 12 | Actual basis-reporting flag, independent of covered status. |
+| `bartering` | 13 | 13 | Barter-exchange receipts; nonzero refuses. |
+| `cusip` | CUSIP | CUSIP | Security identifier; filled refuses because this importer cannot clear the associated securities treatment. |
+| `federal_withholding_1099` (parse ledger only) | 4 | 4 | Backup withholding belongs to the parse ledger. |
+| `state_withholding_nc` and the other state categories (parse ledger only) | 16 | 16 | Use box 14's state: `ca_1099_withholding`, `state_withholding_ny`, `state_withholding_nc`, or `other_state_withholding` with `other_state_withholding_by_state`. Each also reaches Schedule A once. |
+| — | 1b | 1b | Acquisition date; does not replace the original FIFO lot date. |
+| — | 5 | 5 | Noncovered status; box 12 answers whether basis was reported. |
+| — | 14 | 14 | State selecting the withholding route. |
+| — | 15 | 15 | Payer's state identifier, outside the import. |
+| — | Applicable checkbox | Applicable checkbox | Broker routing code; basis reporting and the reconciled holding period determine the output box. |
+| — | CORRECTED | CORRECTED | Use the replacement, never both versions. |
+| — | Account number | Account number | Confirm `account_id`; do not copy the raw number. |
+| — | FATCA | FATCA | Broker reporting metadata; taxpayer foreign-account and asset intake still applies. |
+| — | Parties | Parties | Identify the correct document; never copy a full TIN. |
+| — | 2nd TIN not. | 2nd TIN not. | Administrative notice marker on Copy A; no pricing effect. |
+| — | VOID | VOID | A void Copy A is not a reportable customer transaction. |
+
+This review covers TY2023-2024 only. The 1099-DA contract and the refusal of
+unreviewed reporting years remain as documented below. No manual-disposal
+route is added here; AA47 tracks that extension.
 
 ### Reviewed Form 1099-DA inputs (AA55)
 

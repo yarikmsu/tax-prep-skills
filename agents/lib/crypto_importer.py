@@ -877,10 +877,15 @@ _FORM_UNSUPPORTED = {'ordinary', 'accrued_market_discount', 'wash_sale_loss_disa
 # QOF disposition in 3b (its deferred gain owes a code-Y row and Form 8997), an optional aggregate report
 # in 11a and first-sale NFT proceeds in 11c (neither one disposal's figures;
 # 11c is kept out of 1f), and a CUSIP, which marks a tokenized security that
-# §1091 reaches. The 1099-B set is empty because its own boxes are unreviewed
-# (AA61), not because it lacks them.
+# §1091 reaches. AA61 reviewed the TY2023/2024 1099-B too: box 3's
+# collectibles/QOF flags, box 6's option-netted proceeds, the identifier,
+# boxes 8-11's contract amounts (signed, never disposal proceeds), and box
+# 13's barter receipts all require treatment outside this spot-crypto importer.
 _FORM_UNSUPPORTED_BY_TYPE = {
-    '1099-B': frozenset(),
+    '1099-B': frozenset({'collectibles', 'qof', 'net_proceeds', 'cusip',
+                         'contract_profit_loss', 'prior_unrealized_profit_loss',
+                         'current_unrealized_profit_loss', 'aggregate_contract_profit_loss',
+                         'bartering'}),
     '1099-DA': frozenset({'net_proceeds', 'qof',
                           'optional_method', 'primary_sale_proceeds', 'cusip'}),
 }

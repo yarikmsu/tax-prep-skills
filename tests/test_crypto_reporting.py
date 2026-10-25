@@ -29,10 +29,13 @@ BASE = [event('A', 'buy', 'buy', '2023-01-01', usd=100),
         event('A', 'sale', 'sell', '2025-03-01', usd=150)]
 
 
-# The 1099-DA boxes the engine refuses when filled (AA59), each copied blank.
-# The 1099-B's own set is unreviewed (AA61) and empty, so it carries none.
+# Reviewed form-specific boxes, each copied blank.
 DA_BLANKS = dict(net_proceeds=False, qof=False, customer_acquisition_info=False,
                  optional_method=None, primary_sale_proceeds=None, cusip=None)
+B_BLANKS = dict(collectibles=False, qof=False, net_proceeds=False, cusip=None,
+                contract_profit_loss=None, prior_unrealized_profit_loss=None,
+                current_unrealized_profit_loss=None, aggregate_contract_profit_loss=None,
+                bartering=None)
 
 
 def form(**extra):
@@ -41,7 +44,7 @@ def form(**extra):
                   basis_reported_to_irs=False, term=None, ordinary=False, accrued_market_discount=None,
                   wash_sale_loss_disallowed=None, loss_not_allowed=False)
     merged = {**fields, **extra}
-    return {**DA_BLANKS, **merged} if merged['form_type'] == '1099-DA' else merged
+    return {**(DA_BLANKS if merged['form_type'] == '1099-DA' else B_BLANKS), **merged}
 
 
 def reporting(*forms, received=True, resolutions=None, **account):
@@ -585,8 +588,8 @@ def form_1099b(**extra):
                           cost_basis=100, term='long'), **extra})
 
 
-@pytest.mark.parametrize('key', sorted(DA_BLANKS))
-def test_a_1099b_names_none_of_the_1099da_keys(key):
+@pytest.mark.parametrize('key', sorted(DA_BLANKS.keys() - B_BLANKS.keys()))
+def test_a_1099b_names_none_of_the_1099da_only_keys(key):
     with pytest.raises(C.CryptoImportError, match=rf"names unknown \['{key}'\]"):
         run(reporting(form_1099b(**{key: DA_BLANKS[key]})), TX_2024, 2024)
 
@@ -606,8 +609,54 @@ def test_the_form_type_is_checked_before_the_keys_it_decides():
 def test_every_routed_form_type_has_its_own_key_set():
     assert set(C._FORM_UNSUPPORTED_BY_TYPE) == {regime['form_type'] for regime in C._REPORTING_REGIMES.values()}
     assert C._FORM_UNSUPPORTED_BY_TYPE['1099-DA'] | C._FORM_FIELDS_BY_TYPE['1099-DA'] == set(DA_BLANKS)
-    assert not C._FORM_UNSUPPORTED_BY_TYPE['1099-B']
+    assert C._FORM_UNSUPPORTED_BY_TYPE['1099-B'] == set(B_BLANKS)
     assert not any(C._FORM_UNSUPPORTED & keys for keys in C._FORM_UNSUPPORTED_BY_TYPE.values())
+
+
+@pytest.mark.parametrize('year', [2023, 2024])
+def test_a_legacy_1099b_summary_cannot_attest_unread_boxes_were_blank(year):
+    tx = [event('A', 'buy', 'buy', f'{year - 2}-01-01', usd=100),
+          event('A', 'sale', 'sell', f'{year}-03-01', usd=150)]
+    copied = form_1099b(date_sold=f'{year}-03-01')
+    for key in B_BLANKS:
+        del copied[key]
+    with pytest.raises(C.CryptoImportError, match='is missing.*collectibles.*re-read each missing box'):
+        run(reporting(copied), tx, year)
+
+
+@pytest.mark.parametrize('year', [2023, 2024])
+@pytest.mark.parametrize('key', sorted(B_BLANKS))
+def test_each_reviewed_1099b_box_must_be_copied_from_the_form(year, key):
+    tx = [event('A', 'buy', 'buy', f'{year - 2}-01-01', usd=100),
+          event('A', 'sale', 'sell', f'{year}-03-01', usd=150)]
+    copied = form_1099b(date_sold=f'{year}-03-01')
+    del copied[key]
+    with pytest.raises(C.CryptoImportError, match=rf"is missing \['{key}'\].*re-read each missing box"):
+        run(reporting(copied), tx, year)
+
+
+@pytest.mark.parametrize('year', [2023, 2024])
+@pytest.mark.parametrize('key,value', [
+    ('collectibles', True), ('qof', True), ('net_proceeds', True), ('cusip', 'TKN000A01'),
+    ('contract_profit_loss', 10), ('contract_profit_loss', -10),
+    ('prior_unrealized_profit_loss', 10), ('prior_unrealized_profit_loss', -10),
+    ('current_unrealized_profit_loss', 10), ('current_unrealized_profit_loss', -10),
+    ('aggregate_contract_profit_loss', 10), ('aggregate_contract_profit_loss', -10),
+    ('bartering', 10),
+])
+def test_1099b_special_treatments_refuse_before_capital_gain_routing(year, key, value):
+    tx = [event('A', 'buy', 'buy', f'{year - 2}-01-01', usd=100),
+          event('A', 'sale', 'sell', f'{year}-03-01', usd=150)]
+    with pytest.raises(C.CryptoImportError, match=rf"fills \['{key}'\], which this engine does not model"):
+        run(reporting(form_1099b(date_sold=f'{year}-03-01', **{key: value})), tx, year)
+
+
+@pytest.mark.parametrize('year', [2023, 2024])
+def test_reviewed_blank_1099b_boxes_allow_the_ordinary_crypto_sale(year):
+    tx = [event('A', 'buy', 'buy', f'{year - 2}-01-01', usd=100),
+          event('A', 'sale', 'sell', f'{year}-03-01', usd=150)]
+    row = only(resolved(run(reporting(form_1099b(date_sold=f'{year}-03-01')), tx, year)))
+    assert (row['box'], row['gain_loss']) == ('D', 50)
 
 
 def test_reconciled_rows_keep_input_order_and_identity():
@@ -920,6 +969,43 @@ _1099DA_KEY_BOXES = {'asset': '1b', 'quantity': '1c', 'date_sold': '1e', 'procee
                      'federal_withholding_1099': '4', 'state_withholding_nc': '16'}
 # The boxes /tax-parse records in the parse ledger rather than the form entry.
 _1099DA_LEDGER_KEYS = {'federal_withholding_1099', 'state_withholding_nc'}
+
+
+def test_the_reviewed_1099b_table_accounts_for_both_years_entire_form():
+    doc = (REPO / 'docs/contributing/crypto-accounts.md').read_text(encoding='utf-8')
+    section = doc.split('### Reviewed Form 1099-B inputs (AA61)')[1].split('### Reviewed Form 1099-DA')[0]
+    header, rule, *rows = [[cell.strip() for cell in line.strip().strip('|').split('|')]
+                          for line in section.splitlines() if line.startswith('|')]
+    assert header[1:3] == ['TY2023 box', 'TY2024 box']
+    assert set(''.join(rule)) <= set('-: ') and all(len(row) == 4 for row in rows)
+    for source in ('f1099b', 'i1099b'):
+        assert set(re.findall(rf'/pub/irs-prior/{source}--(\d{{4}})\.pdf', section)) == {'2023', '2024'}
+    expected = dict(asset='1a', quantity='1a', date_sold='1c', proceeds='1d', cost_basis='1e',
+                    accrued_market_discount='1f', wash_sale_loss_disallowed='1g',
+                    term='2', ordinary='2', collectibles='3', qof='3', net_proceeds='6',
+                    loss_not_allowed='7', contract_profit_loss='8', prior_unrealized_profit_loss='9',
+                    current_unrealized_profit_loss='10', aggregate_contract_profit_loss='11',
+                    basis_reported_to_irs='12', bartering='13', cusip='CUSIP',
+                    federal_withholding_1099='4', state_withholding_nc='16')
+    keyed = [row for row in rows if row[0] != '—']
+    keys = [row[0].split()[0].strip('`') for row in keyed]
+    identity = {'form_id', 'form_type', 'account_id', 'txn_id'}
+    ledger = {'federal_withholding_1099', 'state_withholding_nc'}
+    assert len(keys) == len(set(keys))
+    assert set(keys) == set(expected) == ((C._FORM_FIELDS - identity) | C._FORM_UNSUPPORTED
+                                         | C._FORM_UNSUPPORTED_BY_TYPE['1099-B'] | ledger)
+    boxes = ({f'1{letter}' for letter in 'abcdefg'} | {str(n) for n in range(2, 17)}
+             | {'CUSIP', 'Applicable checkbox', 'CORRECTED', 'Account number', 'FATCA',
+                'Parties', '2nd TIN not.', 'VOID'})
+    for column in (1, 2):
+        assert dict(zip(keys, (row[column] for row in keyed))) == expected
+        paired = list(expected.values())
+        assert sorted(row[column] for row in rows) == sorted([*boxes - set(paired), *paired])
+    skill = skill_text('tax-parse').split('### 1099-B Extraction')[1].split('### 1099-DA')[0]
+    (listed,) = re.findall(r'For TY2023-2024 crypto, also capture boxes ([^\n]+), keeping', skill)
+    assert set(expected.values()) <= listed_boxes(listed)
+    crypto = skill_text('tax-parse-crypto')
+    assert '1099-B summary that omits' in crypto and 're-read them' in crypto
 
 
 def test_the_reviewed_1099da_table_names_every_box_and_key():
