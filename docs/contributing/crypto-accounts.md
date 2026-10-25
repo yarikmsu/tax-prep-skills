@@ -281,9 +281,10 @@ amounts must reconcile under the existing exact checks. Group-level
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
 
-This handles linked partial fills only. Optional annual stablecoin/NFT reports,
-precision differences, unexplained proceeds gaps, manual special treatments
-and cross-year date corrections remain AA47 follow-ups. An optional-method box
+This handles linked partial fills only. An export's lost precision or wrong
+USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47).
+Optional annual stablecoin/NFT reports, manual special treatments and
+cross-year date corrections remain AA47 follow-ups. An optional-method box
 still refuses; this grouping cannot clear an unreviewed reporting year.
 
 ### Reviewed Form 1099-B inputs (AA61)
@@ -425,6 +426,50 @@ This review establishes the TY2026 **input-box** meanings only. It does not add
 TY2026 to `_REPORTING_REGIMES`: AA48 still needs that year's Form 8949
 instructions, including the no-form boxes. Form 1099-DA's own Form 8949 code
 list cannot substitute for that review. The existing TY2026 refusal remains.
+
+## Reviewed source corrections (AA47)
+
+If an export lost unit precision or contains an incorrect USD value, obtain
+the full source figure and the taxpayer's confirmation before changing it.
+Record that fact in the optional `broker_reporting.source_corrections` list:
+
+```json
+{"account_id": "exchange-A", "txn_id": "sale-1",
+ "expected": {"date": "2025-03-01", "asset": "BTC", "kind": "sell", "usd_amount": 150},
+ "corrected": {"usd_amount": 150.01}, "evidence": "reviewed-trade-confirmation"}
+```
+
+Each entry requires exactly those five keys. `expected` copies the original
+date, asset, kind and every financial field being corrected. `corrected`
+changes only `quantity` and/or `usd_amount`, retaining full decimal precision
+where the source supplies it: a corrected `quantity` is a decimal string, since
+a JSON number reaches the engine already rounded. Account and transaction IDs must be explicit and
+unique. Missing, stale, repeated, unchanged, nonfinite or unsupported changes
+refuse. A transfer does not use `usd_amount`; its basis and ownership evidence
+must be prepared through the existing transfer path.
+
+This replaces a source fact before FIFO and recomputes inventory, acquisition
+basis and disposal gain; it is not a broker-form adjustment or rounding
+tolerance. The engine checks the original values and context before applying
+copies, leaves the source array and export intact, and retains the complete
+correction record in its JSON workpaper. Broker units, proceeds, basis and
+holding periods must still reconcile afterward. A difference alone cannot
+establish that the export or broker is wrong. Never fill the correction with
+the broker's figure solely to make reconciliation pass.
+
+A correction can reach an earlier year: the corrected event is an earlier
+sale, or an acquisition an earlier sale consumed. The output then opens with a
+`PRIOR-YEAR RETURN` caveat naming each such year, whose filed return used the
+uncorrected history. Review it for Form 1040-X through `/tax-amend`, so both
+years carry the same basis.
+
+Review and preserve `source_corrections` with the import's secured workpaper in
+`summaries/`. Dates, account identities, fees, lot selection and special form
+treatments are outside this correction path. It does not clear the option
+exercise screen or unsupported boxes. Those cases, calendar corrections and
+optional annual reporting remain AA47 follow-ups.
+Corrections live inside the broker-review object so an older engine's closed
+key set refuses them instead of silently ignoring a new top-level input.
 
 ## Primary authorities
 

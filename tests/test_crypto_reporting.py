@@ -1285,3 +1285,152 @@ def test_the_documented_example_form_carries_exactly_the_1099da_keys():
     assert entry['form_type'] == '1099-DA'
     assert set(entry) == (C._FORM_FIELDS | C._FORM_UNSUPPORTED | C._FORM_UNSUPPORTED_BY_TYPE['1099-DA']
                          | C._FORM_FIELDS_BY_TYPE['1099-DA'])
+
+
+def source_correction(txn, **corrected):
+    return dict(account_id=txn['account_id'], txn_id=txn['txn_id'],
+                expected={key: txn[key] for key in {'date', 'asset', 'kind'} | corrected.keys()},
+                corrected=corrected, evidence='reviewed-trade-confirmation')
+
+
+def source_run(corrections, tx=BASE, block=None):
+    block = copy.deepcopy(block if block is not None else reporting(form()))
+    block['source_corrections'] = corrections
+    return C.build_crypto_import(tx, tax_year=2025, specific_identification=False,
+                                 broker_reporting=block)
+
+
+def test_reviewed_source_value_correction_recomputes_gain_without_a_gap_tolerance():
+    tx = copy.deepcopy(BASE)
+    before = copy.deepcopy(tx)
+    correction = source_correction(tx[1], usd_amount=150.01)
+    block = reporting(form(proceeds=150.01))
+    blocked(run(block, tx), 'proceeds differ')
+    result = resolved(source_run([correction], tx, block))
+    assert (only(result)['proceeds'], only(result)['gain_loss']) == (150.01, 50.01)
+    assert result['source_corrections'] == [correction]
+    assert tx == before
+
+
+def test_reviewed_full_precision_units_are_repriced_and_removed_from_inventory():
+    full = '1.000000000000000001'
+    tx = [{**BASE[0], 'quantity':full}, BASE[1]]
+    block = reporting(form(quantity=full))
+    blocked(run(block, tx), 'units differ')
+    result = resolved(source_run([source_correction(tx[1], quantity=full)], tx, block))
+    assert only(result)['description'] == f'{full} BTC'
+    assert result['account_fifo']['inventory']['A']['BTC'] == []
+    assert only(result)['gain_loss'] == 50
+
+
+def test_reviewed_acquisition_cost_correction_reprices_later_fifo_disposals():
+    result = resolved(source_run([source_correction(BASE[0], usd_amount=101)]))
+    assert (only(result)['cost_basis'], only(result)['gain_loss']) == (101, 49)
+
+
+@pytest.mark.parametrize('change,refusal', [
+    (lambda c: c.update(evidence=''), 'non-empty string'),
+    (lambda c: c.update(txn_id='missing'), 'names no transaction'),
+    (lambda c: c.update(account_id='elsewhere'), 'names no transaction'),
+    (lambda c: c['expected'].update(usd_amount=149), 'value is stale'),
+    (lambda c: c['expected'].update(date='2024-03-01'), 'context is stale'),
+    (lambda c: c['expected'].update(kind='buy'), 'context is stale'),
+    (lambda c: c['expected'].update(asset='ETH'), 'context is stale'),
+    (lambda c: c['expected'].update(extra=1), 'needs date, asset, kind'),
+    (lambda c: c['expected'].pop('date'), 'needs date, asset, kind'),
+    (lambda c: c['corrected'].update(usd_amount=150), 'must change each named value'),
+    (lambda c: c['corrected'].update(usd_amount=float('nan')), 'must be finite'),
+    (lambda c: c['corrected'].update(usd_amount=float('inf')), 'must be finite'),
+    (lambda c: c['corrected'].update(usd_amount=True), 'must be a number'),
+    (lambda c: c['corrected'].update(usd_amount=-1), 'cannot be negative'),
+    (lambda c: c.update(corrected={}), 'changes only quantity'),
+    (lambda c: c['corrected'].update(date='2025-03-02'), 'changes only quantity'),
+    # Fees, basis and received units are outside this path: each would move
+    # gain while the source record and its broker form still read the same.
+    (lambda c: c['corrected'].update(fee_usd=40), 'changes only quantity'),
+    (lambda c: c['corrected'].update(basis_usd=140), 'changes only quantity'),
+    (lambda c: c['corrected'].update(received_quantity='2'), 'changes only quantity'),
+    (lambda c: c.update(unknown=True), 'needs account_id, txn_id'),
+])
+def test_source_corrections_refuse_stale_ambiguous_or_unmodeled_changes(change, refusal):
+    correction = source_correction(BASE[1], usd_amount=150.01)
+    change(correction)
+    before = copy.deepcopy(BASE)
+    with pytest.raises(C.CryptoImportError, match=refusal):
+        source_run([correction])
+    assert BASE == before
+
+
+@pytest.mark.parametrize('quantity', [1.0000001, 1])
+def test_a_corrected_quantity_must_be_decimal_text(quantity):
+    # A JSON number reaches the engine already rounded to a float, so a
+    # "full precision" correction would be recorded as the rounded value.
+    tx = [{**BASE[0], 'quantity': '1.0000001'}, BASE[1]]
+    with pytest.raises(C.CryptoImportError, match='decimal string'):
+        source_run([source_correction(tx[1], quantity=quantity)], tx)
+
+
+def test_a_correction_that_changes_an_earlier_years_sale_names_that_return():
+    # A TY2024 sale of 0.5 BTC corrected to 0.6 leaves 1.4 BTC, not 1.5, for
+    # the TY2025 sale, so its basis moves; the filed TY2024 return used 0.5.
+    tx = [event('A', 'b1', 'buy', '2023-01-01', qty=1, usd=100),
+          event('A', 'b2', 'buy', '2023-06-01', qty=1, usd=300),
+          event('A', 's24', 'sell', '2024-03-01', qty='0.5', usd=200),
+          event('A', 'sale', 'sell', '2025-03-01', qty='1', usd=500)]
+    block = reporting(form(proceeds=500))
+    plain = source_run([], tx, block)
+    assert not any(c.startswith('PRIOR-YEAR RETURN') for c in plain['caveats'])
+    result = source_run([source_correction(tx[2], quantity='0.6')], tx, block)
+    assert result['caveats'][0].startswith('PRIOR-YEAR RETURN') and 'TY2024' in result['caveats'][0]
+    # Correcting an acquisition a 2024 sale consumed reaches that return too.
+    result = source_run([source_correction(tx[0], usd_amount=90)], tx, block)
+    assert 'TY2024' in result['caveats'][0]
+
+
+def test_a_correction_reaching_only_the_filing_year_names_no_earlier_return():
+    # b2 is consumed only by the TY2025 sale, so no earlier return used it.
+    tx = [event('A', 'b1', 'buy', '2023-01-01', qty='0.5', usd=50),
+          event('A', 'b2', 'buy', '2023-06-01', qty=1, usd=300),
+          event('A', 's24', 'sell', '2024-03-01', qty='0.5', usd=200),
+          event('A', 'sale', 'sell', '2025-03-01', qty='1', usd=500)]
+    result = source_run([source_correction(tx[1], usd_amount=310)], tx, reporting(form(proceeds=500)))
+    assert result['source_corrections'] and not any('PRIOR-YEAR' in c for c in result['caveats'])
+
+
+def test_source_corrections_do_not_waive_broker_form_reconciliation():
+    result = source_run([source_correction(BASE[1], usd_amount=150.01)])
+    blocked(result, 'proceeds differ')
+
+
+def test_source_corrections_cannot_be_stacked_on_the_same_transaction():
+    correction = source_correction(BASE[1], usd_amount=150.01)
+    with pytest.raises(C.CryptoImportError, match='repeat'):
+        source_run([correction, correction])
+
+
+@pytest.mark.parametrize('kind', ['send', 'receive', 'RECEIVE'])
+def test_source_corrections_cannot_claim_to_fix_a_transfer_by_changing_unused_usd(kind):
+    tx = [{**BASE[0], 'kind':kind}, BASE[1]]
+    with pytest.raises(C.CryptoImportError, match='Transfers do not use usd_amount'):
+        source_run([source_correction(tx[0], usd_amount=101)], tx)
+
+
+def test_cli_preserves_and_applies_reviewed_source_corrections(tmp_path, capsys):
+    path = tmp_path / 'synthetic-correction.json'
+    entry = source_correction(BASE[1], usd_amount=150.01)
+    path.write_text(json.dumps(dict(transactions=BASE, specific_identification=False,
+                                   broker_reporting={**reporting(form(proceeds=150.01)),
+                                                     'source_corrections':[entry]})), encoding='utf-8')
+    assert C._cli_compute([str(path), '--account-aware', '--year', '2025']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['source_corrections'] == [entry]
+    assert only(result)['gain_loss'] == 50.01
+
+
+def test_cli_refuses_a_misplaced_top_level_correction_instead_of_ignoring_it(tmp_path):
+    path = tmp_path / 'misplaced-correction.json'
+    path.write_text(json.dumps(dict(transactions=BASE, specific_identification=False,
+                                   source_corrections=[source_correction(BASE[0], usd_amount=101)],
+                                   broker_reporting=reporting(form()))), encoding='utf-8')
+    with pytest.raises(C.CryptoImportError, match='inside broker_reporting'):
+        C._cli_compute([str(path), '--account-aware', '--year', '2025'])

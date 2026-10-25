@@ -1423,6 +1423,92 @@ def _schedule_d_routing(rows) -> 'dict[str, dict]':
 # Aggregator
 # --------------------------------------------------------------------------
 
+def _apply_source_corrections(transactions, corrections, account_mode):
+    """Apply evidenced facts before FIFO, never a tolerance against a form.
+
+    Expected context and values bind a correction to its original event.
+    Only quantity and USD value are supported; identity, dates and lot-selection
+    changes require their own contracts. The caller's source records stay intact.
+    """
+    if corrections is None:
+        return transactions, []
+    if not isinstance(corrections, list):
+        raise CryptoImportError('source_corrections must be a list of reviewed source facts')
+    if not corrections:
+        return transactions, []
+    if not account_mode:
+        raise CryptoImportError('Source corrections require explicit account and transaction IDs')
+    indices = {}
+    for index, raw in enumerate(transactions):
+        if not isinstance(raw, dict):
+            raise CryptoImportError('Source corrections require transaction objects')
+        key = (_account_id(raw.get('account_id'), 'source account_id'),
+               _account_id(raw.get('txn_id'), 'source txn_id'))
+        if key in indices:
+            raise CryptoImportError('Source corrections require unique account/transaction IDs')
+        indices[key] = index
+    updated, records, used = list(transactions), [], set()
+    for correction in corrections:
+        if not isinstance(correction, dict) or set(correction) != {
+                'account_id', 'txn_id', 'expected', 'corrected', 'evidence'}:
+            raise CryptoImportError('A source correction needs account_id, txn_id, expected, corrected and evidence')
+        key = (_account_id(correction['account_id'], 'correction account_id'),
+               _account_id(correction['txn_id'], 'correction txn_id'))
+        evidence = _account_id(correction['evidence'], 'source correction evidence')
+        if key not in indices:
+            raise CryptoImportError('A source correction names no transaction in that account')
+        if key in used:
+            raise CryptoImportError('Source corrections must not repeat a transaction')
+        values, expected = correction['corrected'], correction['expected']
+        if not isinstance(values, dict) or not values or not set(values) <= {'quantity', 'usd_amount'}:
+            raise CryptoImportError('A source correction changes only quantity and/or usd_amount')
+        context = {'date', 'asset', 'kind'}
+        if not isinstance(expected, dict) or set(expected) != context | set(values):
+            raise CryptoImportError('Expected source context needs date, asset, kind and each corrected field')
+        raw = transactions[indices[key]]
+        if any(expected[field] != raw.get(field) for field in context):
+            raise CryptoImportError('Source correction context is stale; re-read the original record')
+        kind = _req_str(raw.get('kind'), 'source kind').lower()
+        if 'usd_amount' in values and kind in {'send', 'receive'}:
+            raise CryptoImportError('Transfers do not use usd_amount; correct their basis/transfer evidence externally')
+        for name, value in values.items():
+            if name not in raw:
+                raise CryptoImportError('A source correction must name an existing source field')
+            if name == 'quantity' and not isinstance(value, str):
+                # json.loads rounds a long number to a float before this sees
+                # it, so the "full precision" fact would be recorded rounded.
+                raise CryptoImportError('A corrected quantity must be a decimal string; '
+                                        'a JSON number cannot carry every source decimal')
+            try:
+                original = _exact(raw[name], 'original source value')
+                claimed = _exact(expected[name], 'expected source value')
+                corrected = _exact(value, 'corrected source value')
+            except OverflowError:
+                raise CryptoImportError('Source correction values must be finite') from None
+            if original != claimed:
+                raise CryptoImportError('Source correction value is stale; re-read the original record')
+            if corrected == original:
+                raise CryptoImportError('A source correction must change each named value')
+        updated[indices[key]] = {**raw, **values}
+        used.add(key)
+        records.append(dict(account_id=key[0], txn_id=key[1], expected=dict(expected),
+                            corrected=dict(values), evidence=evidence))
+    return updated, records
+
+
+def _prior_years_corrected(rows_all, records, tax_year) -> 'list[int]':
+    """Earlier years whose disposals a correction changes: the corrected sale
+    itself, or a sale that consumed a corrected acquisition. Those returns are
+    usually filed, and the corrected history now disagrees with them."""
+    if tax_year is None:
+        return []
+    corrected = {(r['account_id'], r['txn_id']) for r in records}
+    return sorted({int(row.date_sold[:4]) for row in rows_all
+                   if int(row.date_sold[:4]) < tax_year
+                   and ((row.account_id, row.txn_id) in corrected
+                        or (row.origin_account_id, row.origin_txn_id) in corrected)})
+
+
 def build_crypto_import(transactions: 'list[dict]', *,
                         tax_year: 'int | None' = None,
                         specific_identification: bool | None = None,
@@ -1438,6 +1524,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
     (per-asset realized gain), needs_basis (disposals lacking an acquisition), and caveats.
     broker_reporting is the reviewed broker-form evidence that routes each reported
     row to a Form 8949 box; without it no row carries a box (AA41).
+    Its source_corrections replaces evidenced quantity/USD facts before matching,
+    bound to the original account event and retained in the output workpaper.
     specific_identification must be explicitly False before any FIFO lot removal.
     True requires external lot-selection preparation; None never means FIFO.
     """
@@ -1455,6 +1543,13 @@ def build_crypto_import(transactions: 'list[dict]', *,
     if tagged and account_aware is False:
         raise CryptoImportError('Tagged accounts cannot use a universal FIFO pool')
     account_mode = tagged or account_aware is True or transfer_links is not None
+    corrections = (broker_reporting.get('source_corrections')
+                   if isinstance(broker_reporting, dict) else None)
+    transactions, correction_records = _apply_source_corrections(
+        transactions, corrections, account_mode)
+    if isinstance(broker_reporting, dict) and 'source_corrections' in broker_reporting:
+        broker_reporting = dict(broker_reporting)
+        del broker_reporting['source_corrections']  # Consumed before the broker-form validator.
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
     if specific_identification is not None and not isinstance(specific_identification, bool):
         raise CryptoImportError('specific_identification must be boolean or null')
@@ -1604,6 +1699,15 @@ def build_crypto_import(transactions: 'list[dict]', *,
                                        unresolved_inputs=['Explicit wallet/account allocation is required from 2025'])
         result['caveats'].insert(0, 'BLOCKED: universal basis cannot establish wallet/account FIFO from 2025; supply explicit account IDs.')
     result['broker_reporting'] = reporting
+    if correction_records:
+        result['source_corrections'] = correction_records
+        result['caveats'].append(f'{len(correction_records)} reviewed source correction(s) applied before FIFO; '
+                                 'preserve the source_corrections JSON workpaper and its evidence.')
+        prior = _prior_years_corrected(rows_all, correction_records, tax_year)
+        if prior:
+            result['caveats'].insert(0, f"PRIOR-YEAR RETURN: a source correction changes disposals reported for "
+                                        f"TY{', TY'.join(map(str, prior))}; review whether that return needs "
+                                        'Form 1040-X (/tax-amend) so both years use the same basis.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
@@ -2324,6 +2428,8 @@ def _cli_compute(argv: 'list[str]') -> int:
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
         raise CryptoImportError(f"{redact(path)} is not valid JSON: {redact(e)}")
     txns = data.get("transactions", data) if isinstance(data, dict) else data
+    if isinstance(data, dict) and 'source_corrections' in data:
+        raise CryptoImportError('Put source_corrections inside broker_reporting; a top-level field is not applied')
     year = None
     if "--year" in argv:
         raw_year = _flag_value(argv, "--year")
