@@ -450,90 +450,91 @@ say that in its first screen.
 
 The index. Narrative lives in `docs/changelog/` — one file per epic, listed in
 `docs/changelog/README.md`. Pull-request numbers restarted at #1 when the
-repository was recreated on 2026-10-10, so a low number can name two pull
-requests; a row's numbers are read from its merge commits' subjects, and where
-two commits carry the same one, the date tells the numberings apart. The test
-that checks each row cannot yet; that is AA56.
+repository was recreated on 2026-10-10, so one number can name two pull
+requests. A row writes the private repository's (`tax-prep-skills-private`)
+as `old #N` and this repository's as `#N`; the test checks each against its
+own side of the recreation, commit `0a05d0c`, whose history holds every old
+merge.
 
 | Item | PRs | Remaining scope / follow-ups |
 |---|---|---|
-| AA23 | #203, #204, #205, #206, #217 | — |
-| V0 | #85 | — |
-| V1 | #109, #110, #111 | — |
-| V2 | #108 | — |
-| V3 | #97, #98, #107, #116, #117, #141 | — |
-| V4 | #87 | the auditor's `_provenance` check shipped with Y2 in #7 |
-| V5 | #103, #104 | — |
-| V6 | #99, #100, #101, #106 | — |
-| V7 | #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
-| V8 | #91 | — |
-| V9 | #92 | — |
-| V10 | #93, #102, #139, #140 | — |
-| V11 | #95 | — |
-| W1 | #90 | — |
-| W2 | #148, #149, #150, #151, #152 | — |
-| W3 | #163, #164, #230 | Single invariant-pass runtime; cheap Bash change boundary and red memory preserved. |
-| W4 | #90, #118 | the MEASURED COSTS seconds were retired by Q13 rather than re-measured |
-| W5 | #90, #166 | Floor-reading follow-up shipped as W5a; its remaining comparisons are listed below. |
-| W5a | #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
-| W6 | #105 | — |
-| W10 | #208, #209, #210, #211, #227 | Registry and wiring; generic year-bound adjustment workpapers and explicit local-tax routing. |
-| W11 | #226 | Shared state true-up specification; public report behavior retained and NY timing-note crash fixed. |
-| W12 | #225 | Test-owned hook input declarations and independent read/import audit. |
-| X1 | #89 | the auditor's keying note was corrected with Y2 in #7 |
-| X2 | #86 | — |
-| X3 | #88 | — |
-| X4 | #110, #142 | — |
-| X5 | #143, #144, #155 | Wrapped and paired limit detection completed under X9. |
-| X6 | #154 | The statutory SALT step schedule remains the fallback; #216 requires cached amounts to agree at cents or the nearest whole dollar (half up), before phasedown. |
-| X7 | #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
-| X8 | #159 | Engine entry-point status validation: direct checks or declared delegation probed at both ends |
-| X9 | #228 | Wrapped and paired amounts, Markdown block boundaries, code/CLI handling and shared figure gates. |
-| X10 | #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
+| AA23 | old #203, old #204, old #205, old #206, old #217 | — |
+| V0 | old #85 | — |
+| V1 | old #109, old #110, old #111 | — |
+| V2 | old #108 | — |
+| V3 | old #97, old #98, old #107, old #116, old #117, old #141 | — |
+| V4 | old #87 | the auditor's `_provenance` check shipped with Y2 in #7 |
+| V5 | old #103, old #104 | — |
+| V6 | old #99, old #100, old #101, old #106 | — |
+| V7 | old #115 | needs `TAX_WORKSPACE` set, or it isolates nothing |
+| V8 | old #91 | — |
+| V9 | old #92 | — |
+| V10 | old #93, old #102, old #139, old #140 | — |
+| V11 | old #95 | — |
+| W1 | old #90 | — |
+| W2 | old #148, old #149, old #150, old #151, old #152 | — |
+| W3 | old #163, old #164, old #230 | Single invariant-pass runtime; cheap Bash change boundary and red memory preserved. |
+| W4 | old #90, old #118 | the MEASURED COSTS seconds were retired by Q13 rather than re-measured |
+| W5 | old #90, old #166 | Floor-reading follow-up shipped as W5a; its remaining comparisons are listed below. |
+| W5a | old #191 | the matrix legs, the tool targets, `MIN_PYTHON` and the prose still state the floor, compared rather than read; the lock headers are uv's record and stay |
+| W6 | old #105 | — |
+| W10 | old #208, old #209, old #210, old #211, old #227 | Registry and wiring; generic year-bound adjustment workpapers and explicit local-tax routing. |
+| W11 | old #226 | Shared state true-up specification; public report behavior retained and NY timing-note crash fixed. |
+| W12 | old #225 | Test-owned hook input declarations and independent read/import audit. |
+| X1 | old #89 | the auditor's keying note was corrected with Y2 in #7 |
+| X2 | old #86 | — |
+| X3 | old #88 | — |
+| X4 | old #110, old #142 | — |
+| X5 | old #143, old #144, old #155 | Wrapped and paired limit detection completed under X9. |
+| X6 | old #154 | The statutory SALT step schedule remains the fallback; #216 requires cached amounts to agree at cents or the nearest whole dollar (half up), before phasedown. |
+| X7 | old #218 | future-sale tax and chained wash-sale repricing remain outside the replacement basis plan |
+| X8 | old #159 | Engine entry-point status validation: direct checks or declared delegation probed at both ends |
+| X9 | old #228 | Wrapped and paired amounts, Markdown block boundaries, code/CLI handling and shared figure gates. |
+| X10 | old #224 | Roth catch-up split, confirmed HSA eligibility and fetched per-account state conformity. |
 | Y2 | #7 | The figures still unpublished on 2026-10-12 are Y8, and Y2's review filed AA52-AA54. |
-| Y4 | #112 | — |
-| Y5 | #113 | — |
-| Y6 | #114, #119, #165 | — |
-| Y7 | #120 | no Windows coverage — the Windows job runs two modules |
-| Z4 | #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
-| Z5 | #220 | TY2025 excise; separate households and special federal normalization remain out of scope. Harvest pricing shipped as Z6. |
-| Z6 | #223 | WA excise harvest pricing, crypto domicile workpapers and separate WFTC reminder. |
-| Z8 | #221 | TY2025 NY source allocations and NYC IT-360.1; other-state returns/credits, MFS, mixed spouses, IT-230 ratios and IT-203 Yonkers remain manual/refused; NY forecasts are skipped |
-| Z1 | #123, #124-#137 | IT-201 remains full-year NY resident only. Reviewed TY2025 IT-203 and NYC IT-360.1 plans shipped as Z8; statutory second residency and other taxable-state returns retain their gates. AA13 supplies IT-201 line 47a, and AA12 supplies whole-year Yonkers line 55 or non-joint nonresident line 56. IT-201 part-year City/Yonkers lines 50/57, special condition Y1, joint Y-203, IT-196 worksheets, other taxes, refundable-credit amounts, use tax and city-level day counts retain manual work or refusals on `meta.limitations`. |
-| Z2 | #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |
-| Z3 | #131 | — |
-| Z7 | #121 | domicile as a GATE is deliberately not modeled |
-| AA1 | #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |
-| AA3 | #172 | Whole-suite count removed by AA8, pass timing added by AA9, and review leftovers addressed by AA10. The timing lint's accepted limits remain listed under AA10. |
-| AA7 | #174 | IT-201 remains resident-only; IT-203 uses the declared plan in #221, while other taxable-state obligations retain their gates |
-| AA13 | #175 | IT-201 part-year City line 50 remains manual/refused; reviewed TY2025 IT-203 NYC IT-360.1 plans shipped as Z8. |
-| AA11 | #175 | — |
-| AA12 | #176 | Part-year Yonkers, special condition Y1 and joint Y-203 remain refused/manual. Line-58 guards and household-method checks shipped as AA15, AA29, AA30 and AA32. |
-| AA6 | #178 | three blocks cannot be sized from public data (statutory residency in a second state, a PFIC event, out-of-state income other than a commute); the figures are tax year 2023 and need a yearly refresh |
-| AA16 | #179 | The compute step forms modified AGI. AA23 re-prices the SALT phasedown from recorded inputs; legacy or unsupported planning inputs retain held-baseline caveats. PTET still holds Schedule A. |
-| AA20 | #180 | AA23 re-prices supported Schedule A inputs, including medical/SALT limits, confirmed charitable caps, elections and §68. Legacy or unsupported inputs stay held with caveats or refuse where required. |
-| AA21 | #181 | Complete Schedule A forecasts re-price under AA23; the legacy declared-total path retains its warning. Non-itemizer §170(p) support shipped as AA22. |
-| AA22 | #182 | AA23 owns the itemize-or-standard election. Gifts remain declared inputs; an unfetched required cap refuses until its block is fetched. The note's acknowledgment-threshold policy remains the owner's call. |
-| AA25 | #185 | Exposure-scan dependence is verified under AA26; its remaining test limits are listed below. |
-| AA4 | #184 | Walk shape remains pinned; AA24 added comparison with the configured timeout. |
-| AA5 | #186 | — |
-| AA8 | #186 | the suite's size is stated nowhere, and the scale row's "about twice" a cold pass is a reader's to keep, not a check's |
-| AA17 | #188 | a part-year return across the border is blocked, not modeled, and so is a non-citizen's dual-status federal year |
-| AA14 | #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check is Y8 |
-| AA27 | #189 | — |
-| AA28 | #190 | the TY2026 `table_bases` check is Y8 |
-| AA29 | #192 | AA30 moved household screening to Step 0.7; AA32 requires computation methods beside flagged household values. A typed method is not a receipt-bound proof. |
-| AA18 | #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
-| AA31 | #194 | — |
-| AA30 | #195 | AA32 added household computation methods; an acknowledged unsupported household's City or Yonkers tax remains manual. Supported Z8 plans use their variant guards. |
-| AA35 | #238 | Verified federal/CA charitable vintage ledgers through setup, computation and rollover; missing worksheets require explicit resolution. |
-| AA36 | #240 | Local paystub intake reconciles confirmed jobs into projection YTD with source and period evidence, masked extraction and secured publication. |
-| AA37 | #241 | Confirmed regular Social Security worksheets reprice taxable benefits across scenario stacks and Roth rungs; the original income frame and covered-year evidence remain bound. |
-| AA38 | #242 | Reviewed full-year TY2025 CA/NY/NC state/local liability reprices independently in scenarios and Roth sweeps; missing worksheets, allocations and unreviewed form years stay named limitations. |
-| AA39 | #243 | Independent primary/spouse Form 8606 worksheets bind owned IRA balances and source allocations, preserve separate closing basis through rollover, and label individual reports and Roth planning. |
-| AA40 | #244 | Account-specific crypto FIFO moves reviewed original lot slices through owned transfer links; missing inventory/evidence blocks completion and untagged universal imports from 2025 are diagnostic-only. |
+| Y4 | old #112 | — |
+| Y5 | old #113 | — |
+| Y6 | old #114, old #119, old #165 | — |
+| Y7 | old #120 | no Windows coverage — the Windows job runs two modules |
+| Z4 | old #219 | TY2025 full-year D-400; other form years and farmer/annualized NC-40 worksheets remain manual |
+| Z5 | old #220 | TY2025 excise; separate households and special federal normalization remain out of scope. Harvest pricing shipped as Z6. |
+| Z6 | old #223 | WA excise harvest pricing, crypto domicile workpapers and separate WFTC reminder. |
+| Z8 | old #221 | TY2025 NY source allocations and NYC IT-360.1; other-state returns/credits, MFS, mixed spouses, IT-230 ratios and IT-203 Yonkers remain manual/refused; NY forecasts are skipped |
+| Z1 | old #123, old #124-old #137 | IT-201 remains full-year NY resident only. Reviewed TY2025 IT-203 and NYC IT-360.1 plans shipped as Z8; statutory second residency and other taxable-state returns retain their gates. AA13 supplies IT-201 line 47a, and AA12 supplies whole-year Yonkers line 55 or non-joint nonresident line 56. IT-201 part-year City/Yonkers lines 50/57, special condition Y1, joint Y-203, IT-196 worksheets, other taxes, refundable-credit amounts, use tax and city-level day counts retain manual work or refusals on `meta.limitations`. |
+| Z2 | old #130 | City taxable income, the City household credit, the MCTMT and the line-58 caps; the City resident tax, line 47a, came later with AA13, and Yonkers lines 55-56 with AA12 |
+| Z3 | old #131 | — |
+| Z7 | old #121 | domicile as a GATE is deliberately not modeled |
+| AA1 | old #171 | the EIC is DISCLOSED, not computed — out of persona by the 2026-07-12 ruling |
+| AA3 | old #172 | Whole-suite count removed by AA8, pass timing added by AA9, and review leftovers addressed by AA10. The timing lint's accepted limits remain listed under AA10. |
+| AA7 | old #174 | IT-201 remains resident-only; IT-203 uses the declared plan in #221, while other taxable-state obligations retain their gates |
+| AA13 | old #175 | IT-201 part-year City line 50 remains manual/refused; reviewed TY2025 IT-203 NYC IT-360.1 plans shipped as Z8. |
+| AA11 | old #175 | — |
+| AA12 | old #176 | Part-year Yonkers, special condition Y1 and joint Y-203 remain refused/manual. Line-58 guards and household-method checks shipped as AA15, AA29, AA30 and AA32. |
+| AA6 | old #178 | three blocks cannot be sized from public data (statutory residency in a second state, a PFIC event, out-of-state income other than a commute); the figures are tax year 2023 and need a yearly refresh |
+| AA16 | old #179 | The compute step forms modified AGI. AA23 re-prices the SALT phasedown from recorded inputs; legacy or unsupported planning inputs retain held-baseline caveats. PTET still holds Schedule A. |
+| AA20 | old #180 | AA23 re-prices supported Schedule A inputs, including medical/SALT limits, confirmed charitable caps, elections and §68. Legacy or unsupported inputs stay held with caveats or refuse where required. |
+| AA21 | old #181 | Complete Schedule A forecasts re-price under AA23; the legacy declared-total path retains its warning. Non-itemizer §170(p) support shipped as AA22. |
+| AA22 | old #182 | AA23 owns the itemize-or-standard election. Gifts remain declared inputs; an unfetched required cap refuses until its block is fetched. The note's acknowledgment-threshold policy remains the owner's call. |
+| AA25 | old #185 | Exposure-scan dependence is verified under AA26; its remaining test limits are listed below. |
+| AA4 | old #184 | Walk shape remains pinned; AA24 added comparison with the configured timeout. |
+| AA5 | old #186 | — |
+| AA8 | old #186 | the suite's size is stated nowhere, and the scale row's "about twice" a cold pass is a reader's to keep, not a check's |
+| AA17 | old #188 | a part-year return across the border is blocked, not modeled, and so is a non-citizen's dual-status federal year |
+| AA14 | old #189 | a cache without `table_bases` gets a note, and the row can be a dollar off either way; the TY2026 check is Y8 |
+| AA27 | old #189 | — |
+| AA28 | old #190 | the TY2026 `table_bases` check is Y8 |
+| AA29 | old #192 | AA30 moved household screening to Step 0.7; AA32 requires computation methods beside flagged household values. A typed method is not a receipt-bound proof. |
+| AA18 | old #193 | an acknowledged territory return adds the excluded income back by hand; a territory mailing address on a stateside resident blocks too, the degrade direction |
+| AA31 | old #194 | — |
+| AA30 | old #195 | AA32 added household computation methods; an acknowledged unsupported household's City or Yonkers tax remains manual. Supported Z8 plans use their variant guards. |
+| AA35 | old #238 | Verified federal/CA charitable vintage ledgers through setup, computation and rollover; missing worksheets require explicit resolution. |
+| AA36 | old #240 | Local paystub intake reconciles confirmed jobs into projection YTD with source and period evidence, masked extraction and secured publication. |
+| AA37 | old #241 | Confirmed regular Social Security worksheets reprice taxable benefits across scenario stacks and Roth rungs; the original income frame and covered-year evidence remain bound. |
+| AA38 | old #242 | Reviewed full-year TY2025 CA/NY/NC state/local liability reprices independently in scenarios and Roth sweeps; missing worksheets, allocations and unreviewed form years stay named limitations. |
+| AA39 | old #243 | Independent primary/spouse Form 8606 worksheets bind owned IRA balances and source allocations, preserve separate closing basis through rollover, and label individual reports and Roth planning. |
+| AA40 | old #244 | Account-specific crypto FIFO moves reviewed original lot slices through owned transfer links; missing inventory/evidence blocks completion and untagged universal imports from 2025 are diagnostic-only. |
 | AA41 | #6 | Reviewed years TY2023-2025 only: the TY2026 boxes are AA48, the cases that block for good AA47, a per-row broker-proceeds tie AA49, a narrower event map AA50, the 1099-DA boxes it never names AA59. |
-| AA19 | #216, #7 | — |
+| AA19 | old #216, #7 | — |
 | AA51 | #7 | A PDF the auditor's own fetch saves outside the export stays unread by decision, so such a figure goes UNVERIFIED; the export and the engine still answer four questions differently, filed as AA52. |
 | AA55 | #10 | Input boxes only: TY2026's Form 8949 boxes are AA48, and the 1099-DA boxes the import never names are AA59. |
 | AA59 | #12 | CA and NY 1099 withholding blocks the tie-out until AA60 routes it; the TY2023-2024 Form 1099-B boxes are AA61, specific identification AA62, local tax no return here claims AA63. |
@@ -566,20 +567,20 @@ that checks each row cannot yet; that is AA56.
 | AA61 | #43 | — |
 | AA85 | #49 | — |
 | AA49 | #51 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
-| AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
-| AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
-| AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
-| AA10 | #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |
-| AA33 | #199 | The permissions-hook absolute-timing rule reads whole-line comments only, as recorded under AA10; this is separate from X9's tax-figure prose lint. |
-| AA24 | #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |
-| AA9 | #197 | it times the pytest pass, not the selector and scan around it |
-| AA2 | #189 | the first green full matrix on `main` ran on #189's merge |
-| AA15 | #188 | AA29 checks flagged household values and the line-58 floor even for a typed total; AA32 adds method markers, which remain unbound to a computation receipt. |
-| Q7 | #156 | — |
-| Q9 | #156 | — |
-| Q8 | #158 | — |
-| Q10 | #158 | — |
-| hygiene | #160, #161, #162, #167 | Changes outside named backlog items; narrated in `docs/changelog/`. |
+| AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
+| AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
+| AA26 | old #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
+| AA10 | old #200 | outside MEASURED COSTS the timing rule reads whole-line comments only, and catches no duration in words |
+| AA33 | old #199 | The permissions-hook absolute-timing rule reads whole-line comments only, as recorded under AA10; this is separate from X9's tax-figure prose lint. |
+| AA24 | old #198 | it prices the walk only when the walk ran past a second, and reads its timeout from `settings.json` |
+| AA9 | old #197 | it times the pytest pass, not the selector and scan around it |
+| AA2 | old #189 | the first green full matrix on `main` ran on #189's merge |
+| AA15 | old #188 | AA29 checks flagged household values and the line-58 floor even for a typed total; AA32 adds method markers, which remain unbound to a computation receipt. |
+| Q7 | old #156 | — |
+| Q9 | old #156 | — |
+| Q8 | old #158 | — |
+| Q10 | old #158 | — |
+| hygiene | old #160, old #161, old #162, old #167 | Changes outside named backlog items; narrated in `docs/changelog/`. |
 
 Epics I through U shipped earlier; see `docs/changelog/README.md` for the
 per-epic index and `epic-R-U.md` for R1's audit baseline.
