@@ -604,15 +604,50 @@ def test_render_puts_earlier_columns_before_the_compared_years():
 def test_cli_trend_years_reads_each_earlier_archive(tmp_path):
     _write_workspace(tmp_path, 2026, _current())
     _write_archive(tmp_path, 2025, _prior())
-    _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))
+    older = _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))
     _write_archive(tmp_path, 2023, _older(2023, 150000, 130000))
+    # TY2024's own schedule puts its 152,500 of taxable income at 12%, where
+    # the prior or current year's TAX_LAW would say 22%. TY2023 has no law.
+    law_2024 = {"federal": {"filing_statuses": {"mfj": {"brackets": [
+        {"rate": 0.10, "min": 0, "max": 100000}, {"rate": 0.12, "min": 100001, "max": None}]}}}}
+    (older / "tax_law_2024.json").write_text(json.dumps(law_2024))
     res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
                     "--year", "2026", "--trend-years", "2", "--json"])
     assert res.returncode == 0, res.stderr
     payload = json.loads(res.stdout)
     assert payload["trend_years"] == [2023, 2024]
-    agi = next(m for m in payload["headlines"] if m["label"] == "AGI")
-    assert agi["history"] == [150000, 165000]
+    by_label = {m["label"]: m for m in payload["headlines"]}
+    assert by_label["AGI"]["history"] == [150000, 165000]
+    assert by_label["Marginal bracket"]["history"] == [None, 12.0]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
+def test_cli_trend_years_refuses_an_archive_linked_outside_the_workspace(tmp_path):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-2024"
+    outside.mkdir()
+    (outside / "result.json").write_text(json.dumps(_older(2024, 999999, 1)))
+    (outside / "taxpayer_profile.json").write_text(json.dumps({"filing_status": "MFJ"}))
+    (tmp_path / "archive" / "2024").symlink_to(outside, target_is_directory=True)
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--trend-years", "1"])
+    assert res.returncode == 1 and "999,999" not in res.stdout
+
+
+@pytest.mark.parametrize("damage", ["law_is_a_list", "meta_is_null"])
+def test_cli_malformed_trend_archive_refuses_cleanly(tmp_path, damage):
+    _write_workspace(tmp_path, 2026, _current())
+    _write_archive(tmp_path, 2025, _prior())
+    older = _write_archive(tmp_path, 2024, _older(2024, 165000, 145000))
+    if damage == "law_is_a_list":
+        (older / "tax_law_2024.json").write_text(json.dumps([{"federal": {}}]))
+    else:
+        doc = _older(2024, 165000, 145000)
+        (older / "result.json").write_text(json.dumps({**doc, "meta": None}))
+    res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
+                    "--year", "2026", "--trend-years", "1"])
+    assert res.returncode == 1 and res.stderr.startswith("ERROR") and "Traceback" not in res.stderr
 
 
 @pytest.mark.parametrize("args,fragment", [
@@ -631,28 +666,30 @@ def test_cli_save_writes_the_printed_report_owner_only(tmp_path):
     _write_archive(tmp_path, 2025, _prior())
     base = ["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path), "--year", "2026"]
     res = _run_cli(base)
-    assert res.returncode == 0 and not (tmp_path / "summaries").exists()
+    assert res.returncode == 0 and not (tmp_path / "reviews").exists()
     res = _run_cli([*base, "--save"])
     assert res.returncode == 0, res.stderr
-    saved = tmp_path / "summaries" / "yoy_diff_2025_to_2026.md"
+    saved = tmp_path / "reviews" / "yoy_diff_2025_to_2026.md"
     assert saved.read_text(encoding="utf-8") + "\n" == res.stdout
     assert "yoy_diff_2025_to_2026.md" in res.stderr
     if os.name == "posix":
         assert saved.stat().st_mode & 0o777 == 0o600
-        assert (tmp_path / "summaries").stat().st_mode & 0o777 == 0o700
-        # An existing summaries/ left listable is tightened, not trusted.
-        (tmp_path / "summaries").chmod(0o755)
+        assert (tmp_path / "reviews").stat().st_mode & 0o777 == 0o700
+        # An existing reviews/ left listable is tightened, not trusted.
+        (tmp_path / "reviews").chmod(0o755)
         assert _run_cli([*base, "--save"]).returncode == 0
-        assert (tmp_path / "summaries").stat().st_mode & 0o777 == 0o700
+        assert (tmp_path / "reviews").stat().st_mode & 0o777 == 0o700
+    # Never beside the per-document summaries a parse aggregates.
+    assert not (tmp_path / "summaries").exists()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="symlink creation needs privileges on Windows")
-def test_cli_save_refuses_a_linked_summaries_directory(tmp_path):
+def test_cli_save_refuses_a_linked_reviews_directory(tmp_path):
     _write_workspace(tmp_path, 2026, _current())
     _write_archive(tmp_path, 2025, _prior())
     elsewhere = tmp_path.parent / f"{tmp_path.name}-outside"
     elsewhere.mkdir()
-    (tmp_path / "summaries").symlink_to(elsewhere, target_is_directory=True)
+    (tmp_path / "reviews").symlink_to(elsewhere, target_is_directory=True)
     res = _run_cli(["--prior", str(tmp_path / "archive" / "2025"), "--current", str(tmp_path),
                     "--year", "2026", "--save"])
     assert res.returncode == 1 and "symlink or junction" in res.stderr

@@ -2,7 +2,8 @@
 """YoY What-Changed diff for /tax-review.
 
 Read-only unless `--save`, which writes the one owner-only report under
-`summaries/`. Pure compute functions + a markdown renderer + a CLI. Reuses
+`reviews/`, beside the /tax-review workpaper and away from `summaries/`, whose
+`*.md` files the parse and compute steps read as source-document figures. Pure compute functions + a markdown renderer + a CLI. Reuses
 load_prior/_get_path/etc from rollover.py.
 """
 
@@ -205,8 +206,9 @@ _HEADLINES = (("AGI", "$", True), ("Taxable income", "$", True),
 
 
 def _headline_values(doc: dict, tax_law: dict | None) -> dict:
-    """One year's headline figures. A year read without its own tax law has no
-    marginal bracket rather than one priced on another year's schedule."""
+    """One year's headline figures. With `tax_law` None (a trend year read
+    without its own law) there is no marginal bracket rather than one priced on
+    another year's schedule; the prior year's fallback is compute_headlines'."""
     agi = _num(doc, "form_1040.line_11_agi")
     ti = _num(doc, "form_1040.line_15_taxable_income")
     tax = _num(doc, "form_1040.line_24_total_tax")
@@ -448,20 +450,20 @@ def _load_tax_law(workspace: Path, year: int) -> dict:
 
 
 def save_report(workspace: Path, report: YoYReport) -> Path:
-    """Write the markdown report owner-only to `summaries/`, the one file
-    `--save` creates. A linked `summaries/` would carry the write, and the
+    """Write the markdown report owner-only to `reviews/`, the one file
+    `--save` creates. A linked `reviews/` would carry the write, and the
     chmod, outside the workspace, so it refuses."""
-    summaries = workspace / "summaries"
+    reviews = workspace / "reviews"
     try:
-        linked = is_reparse_point(summaries)
+        linked = is_reparse_point(reviews)
     except OSError as e:
-        raise RolloverError(f"Could not inspect {redact(summaries)}: {redact(e)}") from None
+        raise RolloverError(f"Could not inspect {redact(reviews)}: {redact(e)}") from None
     if linked:
-        raise RolloverError(f"{redact(summaries)} is a symlink or junction; refusing to write through it")
+        raise RolloverError(f"{redact(reviews)} is a symlink or junction; refusing to write through it")
     try:
-        summaries.mkdir(mode=0o700, exist_ok=True)
-        secure_path(summaries)
-        return write_secure(summaries / f"yoy_diff_{report.prior_year}_to_{report.current_year}.md",
+        reviews.mkdir(mode=0o700, exist_ok=True)
+        secure_path(reviews)
+        return write_secure(reviews / f"yoy_diff_{report.prior_year}_to_{report.current_year}.md",
                             render_markdown(report))
     except OSError as e:
         raise RolloverError(f"Could not save the YoY report: {redact(e)}") from None
@@ -496,7 +498,7 @@ def _main(argv: list) -> int:
                              "read from archive/{year} under the workspace (default: 0)")
     parser.add_argument("--save", action="store_true",
                         help="also write the markdown report owner-only to "
-                             "summaries/yoy_diff_{prior}_to_{year}.md")
+                             "reviews/yoy_diff_{prior}_to_{year}.md")
     args = parser.parse_args(argv)
 
     # argparse type=float accepts nan/inf; reject them — a nan threshold makes every
@@ -528,7 +530,9 @@ def _main(argv: list) -> int:
         earlier = []
         for back in range(args.trend_years, 0, -1):
             older = year - 1 - back
-            older_dir = workspace / "archive" / str(older)
+            # Under the workspace, as --prior is: a linked archive/{year}
+            # must not bring another directory's figures into the report.
+            older_dir = resolve_under_workspace(f"archive/{older}", workspace)
             # An asked-for column is never silently dropped: every year named
             # must have its archive, which load_prior checks for that year.
             earlier.append((older, load_prior(older_dir, older).result,
@@ -538,6 +542,12 @@ def _main(argv: list) -> int:
         saved = save_report(workspace, report) if args.save else None
     except (WorkspaceError, RolloverError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
+        return 1
+    except (OSError, AttributeError, TypeError) as e:
+        # An unreadable archive file, or a result or law that is not the
+        # object it should be: a clean refusal, never a traceback whose
+        # OSError would carry the raw path.
+        print(f"ERROR: could not read the archived returns: {redact(e)}", file=sys.stderr)
         return 1
 
     if saved is not None:
