@@ -1749,3 +1749,19 @@ def test_reviewed_tax_dates_apply_to_income_and_its_inventory_basis_as_well():
     assert result['ordinary_income']['events'][0]['date'].startswith('2025-12-31')
     lot, = result['account_fifo']['inventory']['A']['BTC']
     assert (lot['acquired_tax_date'], lot['basis_usd']) == ('2025-12-31', 10)
+
+
+def test_mixed_offsets_cannot_print_an_acquisition_after_its_sale():
+    # The +08:00 buy is 2025-06-01T16:30Z, before the 20:00Z sale, so FIFO
+    # funds the sale from it, but the buy's own calendar dates it 2025-06-02:
+    # the row would read acquired the day after it was sold. No calendar
+    # review is involved; the check runs on every import.
+    tx = [event('A', 'buy', 'buy', '2025-06-02T00:30:00+08:00', usd=100),
+          event('A', 'sale', 'sell', '2025-06-01T20:00:00Z', usd=150)]
+    with pytest.raises(C.CryptoImportError,
+                       match=r'acquisition date falls after its disposal \(sale A/sale, lot A/buy\)'):
+        run(reporting(received=False), tx)
+    # The same buy restated in UTC reads 2025-06-01, the sale's own day.
+    tx[0] = {**tx[0], 'date': '2025-06-01T16:30:00Z'}
+    row = only(resolved(run(reporting(received=False), tx)))
+    assert (row['date_acquired'], row['date_sold']) == ('2025-06-01', '2025-06-01')
