@@ -2829,6 +2829,14 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     missing_targets.extend(_digital_rows_match_form_8949(result))
     missing_targets.extend(_manual_disposals_on_the_return(result))
     digital_rows = _digital_asset_rows(result)
+    # The sum loop only visits ledgered categories. A form-backed sale with
+    # no capital_proceeds entry otherwise passes without any source tie at all,
+    # even when its broker reports zero proceeds and the sale makes a loss.
+    if ('capital_proceeds' not in sums and any(
+            name not in _NO_BROKER_FORM_DIGITAL_ROWS and row.get('broker_proceeds') is not None
+            for name, row in digital_rows)):
+        missing_targets.append('Form-backed digital rows require ledgered capital_proceeds, '
+                               'including a reported zero')
     missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):
         missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "

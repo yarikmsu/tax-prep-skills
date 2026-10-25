@@ -990,9 +990,11 @@ def test_tie_out_refuses_a_basis_mode_nothing_can_complete():
 
 
 def _employer_ledger(adjustment):
+    # Consolidated broker worksheet: RSU proceeds20,000 plus digital proceeds600.
     return tie_out.load_ledger({'records': [dict(
         doc_id='supp', file='documents/supplemental.pdf', form_type='supplemental', payer='Broker',
-        person='primary', key_boxes={'employer_stock_basis_adjustment': adjustment}, skipped=None)]})
+        person='primary', key_boxes={'employer_stock_basis_adjustment': adjustment,
+                                    'capital_proceeds': 20600}, skipped=None)]})
 
 
 def _rsu_and_crypto(**crypto_row):
@@ -1986,6 +1988,29 @@ def test_a_merged_import_ties_box_by_box_to_its_own_form_8949_rows():
     assert not report.failed, report.missing_result_targets
 
 
+@pytest.mark.parametrize('proceeds', [0, 150])
+def test_form_backed_digital_rows_need_a_capital_proceeds_ledger_entry(proceeds):
+    tx = copy.deepcopy(BASE)
+    tx[-1]['usd_amount'] = proceeds
+    result = _merged(resolved(run(reporting(form(proceeds=proceeds)), tx)))
+    # Without the source form, no capital_proceeds category exists to compare.
+    # A zero-proceeds loss still needs that source, with a worked zero.
+    report = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                              specific_identification_answer=False)
+    assert report.failed
+    assert any('ledgered capital_proceeds' in t for t in report.missing_result_targets)
+    report = tie_out.evaluate(_broker_ledger(proceeds), result, ['documents/1099DA.pdf'],
+                              option_exercise_answer=False, specific_identification_answer=False)
+    assert not report.failed, report.missing_result_targets
+
+
+def test_a_no_form_digital_import_needs_no_broker_ledger_entry():
+    result = _merged(resolved(run(reporting(received=False))))
+    report = tie_out.evaluate([], result, [], option_exercise_answer=False,
+                              specific_identification_answer=False)
+    assert not report.failed, report.missing_result_targets
+
+
 @pytest.mark.parametrize('damage', ['shift_short_to_long', 'swap_rows', 'loss_merged_twice'])
 def test_schedule_d_digital_rows_cannot_move_away_from_their_form_8949_rows(damage):
     # Each change keeps every proceeds total, so only the box-by-box tie sees it.
@@ -2420,9 +2445,10 @@ def test_an_aggregate_box_on_any_other_form_still_refuses(key, value):
 
 def test_an_aggregate_import_ties_out_by_box():
     built = resolved(run(aggregate_reporting(), USDC))
-    targets = tie_out.evaluate([], _merged(built), [], option_exercise_answer=False,
-                               specific_identification_answer=False).missing_result_targets
-    assert not [t for t in targets if 'digital' in t.lower() or 'crypto' in t.lower()], targets
+    # USDC annual form:200.10 +199.95 +100.02 =500.07 from500 units.
+    report = tie_out.evaluate(_broker_ledger(500.07), _merged(built), ['documents/1099DA.pdf'],
+                              option_exercise_answer=False, specific_identification_answer=False)
+    assert not report.failed, report
 
 
 def test_an_option_caused_sale_cannot_sit_in_an_optional_aggregate():
