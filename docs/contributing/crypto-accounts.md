@@ -275,7 +275,13 @@ stale, leaves a difference no import reported and fails, as does column (d)
 below its broker figures. The scalar must be a finite, nonnegative whole-cent
 amount; absent, it reads as zero. A row's broker figure is allocated from its
 form in proportion to its own column (d), so fills of one order at different
-prices each keep their own. A non-zero
+prices each keep their own. Where the merged Form 8949 account rows are
+present, each Schedule D digital row must also equal their sum for its box, in
+proceeds, cost, adjustment, gain and broker figure, to the cent: the totals
+alone cannot see column (d) and gain moved from a short-term row to a
+long-term one, or a $0 loss merged twice. A stale import whose own figures
+still agree with each other is the one case these checks cannot see; only a
+rebuild from the current forms shows it. A non-zero
 no-form row keeps the tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
 

@@ -1958,3 +1958,58 @@ def test_a_digital_rows_column_d_must_be_a_whole_cent_amount(proceeds):
         option_exercise_answer=False, specific_identification_answer=False)
     assert report.failed
     assert any('whole-cent amounts' in t for t in report.missing_result_targets)
+
+
+def _merged(built):
+    # result.json as tax-parse-crypto merges an import: its Form 8949 rows, its
+    # summary, and each routed box added into the Schedule D row it names.
+    schedule = {'part_i_short_term': {}, 'part_ii_long_term': {}}
+    for route in built['broker_reporting']['schedule_d_routing'].values():
+        schedule[route['part']][route['row']] = {key: route[key] for key in (
+            'proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code', 'broker_proceeds')}
+    return {'crypto_summary': built['crypto_summary'], 'form_8949': built['form_8949'], 'schedule_d': schedule}
+
+
+def _split_import():
+    # One sale of 2 BTC for 300 from a long and a short lot, one 1099-DA each.
+    tx = [event('A', 'old', 'buy', '2023-01-01', 1, 50), event('A', 'new', 'buy', '2025-01-02', 1, 50),
+          event('A', 'sale', 'sell', '2025-03-01', 2, 300)]
+    forms = [form(form_id='lt', quantity='1', proceeds=150, term='long'),
+             form(form_id='st', quantity='1', proceeds=150, term='short')]
+    return resolved(run(reporting(*forms), tx))
+
+
+def test_a_merged_import_ties_box_by_box_to_its_own_form_8949_rows():
+    report = tie_out.evaluate(_broker_ledger(300), _merged(_split_import()), ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert not report.failed, report.missing_result_targets
+
+
+@pytest.mark.parametrize('damage', ['shift_short_to_long', 'swap_rows', 'loss_merged_twice'])
+def test_schedule_d_digital_rows_cannot_move_away_from_their_form_8949_rows(damage):
+    # Each change keeps every proceeds total, so only the box-by-box tie sees it.
+    result = _merged(_split_import())
+    short, long = (result['schedule_d'][part][row] for part, row in (
+        ('part_i_short_term', 'line_2_digital_assets'), ('part_ii_long_term', 'line_9_digital_assets')))
+    if damage == 'shift_short_to_long':
+        for key in ('proceeds', 'gain', 'broker_proceeds'):
+            short[key] -= 60
+            long[key] += 60
+    elif damage == 'swap_rows':
+        short['cost'], long['cost'] = long['cost'] + 10, short['cost'] - 10
+        short['gain'], long['gain'] = long['gain'] - 10, short['gain'] + 10
+    else:
+        short['cost'] *= 2
+        short['gain'] = short['proceeds'] - short['cost']
+    report = tie_out.evaluate(_broker_ledger(300), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert report.failed
+    assert any('sum of its routed Form 8949 digital rows' in t for t in report.missing_result_targets)
+
+
+def test_a_missing_broker_figure_is_reported_once_not_as_a_second_excess():
+    result = _with_box_k(150, 10)
+    del result['schedule_d']['part_ii_long_term']['line_9_digital_assets']['broker_proceeds']
+    report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
+        option_exercise_answer=False, specific_identification_answer=False)
+    assert not any('exceeds its rows' in t for t in report.missing_result_targets)
