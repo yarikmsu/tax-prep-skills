@@ -257,10 +257,19 @@ Obtain the taxpayer's confirmation and evidence, record it in `answers.md`,
 and immediately run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md`.
 Copy the original context and values before entering the corrected facts.
 Never adopt a broker figure solely to clear a mismatch. FIFO is recomputed;
-all form and capability gates still apply. This path cannot change dates,
-fees, identities or lot selection. Preserve its complete correction workpaper.
+all form and capability gates still apply. For a date mismatch at year-end,
+follow the separate `tax_calendar_review` contract:
+obtain external review and explicit confirmation of all accounts' filing dates,
+including original acquisitions and income, and record the evidence in
+`answers.md`. Immediately run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md`.
+Require the same actual instant; never select the broker's year by default.
+An original offset-free timestamp needs documented UTC-source confirmation;
+a date alone cannot supply a time. Preserve the complete correction and
+calendar workpapers. Fees, identities and lot selection remain unsupported.
 A `PRIOR-YEAR RETURN` caveat means the correction changes a year already
-reported: show it to the user and offer `/tax-amend` for that year.
+reported: show it to the user and offer `/tax-amend` for that year. A
+`YEAR MOVE` caveat means every import covering the named years must carry the
+same review and corrections; record that in `answers.md` for the next year.
 
 Add `broker_reporting` from the parsed broker forms — the schema, the year
 table and every treatment are in `docs/contributing/crypto-accounts.md`

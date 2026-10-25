@@ -1423,19 +1423,74 @@ def _schedule_d_routing(rows) -> 'dict[str, dict]':
 # Aggregator
 # --------------------------------------------------------------------------
 
-def _apply_source_corrections(transactions, corrections, account_mode):
+def _tax_calendar_review(raw):
+    if raw is None:
+        return None
+    required = {'calendar_label', 'all_account_dates_reviewed', 'evidence'}
+    if (not isinstance(raw, dict) or not required <= set(raw) <= required | {'naive_timestamps_are_utc'}
+            or raw['all_account_dates_reviewed'] is not True):
+        raise CryptoImportError('Tax calendar review requires its label, evidence and all_account_dates_reviewed true')
+    if 'naive_timestamps_are_utc' in raw and type(raw['naive_timestamps_are_utc']) is not bool:
+        raise CryptoImportError('naive_timestamps_are_utc must be an explicit boolean')
+    _account_id(raw['calendar_label'], 'reviewed calendar label')
+    _account_id(raw['evidence'], 'tax calendar evidence')
+    return dict(raw)
+
+
+def _reviewed_tax_timestamp(value, *, naive_utc=False):
+    if not isinstance(value, str):
+        raise CryptoImportError('Tax date correction requires a full ISO timestamp with an offset, never a date alone')
+    text = value.strip()
+    text = (text.removesuffix(' UTC') + ('+00:00' if text.endswith(' UTC') else '')).replace('Z', '+00:00')
+    match = re.fullmatch(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}'
+                         r'(?::\d{2}(?:[.,](?P<fraction>\d+))?)?'
+                         r'(?P<offset>[+-]\d{2}(?::?\d{2})?)?', text)
+    if not match:
+        raise CryptoImportError('Tax date correction requires a full ISO timestamp with an HH:MM UTC offset, never a date alone')
+    offset_digits = match['offset'][1:].replace(':', '') if match['offset'] else ''
+    if len(offset_digits) == 4 and int(offset_digits[2:]) >= 60:
+        raise CryptoImportError('Tax date correction has an invalid UTC offset')
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        raise CryptoImportError('Tax date correction requires a valid ISO timestamp') from None
+    if parsed.tzinfo is None:
+        if not naive_utc:
+            raise CryptoImportError('An original naive timestamp needs explicit UTC source confirmation; the corrected timestamp needs an offset')
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    elif not -12 * 3600 <= parsed.utcoffset().total_seconds() <= 14 * 3600:
+        # Civil time runs from UTC-12:00 to UTC+14:00; an offset outside it
+        # names no calendar and could only push a date across a year.
+        raise CryptoImportError('Tax date correction offset must lie between -12:00 and +14:00')
+    try:
+        utc = parsed.astimezone(datetime.timezone.utc)
+        fraction = Fraction('0.' + match['fraction']) if match['fraction'] else Fraction(0)
+    except (ValueError, OverflowError):
+        raise CryptoImportError('Tax date correction instant is outside the supported calendar range') from None
+    # fromisoformat truncates submicrosecond digits. Compare the full decimal
+    # fraction, not its rounded/truncated datetime, to certify the same instant.
+    instant = utc.toordinal() * 86400 + utc.hour * 3600 + utc.minute * 60 + utc.second + fraction
+    return parsed, instant
+
+
+def _apply_source_corrections(transactions, corrections, account_mode, calendar_review=None):
     """Apply evidenced facts before FIFO, never a tolerance against a form.
 
     Expected context and values bind a correction to its original event.
-    Only quantity and USD value are supported; identity, dates and lot-selection
-    changes require their own contracts. The caller's source records stay intact.
+    Dates need a separately reviewed calendar and an unchanged actual instant.
+    The caller's source records stay intact.
     """
+    calendar = _tax_calendar_review(calendar_review)
     if corrections is None:
-        return transactions, []
+        if calendar:
+            raise CryptoImportError('Tax calendar review has no date corrections')
+        return transactions, [], None, []
     if not isinstance(corrections, list):
         raise CryptoImportError('source_corrections must be a list of reviewed source facts')
     if not corrections:
-        return transactions, []
+        if calendar:
+            raise CryptoImportError('Tax calendar review has no date corrections')
+        return transactions, [], None, []
     if not account_mode:
         raise CryptoImportError('Source corrections require explicit account and transaction IDs')
     indices = {}
@@ -1447,7 +1502,8 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         if key in indices:
             raise CryptoImportError('Source corrections require unique account/transaction IDs')
         indices[key] = index
-    updated, records, used = list(transactions), [], set()
+    updated, records, used, date_changes = list(transactions), [], set(), False
+    moves = []
     for correction in corrections:
         if not isinstance(correction, dict) or set(correction) != {
                 'account_id', 'txn_id', 'expected', 'corrected', 'evidence'}:
@@ -1460,8 +1516,8 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         if key in used:
             raise CryptoImportError('Source corrections must not repeat a transaction')
         values, expected = correction['corrected'], correction['expected']
-        if not isinstance(values, dict) or not values or not set(values) <= {'quantity', 'usd_amount'}:
-            raise CryptoImportError('A source correction changes only quantity and/or usd_amount')
+        if not isinstance(values, dict) or not values or not set(values) <= {'quantity', 'usd_amount', 'date'}:
+            raise CryptoImportError('A source correction changes only quantity, usd_amount or a reviewed tax date')
         context = {'date', 'asset', 'kind'}
         if not isinstance(expected, dict) or set(expected) != context | set(values):
             raise CryptoImportError('Expected source context needs date, asset, kind and each corrected field')
@@ -1474,6 +1530,21 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         for name, value in values.items():
             if name not in raw:
                 raise CryptoImportError('A source correction must name an existing source field')
+            if name == 'date':
+                if calendar is None:
+                    raise CryptoImportError('A tax date correction requires review of all account dates')
+                original_date, original_instant = _reviewed_tax_timestamp(
+                    raw[name], naive_utc=calendar.get('naive_timestamps_are_utc', False))
+                corrected_date, corrected_instant = _reviewed_tax_timestamp(value)
+                if original_instant != corrected_instant:
+                    raise CryptoImportError('A tax date correction must preserve the exact UTC instant')
+                days = abs((corrected_date.date() - original_date.date()).days)
+                if days == 0 or days > 1:
+                    raise CryptoImportError('A tax date correction must change the calendar date by one day')
+                if corrected_date.year != original_date.year:
+                    moves.append((key, original_date.year, corrected_date.year))
+                date_changes = True
+                continue
             if name == 'quantity' and not isinstance(value, str):
                 # json.loads rounds a long number to a float before this sees
                 # it, so the "full precision" fact would be recorded rounded.
@@ -1493,7 +1564,64 @@ def _apply_source_corrections(transactions, corrections, account_mode):
         used.add(key)
         records.append(dict(account_id=key[0], txn_id=key[1], expected=dict(expected),
                             corrected=dict(values), evidence=evidence))
-    return updated, records
+    if calendar and not date_changes:
+        raise CryptoImportError('Tax calendar review has no date corrections')
+    return updated, records, calendar if date_changes else None, moves
+
+
+def _timestamp_instant(value, naive_utc):
+    """A recorded timestamp as an aware instant, or None when it has no
+    calendar to re-read: a date alone, or a naive time nobody confirmed was
+    UTC."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    text = (text.removesuffix(' UTC') + ('+00:00' if text.endswith(' UTC') else '')).replace('Z', '+00:00')
+    if not re.match(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', text):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc) if naive_utc else None
+    return parsed
+
+
+def _check_reviewed_calendar(rows_all, transactions, records, calendar) -> None:
+    """A corrected date moves one record to another calendar. Near the
+    one-year line, a row whose two dates are read in different calendars can
+    flip between short and long term while each date is individually right.
+    Within three days of it (two offsets put one instant at most two calendar
+    days apart, and a February 29 anniversary adds a third), both dates the
+    row uses must be what both instants read in one of the two offsets. The
+    comparison is with the dates the row uses, so a timestamp whose recorded
+    date and instant disagree refuses as well."""
+    corrected = {(r['account_id'], r['txn_id']) for r in records if 'date' in r['corrected']}
+    by_key = {(t['account_id'], t['txn_id']): t for t in transactions}
+    naive_utc = calendar.get('naive_timestamps_are_utc', False)
+    window = datetime.timedelta(days=3)
+    for row in rows_all:
+        sale, origin = (row.account_id, row.txn_id), (row.origin_account_id, row.origin_txn_id)
+        if row.date_acquired == 'UNKNOWN' or not ({sale, origin} & corrected):
+            continue
+        acquired, sold = (datetime.date.fromisoformat(row.date_acquired),
+                          datetime.date.fromisoformat(row.date_sold))
+        if _holding_period(acquired, sold - window) == _holding_period(acquired, sold + window):
+            continue
+        source = by_key.get(origin, {})
+        # The importer strips and lowercases kinds; read them the same way or
+        # a padded ' receive' compares its transfer date, not its acquisition.
+        receive = str(source.get('kind', '')).strip().lower() == 'receive'
+        acquired_raw = source.get('acquired') if receive else source.get('date')
+        ends = (_timestamp_instant(by_key.get(sale, {}).get('date'), naive_utc),
+                _timestamp_instant(acquired_raw, naive_utc))
+        if None in ends or not any(
+                (ends[0].astimezone(zone).date(), ends[1].astimezone(zone).date()) == (sold, acquired)
+                for zone in {end.tzinfo for end in ends}):
+            raise CryptoImportError('A reviewed tax date leaves a sale within three days of its one-year holding '
+                                    'period with dates that no one calendar gives; correct the other date into '
+                                    'the same calendar, or prepare that sale externally')
 
 
 def _prior_years_corrected(rows_all, records, tax_year) -> 'list[int]':
@@ -1545,11 +1673,14 @@ def build_crypto_import(transactions: 'list[dict]', *,
     account_mode = tagged or account_aware is True or transfer_links is not None
     corrections = (broker_reporting.get('source_corrections')
                    if isinstance(broker_reporting, dict) else None)
-    transactions, correction_records = _apply_source_corrections(
-        transactions, corrections, account_mode)
-    if isinstance(broker_reporting, dict) and 'source_corrections' in broker_reporting:
+    calendar_review = (broker_reporting.get('tax_calendar_review')
+                       if isinstance(broker_reporting, dict) else None)
+    transactions, correction_records, reviewed_calendar, date_moves = _apply_source_corrections(
+        transactions, corrections, account_mode, calendar_review)
+    if isinstance(broker_reporting, dict) and ('source_corrections' in broker_reporting or 'tax_calendar_review' in broker_reporting):
         broker_reporting = dict(broker_reporting)
-        del broker_reporting['source_corrections']  # Consumed before the broker-form validator.
+        broker_reporting.pop('source_corrections', None)  # Consumed before the broker-form validator.
+        broker_reporting.pop('tax_calendar_review', None)
     txns = [_coerce_transaction(t, i) for i, t in enumerate(transactions)]
     if specific_identification is not None and not isinstance(specific_identification, bool):
         raise CryptoImportError('specific_identification must be boolean or null')
@@ -1590,6 +1721,24 @@ def build_crypto_import(transactions: 'list[dict]', *,
         rows_all, all_incomes, disposals, account_report = _match_account_fifo(transactions, txns, transfer_links)
     else:
         rows_all = match_lots(acquisitions, disposals)
+    if reviewed_calendar and any(
+            row.date_acquired != 'UNKNOWN' and row.date_acquired > row.date_sold for row in rows_all):
+        raise CryptoImportError('Reviewed calendar leaves an acquisition date after its disposal; reconcile all account dates')
+    year_moves = []
+    if reviewed_calendar:
+        _check_reviewed_calendar(rows_all, transactions, correction_records, reviewed_calendar)
+        taxable_keys = ({(r.account_id, r.txn_id) for r in rows_all}
+                        | {(e.account_id, e.txn_id) for e in all_incomes})
+        year_moves = [move for move in date_moves if move[0] in taxable_keys]
+        if any(new > old for _, old, new in year_moves):
+            # The earlier year's import dates the event in that year. Without
+            # this correction it reports it there, so the later return would
+            # report it again; with it, the earlier return excludes it while
+            # the later import, which cannot carry it, re-dates it back:
+            # reported twice or not at all.
+            raise CryptoImportError('A reviewed tax date cannot move a disposal or income event into a later '
+                                    'year; report it in the year its import dates it, or prepare the '
+                                    'year-end case externally')
     taxable_disposals = [d for d in disposals if d.taxable]  # excludes non-taxable `send`
     if tax_year is not None:
         rows = [r for r in rows_all if int(r.date_sold[:4]) == tax_year]
@@ -1708,6 +1857,16 @@ def build_crypto_import(transactions: 'list[dict]', *,
             result['caveats'].insert(0, f"PRIOR-YEAR RETURN: a source correction changes disposals reported for "
                                         f"TY{', TY'.join(map(str, prior))}; review whether that return needs "
                                         'Form 1040-X (/tax-amend) so both years use the same basis.')
+    if reviewed_calendar:
+        result['tax_calendar_review'] = reviewed_calendar
+        result['caveats'].append('Filing dates follow the externally reviewed tax calendar; '
+                                 'preserve tax_calendar_review with the source-correction workpaper.')
+    if year_moves:
+        pairs = ', '.join(sorted({f'TY{old} to TY{new}' for _, old, new in year_moves}))
+        result['caveats'].insert(0, f'YEAR MOVE: a reviewed tax date moves {len(year_moves)} disposal or income '
+                                    f'event(s) from {pairs}. Every import covering those years must carry the '
+                                    'same tax_calendar_review and source_corrections, or one year reports the '
+                                    'event again; review a filed return among them for /tax-amend.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])
@@ -2428,8 +2587,8 @@ def _cli_compute(argv: 'list[str]') -> int:
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
         raise CryptoImportError(f"{redact(path)} is not valid JSON: {redact(e)}")
     txns = data.get("transactions", data) if isinstance(data, dict) else data
-    if isinstance(data, dict) and 'source_corrections' in data:
-        raise CryptoImportError('Put source_corrections inside broker_reporting; a top-level field is not applied')
+    if isinstance(data, dict) and {'source_corrections', 'tax_calendar_review'} & set(data):
+        raise CryptoImportError('Put source_corrections and tax_calendar_review inside broker_reporting; top-level fields are not applied')
     year = None
     if "--year" in argv:
         raw_year = _flag_value(argv, "--year")
