@@ -45,7 +45,7 @@ Written 2026-09-20, replacing eight roadmap files totalling 3,626 lines.
 | `2026-07-12`, `2026-07-17`, `2026-07-20` reviews | Epics I-O, all shipped; `docs/changelog/epic-{I,J,K,L,M,N,O}.md`. |
 
 The historical design directory was retired after the 2026-10-03 review.
-Unimplemented extensions are AA42-AA46 below. Maintained state contracts and
+Unimplemented extensions are AA44 and AA45 below. Maintained state contracts and
 the template moved to `docs/contributing/state-module-{ny,nc,wa,template}.md`,
 indexed in AGENTS.md §9. Origins below and historical changelog citations link
 to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/017d2dd45ead/docs/superpowers).
@@ -64,7 +64,7 @@ reaches; the plan's order is who those filers are.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
-AA44-AA46 below now carry the rest of that scope (AA42 and AA43 have shipped) instead of relying on historical plans.
+AA44 and AA45 below now carry the rest of that scope (AA42, AA43 and AA46 have shipped) instead of relying on historical plans.
 The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
@@ -85,10 +85,10 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA47** — the 1099-DA cases that still block. **AA50** — the narrower event map AA41 filed. | Nothing here waits on a publication; every item is federal work a CA filer reaches. AA47 turns a permanent block into a return. AA50 is a performance change, so it needs a before-and-after benchmark. |
+| **1. California filers: ready now** | **AA47** — the one 1099-DA case that still blocks, a specified-NFT optional aggregate form. | Nothing here waits on a publication; it is federal work a CA filer reaches, and it turns a permanent block into a return. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
-| **3. California filers: larger extensions** | AA44-AA46 — prior-return import, multi-year Roth planning and the YoY report's PDF embed. | Larger product extensions; AA46's embed waits on a pipeline-order decision. |
-| **4. Other states** | **AA63** — say when a local tax is withheld that no return here claims. **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
+| **3. California filers: larger extensions** | AA44 and AA45 — prior-return import and multi-year Roth planning. | Larger product extensions. Each has a design PR awaiting the owner's approval (#59 and #58), with the decisions it needs listed. |
+| **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -100,31 +100,18 @@ Trigger and range behavior is documented in
 
 - **AA47 (P2, M): Give the 1099-DA cases AA41 blocks for good a way through.**
   AA41 links each form to one disposal by `txn_id` and requires matching units
-  and proceeds, so some cases blocked for good. Three now have evidenced
-  treatments: linked partial fills (#44), reviewed source corrections for an
-  export's lost precision or wrong USD value (#45), and a reviewed filing date
-  for a sale the import and the broker put on opposite sides of year-end (#46).
-  A reviewed plain-USD option premium now prices an exercised option's sale
-  or lot (#47). Still blocking: a broker using §1.6045-1(d)(10)'s optional
-  aggregate method for qualifying stablecoins or specified NFTs (one form per
-  stablecoin type, date sold possibly blank); a filled box the engine does not
-  model (ordinary, accrued market discount, wash sale, loss not allowed, 3a's
-  net proceeds, the QOF box 3b, customer-provided acquisition information,
-  first-sale NFT proceeds and CUSIP), which refuses the WHOLE import though the
-  doc says to report that one transaction manually and no input can mark it
-  so; and fills priced in fractions of a cent, each rounded on its own while
-  the broker rounds the order once, which leave a one-cent gap that group
-  resolutions may not close (#44's review). Each needs its own evidenced
-  treatment, not a tolerance. Until then the import blocks instead of
-  guessing. Two option follow-ups from #47's review need no new input: a
-  purchased put's holding-period check reads only the lots sold, not other
-  same-asset lots held one year or less when the put was bought, which Pub.
-  550's married-put rule makes short-term for stock (§1233(e)(2)(A) may not
-  reach spot crypto, and the path already attests no straddle); and a written
-  call's premium on a gross 1099-DA shows as proceeds above the form, where
-  the Form 8949 instructions put the form's figure in column (d) and the
-  premium in column (g) under code E, the gain being the same. Found by
-  AA41's review.
+  and proceeds, so some cases blocked for good. Each now has an evidenced
+  treatment but one: linked partial fills (#44), reviewed source corrections
+  for an export's lost precision or wrong USD value (#45), a reviewed filing
+  date for a sale the import and the broker put on opposite sides of year-end
+  (#46), reviewed plain-USD option premiums (#47), a written call's premium as
+  code E, Pub. 550's married-put rule, once-rounded fill groups and manual
+  disposals for a box the engine does not model (#60), and optional aggregate
+  forms for qualifying stablecoins (#64). Still blocking: a broker using
+  §1.6045-1(d)(10)'s optional aggregate method for specified NFTs, whose one
+  form joins different assets and can carry box 11c's first-sale proceeds,
+  kept out of box 1f. It needs its own evidenced treatment, not a tolerance;
+  until then the import blocks instead of guessing. Found by AA41's review.
 
 - **AA48 (P1, S): Add the TY2026 Form 8949 boxes before TY2026 crypto imports.**
   `_REPORTING_REGIMES` holds TY2023-2025 only, so every TY2026 import with a
@@ -149,27 +136,6 @@ Trigger and range behavior is documented in
   `answers.md` until then.
 
 
-- **AA50 (P3, XS): Build the importer's event map from filing-year disposals
-  only.** `build_crypto_import` parses every transaction's date and converts
-  every fee to cents, buys and receives included, to look up the filing-year
-  disposals that reconcile against broker forms, though `_match_account_fifo`
-  has already parsed those dates. Negligible at realistic sizes. A narrower
-  map must keep a full one for the fill-group `group_id` collision check (#44),
-  which refuses a group named after ANY transaction, a buy or another year's
-  sale included. Found by AA41's review.
-
-
-- **AA63 (P2, S): Say when a local tax is withheld that no return here claims.**
-  `/tax-parse` records local tax withheld only for NYC and Yonkers, whose
-  amounts IT-201 and IT-203 settle (a 1099-R's or W-2G's blocks until AA60).
-  Local tax withheld anywhere else, such as an Ohio or Pennsylvania
-  municipality's on a W-2 box 19, 1099-R box 17 or W-2G box 17, reaches
-  Schedule A line 5a (AA59) but no ledger category, so nothing tells the
-  taxpayer that the locality may expect a return of its own or owe a refund,
-  and the toolkit computes no local return. Add an advisory category like
-  `other_state_withholding`, or a capability rule that names the local
-  return, deciding between them by whether the payment is ever claimed
-  without one. Found while fixing AA59's Schedule A recipe.
 
 
 - **AA79 (P2, M): Review TY2026 for the NY and NC payment forecasts.** AA43
@@ -266,26 +232,6 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   a future-year forecast must not masquerade as a filing computation.
   Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
-- **AA46 (P3, M): Extend YoY reports to multi-year, saved and PDF outputs.**
-  Earlier-year columns (`--trend-years`) and an owner-only saved report under
-  `reviews/` (`--save`) shipped in #50. The PDF embed remains, and it needs an
-  owner decision first: `/tax-generate` builds the PDF before `/tax-review`
-  runs the diff, so the embed must either run the diff itself or move after
-  the review in the pipeline. Any narrative must follow
-  the measured changes without asserting unsupported causes. Keep arbitrary
-  recursive field diffs out; a separate `/tax-diff` skill is demand-gated.
-  Origin: [2026-05-25-yoy-diff-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-25-yoy-diff-design.md) §Open follow-ups.
-
-Other explicit historical boundaries remain demand-gated scope candidates:
-NOL computation/rollover; ISO dual-basis and unsold-lot rollover; crypto
-specific identification, NFT/DeFi/business classification; Roth distribution
-ordering and inherited IRAs; PFIC QEF/MTM/transition elections and broader
-Form 8938 computation; NC business/recovery/Taxed-PTE work and additional NY
-credit worksheets. The current capability gates and manual-input contracts
-continue to describe those limits. These are not evidence that the shipped
-v1 features failed their definitions of done. The existing declined packaging
-and vendor-CI rulings remain closed.
-
 
 ### Y — distribution and product
 
@@ -327,7 +273,6 @@ and vendor-CI rulings remain closed.
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
 | **AA83** | FTB publishing the 2026 Form 540 booklet and the year's Schedule CA and FTB 5805 instructions. The booklet's year-pinned URL returned 404 on 2026-10-24. |
 | **AA84** | FTB publishing the TY2026 indexed amounts. Its October 2026 Tax News returned 404 on 2026-10-24. |
-| **AA79** | North Carolina publishing the TY2026 D-401, whose Schedule S lines and IRC conformity date `nc.py` reads per year; the NY part shipped. The 2026 estimator worksheet alone was live on 2026-10-25. |
 | **AA79** | The TY2026 IT-201 and IT-196 instructions (NY) and D-401 (NC), which print the household credit tables, the §615 limitation, the subtraction caps, the IT-201 tax table and NC's Schedule S lines and conformity date; the 2026 IT-2105 and NC estimator worksheet alone were live on 2026-10-25. |
 | **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. Its year-pinned URL returned 404 on 2026-10-24. |
 
@@ -562,6 +507,9 @@ merge.
 | AA61 | #43 | — |
 | AA85 | #49 | — |
 | AA56 | #53 | — |
+| AA46 | #50, #57 | Arbitrary recursive field diffs stay out, and a separate `/tax-diff` skill is demand-gated. |
+| AA63 | #62 | Advisory only: no local return is computed, and a flat head tax is recorded nowhere. |
+| AA50 | #63 | FIFO matching still prices every lot slice in exact fractions, the import's remaining cost. |
 | AA49 | #51 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |

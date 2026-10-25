@@ -3770,3 +3770,92 @@ writes the private repository's pull requests as `old #N`, and the test
 checks those against the history of the recreation commit `0a05d0c` and every
 `#N` against the merges after it, failing by name if a later rewrite drops
 that commit.
+
+## AA46 (part) — the saved YoY report in the summary PDF (#57)
+
+The owner chose the embed over reordering the pipeline: `/tax-generate`
+builds the PDF before `/tax-review` runs, so the PDF now reads the report
+`yoy_diff --save` left under `reviews/` rather than running the diff itself.
+It is included only when its title names this return's years and each dollar
+headline's current-year column is what this `result.json` gives, printed by
+the report's own formatter, so a report saved before the return last changed
+is left out, never printed beside figures it contradicts. A stale, damaged,
+non-UTF-8 or out-of-workspace report costs the section, named on page 1,
+never the PDF. Glyphs the built-in font cannot draw are written in words. With
+#50's trend columns and saved report, AA46 has shipped.
+
+## AA79 — the TY2026 NY and NC forecasts, reviewed and blocked (#61)
+
+A first draft priced a TY2026 New York forecast once the household confirmed
+no TY2026-only item applied, on the strength of the 2026 IT-2105 changing
+only figures the cache fetches. A bias review found that the forecast still
+read the IT-201 tax table at or below the entry threshold, and tracing every
+figure the path reads found the household credit tables, the §615
+itemized-deduction limitation and the subtraction caps too, none of which the
+2026 IT-2105 prints; it directs the 2025 instructions as a guide, and caching
+those for TY2026 is the inference AGENTS.md §2 forbids. North Carolina's
+estimator worksheet leaves `nc.py`'s year-gated D-401 lines unread. Nothing
+in the engine changed: AA79 moved to the blocked table, and its TY2026 review
+must also make `compute_ny_itemized` honour each charitable tier's year
+window. A second blocked row the draft left behind is removed here, and the
+blocked-table test now refuses an item listed twice.
+
+## AA63 — local tax withheld that no return here claims (#62)
+
+Local income tax withheld outside NYC and Yonkers under a computed New York
+return reached Schedule A line 5a and nothing else. `other_local_withholding`
+is an advisory category rather than a capability block, because local tax is
+often claimed without a local return of its own: some states settle it on the
+state return, and an occupational tax on wages may have none. Its breakdown
+keys each amount by state and the form's locality name and must add to the
+category, sharing the validation `other_state_withholding` uses. A locality of
+a computed or selected CA, NY or NC return fails tie-out, and so does a New
+York City or Yonkers locality under another state's code while New York's
+return is; California and North Carolina have no local income tax, so a
+California box labelled SDI is `sdi_withheld`. Review compared 539 ledger,
+result and profile cases with the parent and found every other-state verdict
+unchanged.
+
+## AA47 (part) — option filing, fill rounding and manual disposals (#60)
+
+A written call's premium on a gross 1099-DA now files as the form's figure in
+column (d) and the premium in column (g) under code E, within the reviewed
+premium. A purchased put refuses while any same-asset lot in any account, an
+outside-wallet send included, takes Pub. 550's married-put rule. A fill
+group's form equal to the fills' exact total rounded once takes the form's
+figure within one holding period. `broker_reporting.manual_disposals` leaves a
+disposal whose form fills an unmodeled box for hand preparation instead of
+refusing the import. Four review rounds shaped the manual path's tie-out: each
+merged row's box must be one its form type gives its part, the rows' broker
+figures must add to the forms' proceeds, and per part their broker figures
+and FIFO basis must equal the recorded per-term figures, so a dropped or
+doubled slice, a short-term slice in Part II (one without basis included) and
+a box from the other part all fail, while a merged column (d) above its form
+is the preparer's to enter.
+
+## AA50 — the crypto import is linear in its history (#63)
+
+Profiling the benchmark AA50 asked for found its target, the event map, at
+about 2% of a long import and FIFO matching at 96%, quadratic in the history:
+each sale walked the pool past lots earlier sales had emptied, and each
+acquisition re-sorted the whole pool. Emptied lots now leave the front of the
+pool, and acquisitions insert after any equal key, where an append and a
+stable sort put them; a new test pins that arrival order, and 400 random
+multi-account histories give byte-identical output to the old code. The event
+map then prices only reported disposals. `scripts/bench_crypto_import.py`
+reproduces the measurement: 40,000 transactions took 49.005 s, 1.361 s after
+the first change and 1.118 s after both.
+
+## AA47 (part) — optional aggregate forms for qualifying stablecoins (#64)
+
+Treas. Reg. §1.6045-1(d)(10) lets a broker report a year of a stablecoin's
+designated sales on one Form 1099-DA, which named no single disposal and so
+refused the import. `broker_reporting.optional_aggregates` lists the sales the
+form reports; the form names its method in box 11a and its count in 11b (now
+a required 1099-DA key), leaves box 2 unchecked, and reconciles units, count
+and proceeds against the members, each sale keeping its own rows in its own
+holding period's box. A form that rounds the sales' exact total once spreads
+the gap a cent per sale, on the sales whose own rounding fell furthest the
+other way; fill groups take the same rule, where the whole gap used to land on
+one row. Specified-NFT aggregate forms, which join different assets and can
+carry first-sale proceeds, still refuse, and are what remains of AA47.
