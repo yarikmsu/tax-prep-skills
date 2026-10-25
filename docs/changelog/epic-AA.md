@@ -3571,3 +3571,114 @@ IRMAA seed changed the auditor's replay input, so both reviewers were
 re-accepted in fresh sessions on 2026-10-22. Still open: the IRMAA dollar figure
 needs the premium-year table, which CMS publishes the November before it
 applies, so a mid-year run normally reports MAGI only.
+
+## AA81 — the CA payment claim is shown before it is reconciled (#40)
+
+The CA builder refuses until `estimated_payments.ca_verified` is true, but that
+answer was given over a list of payment records. One payment entered twice
+under two `payment_id`s passed once it was given, under-stating the balance
+due by the whole payment, and a list is harder to check against MyFTB than a
+total.
+
+`return_builder --review-ca-payments` reads only the profile and prints the
+credited year, the CA payment count and the total claimed, with the opening
+applied credit shown separately. It runs the builder's own validation and sums
+and writes nothing. Positive rows that share state, credited year, kind,
+person, date and amount become questions to resolve under `[ca_state_payments]`
+in `answers.md`, not refusals: two equal payments on one day can both be real.
+`/tax-setup` and `/tax-compute` present the figures before `ca_verified` is set.
+
+The merge review stopped zero-dollar rows from forming matching groups, since
+no answer about them could change line 72, and made the test of the
+`--check` conflict real: it had passed only because its working directory
+held no profile.
+
+## AA78 — a reviewed regular foreign tax credit without an AMT forecast (#41)
+
+With no `amt_projection` worksheet, `/tax-project` refused any profile with
+foreign tax paid, because the AMT-excluding estimate would omit the credit and
+over-state the payments recommended. Foreign tax is routine for anyone holding
+an international fund in a taxable account, so the projection stopped for an
+ordinary profile, and the easiest way around it was clearing the flag that the
+return's own Form 1116 keys on.
+
+`foreign_tax_credit_projection` takes a reviewed, allowed regular credit bound
+to the projection's AGI, taxable income and regular tax to the cent. It offsets
+income tax after the child tax credit, never SE tax, Additional Medicare or
+NIIT, and the AMT NOT MODELED banner stays. A positive prior-year AMT credit
+still requires the full worksheet, and supplying both objects refuses.
+
+The merge review found the bound figures unreachable: a foreign-tax profile
+refused before printing anything, so the Form 1116 review had nothing to be
+worked at. `--review-frame` now prints only those three figures, with no
+total or payment. A positive regular or AMT foreign tax credit requires
+`flags.has_foreign_tax_paid: true` on either worksheet, and three behaviours
+that a deleted line left green now have tests: the credit applies after the
+CTC, the profile year is checked, and the forecast profile is validated.
+
+## AA82 — IRMAA tables are checked when the cache is written (#42)
+
+`set` checked a `federal.irmaa.tiers.*` list for shape and order only, so a
+short or first-dollar table sat in a cache the freshness audit called complete
+and failed later, when a planner read it. `set` and the freshness audit now
+call `validate_irmaa_tiers` with the cache's premium year and the MFS
+structure, block writes included, and a rejected write leaves the cache and its
+provenance unchanged. The merge review found nothing to change.
+
+## AA61 — TY2023-2024 Form 1099-B boxes are reviewed for crypto (#43)
+
+Crypto reported on Form 1099-B for TY2023-2024 went through an importer whose
+1099-B key set was empty, so a filled box the engine does not model was never
+read: a TY2024 NFT sale with box 3's collectibles box checked routed at
+capital-gain rates rather than up to 28%. Every box of each year's form is now
+named from the year-pinned IRS form and instructions, each filled box the
+engine does not model refuses the import, box 12 chooses A/B against D/E, and
+blank boxes are explicit nulls. The merge review re-read both years' forms and
+found nothing to change.
+
+## AA47 (part) — partial fills, source corrections and year-end dates (#44, #45, #46)
+
+Three of the cases AA41 blocked for good now have evidenced treatments; the
+rest stay in AA47's entry.
+
+**Linked partial fills (#44).** `broker_reporting.fill_groups` links reviewed
+fills of one same-asset, same-day sale in one account to a `group_id` the form
+names. FIFO still runs on each original fill, and rows keep their own IDs,
+dates and basis. Groups refuse overlap, a member with its own form or a
+`not_reported` declaration, a `group_id` naming another transaction, and
+group-level resolutions. The merge review found that a split form's one-cent
+apportionment was adopted by re-spreading the form's figure by units, which
+printed a $60 fill at $64.01 and a $20 lot's basis as $40.01 while totals
+still tied; AA41's basis path had the same defect. The cent now goes on the
+form's largest row. The `group_id` collision refusal, the only guard against a
+group overwriting another sale's row, gained its first test.
+
+**Reviewed source corrections (#45).** `broker_reporting.source_corrections`
+replaces an evidenced quantity or USD value before FIFO, bound to the original
+record's date, asset, kind and value, so a stale or repeated correction
+refuses; broker forms must still reconcile afterward. The merge review added a
+`PRIOR-YEAR RETURN` caveat when a correction changes an earlier year's sale or
+an acquisition one consumed, required a corrected quantity to be a decimal
+string because a JSON number arrives rounded, and pinned every refusal's
+message after a fee "correction" passed with the field-set guard removed.
+
+**Reviewed filing dates (#46).** Under a `tax_calendar_review`, a date
+correction may re-read a record's instant in another offset, one calendar day
+away and never at a different instant, so a sale the import dates January 1
+and the broker dates December 31 can be filed in one year. Three review
+rounds reshaped the original:
+- A correction moved one record to another calendar while the other end of its
+  Form 8949 row stayed in its own, flipping a sale between short and long term
+  near its anniversary. Within three days of the one-year line, both instants
+  must now give the row's dates in one of the two ends' offsets. A bare date
+  or an unconfirmed naive time refuses there.
+- A correction could move a sale into a later year, reporting it twice or in
+  neither year, since the later import cannot carry the correction. Every
+  forward move now refuses. A move back a year, the AA47 case, opens the
+  output with a `YEAR MOVE` caveat naming both years.
+- Offsets are bounded to -12:00..+14:00. A padded `' receive'` kind is read as
+  the importer reads it, and a February 29 anniversary is inside the window.
+
+Still open: until AA48, a TY2026 import cannot carry `broker_reporting`, and an
+acquisition dated after its sale is refused only under a calendar review
+(AA85).
