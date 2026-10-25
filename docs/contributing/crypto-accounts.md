@@ -626,7 +626,13 @@ the complete JSON workpaper in secured `summaries/`. Keep normalized inputs in
 `crypto_transactions.json`. Tie-out rebuilds that source, verifies the review,
 compares each account-tagged Form 8949 row, and checks each Schedule D digital
 row's part, amounts and adjustment codes at exact cents. A true option flag
-without this evidence fails, as does a false flag contradicting a review.
+fails without this evidence, or when no reviewed event is a filing-year row's
+own sale or the acquisition its lot came from: a review naming only a lot sold
+in an earlier year cannot price this year's sale. A false flag fails only when
+a reviewed event does reach a filing-year row; a review kept to price held
+inventory does not contradict it. A reviewed premium that changes an earlier
+year's sale, directly or through its lot, opens the import's output with the
+same `PRIOR-YEAR RETURN` caveat as a source correction.
 The validation receipt binds the normalized source so later edits require a
 new tie-out. The default capability block still requires explicit
 acknowledgement and its decision in secured `answers.md`; it never substitutes

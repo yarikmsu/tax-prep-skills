@@ -327,3 +327,66 @@ def test_cli_uses_normalized_source_for_option_tie_out(tmp_path, capsys):
     (tmp_path / 'crypto_transactions.json').unlink()
     assert tie_out._main(['--workspace', str(tmp_path)]) == 2
     assert 'option' in capsys.readouterr().out.lower()
+
+
+def _unreached_review_source():
+    # The reviewed call-exercise lot was sold in TY2024; the TY2025 sale
+    # comes from a later, ordinary lot that no reviewed premium reaches.
+    tx = [event('A', 'ex23', 'buy', '2023-07-01', usd=100), event('A', 's24', 'sell', '2024-09-01', usd=150),
+          event('A', 'b24', 'buy', '2024-10-01', usd=120), event('A', 'sale', 'sell', '2025-03-01', usd=150)]
+    block = reporting(received=False)
+    block['option_exercise_review'] = option_review(tx[0], 'purchased_call')
+    block['option_exercise_review']['events'][0]['option_opened'] = '2023-06-01'
+    return dict(transactions=tx, broker_reporting=block, specific_identification=False)
+
+
+def test_a_review_no_filing_year_row_reaches_cannot_price_an_option_affected_sale():
+    source = _unreached_review_source()
+    report = check(source, merged(source))
+    assert report.failed
+    assert any('prices no filing-year Form 8949 row' in t for t in report.missing_result_targets)
+
+
+def test_a_review_pricing_only_held_inventory_does_not_contradict_a_truthful_no():
+    # This year's sale comes from an older ordinary lot; the reviewed 2025
+    # exercise lot is still held, so "no option-affected sale" is true.
+    tx = [event('A', 'old', 'buy', '2023-01-01', usd=100), event('A', 'exercise', 'buy', '2025-02-01', usd=120),
+          event('A', 'sale', 'sell', '2025-03-01', usd=150)]
+    block = reporting(received=False)
+    block['option_exercise_review'] = option_review(tx[1], 'purchased_call')
+    block['option_exercise_review']['events'][0]['option_opened'] = '2025-01-01'
+    source = dict(transactions=tx, broker_reporting=block, specific_identification=False)
+    assert not tie_out.evaluate([], merged(source), [], option_exercise_answer=False,
+                                specific_identification_answer=False, crypto_source=source).failed
+
+
+def test_a_premium_on_an_earlier_years_sale_names_that_return():
+    result = compute(_unreached_review_source())
+    assert result['caveats'][0].startswith('PRIOR-YEAR RETURN') and 'TY2024' in result['caveats'][0]
+
+
+def test_schedule_d_adjustment_codes_must_match_the_rebuilt_source():
+    source = inputs('purchased_put')
+    source['broker_reporting'].update(reporting(form(), resolutions={
+        'da-1': dict(proceeds='transaction_costs', evidence='gross-proceeds-exclude-put-cost')}))
+    result = merged(source)
+    assert not check(source, result).failed
+    row, = (row for part in result['schedule_d'].values() for row in part.values())
+    row['adjustment_code'] = None
+    report = check(source, result)
+    assert any('adjustment codes disagree' in t for t in report.missing_result_targets)
+
+
+def test_tie_out_refuses_review_metadata_outside_broker_reporting():
+    source = inputs()
+    result = merged(source)
+    source['option_exercise_review'] = source['broker_reporting']['option_exercise_review']
+    report = check(source, result)
+    assert any('inside broker_reporting' in t for t in report.missing_result_targets)
+
+
+def test_a_null_option_review_refuses_rather_than_reading_as_none():
+    source = inputs()
+    source['broker_reporting']['option_exercise_review'] = None
+    with pytest.raises(C.CryptoImportError, match='never null'):
+        compute(source)

@@ -1998,11 +1998,6 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['source_corrections'] = correction_records
         result['caveats'].append(f'{len(correction_records)} reviewed source correction(s) applied before FIFO; '
                                  'preserve the source_corrections JSON workpaper and its evidence.')
-        prior = _prior_years_corrected(rows_all, correction_records, tax_year)
-        if prior:
-            result['caveats'].insert(0, f"PRIOR-YEAR RETURN: a source correction changes disposals reported for "
-                                        f"TY{', TY'.join(map(str, prior))}; review whether that return needs "
-                                        'Form 1040-X (/tax-amend) so both years use the same basis.')
     if reviewed_calendar:
         result['tax_calendar_review'] = reviewed_calendar
         result['caveats'].append('Filing dates follow the externally reviewed tax calendar; '
@@ -2017,6 +2012,14 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['crypto_summary']['option_exercise_review'] = reviewed_options
         result['caveats'].append('Plain USD option premiums follow the external scope/exercise review; '
                                  'preserve option_exercise_review and the normalized source for tie-out recomputation.')
+    # A reviewed premium changes earlier-year rows exactly as a correction
+    # does, and those returns were filed pricing the sale without it.
+    prior = _prior_years_corrected(
+        rows_all, correction_records + (reviewed_options['events'] if reviewed_options else []), tax_year)
+    if prior:
+        result['caveats'].insert(0, f"PRIOR-YEAR RETURN: a source correction or reviewed option premium changes "
+                                    f"disposals reported for TY{', TY'.join(map(str, prior))}; review whether that "
+                                    'return needs Form 1040-X (/tax-amend) so both years use the same basis.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])

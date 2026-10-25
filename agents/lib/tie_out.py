@@ -935,10 +935,10 @@ def _crypto_option_checks(result, source, answer, profile=None):
                       isinstance(broker, dict) and 'option_exercise_review' in broker)
     if answer is not True and not review_present:
         return []
-    if answer is not True:
-        return ['crypto option review contradicts flags.has_digital_asset_option_exercise; reconfirm the answer']
     if (not isinstance(source, dict) or not isinstance(broker, dict)
             or not isinstance(broker.get('option_exercise_review'), dict)):
+        if answer is not True:
+            return ['crypto option review contradicts flags.has_digital_asset_option_exercise; reconfirm the answer']
         return ['crypto option exercises require reviewed premium source events in crypto_transactions.json; acknowledgement alone cannot price them']
     from collections import Counter
     from agents.lib.crypto_importer import CryptoImportError, build_crypto_import
@@ -955,6 +955,17 @@ def _crypto_option_checks(result, source, answer, profile=None):
         if (built['crypto_summary'].get('complete') is not True
                 or built['crypto_summary'].get('reporting_complete') is not True):
             raise ValueError('source inventory or broker reporting remains unresolved')
+        # The flag says THIS year's return has an option-affected sale. A
+        # review naming only events no filing-year row reaches (a lot sold in
+        # an earlier year, inventory still held) cannot price that sale, and
+        # it leaves a truthful "no" uncontradicted.
+        reached = _option_review_reaches(built)
+        if answer is not True:
+            return (['crypto option review reaches a filing-year sale, contradicting '
+                     'flags.has_digital_asset_option_exercise; reconfirm the answer'] if reached else [])
+        if not reached:
+            return ['crypto option review prices no filing-year Form 8949 row; review the premium '
+                    'of the exercise behind this year\'s option-affected sale']
         failures = []
         if any(summary.get(key) != value for key, value in built['crypto_summary'].items()):
             failures.append('crypto option pricing: crypto_summary disagrees with the rebuilt source/workpaper')
@@ -1008,6 +1019,16 @@ def _crypto_option_checks(result, source, answer, profile=None):
         return list(dict.fromkeys(failures))
     except (CryptoImportError, ValueError, TypeError, KeyError, OverflowError) as exc:
         return [f'crypto option pricing cannot be verified: {redact(exc)}']
+
+
+def _option_review_reaches(built: dict) -> bool:
+    """Whether a reviewed premium event is a filing-year row's own sale or
+    the acquisition its lot came from, through any transfer."""
+    review = built['crypto_summary'].get('option_exercise_review') or {}
+    events = {(event['account_id'], event['txn_id']) for event in review.get('events', [])}
+    return any((row.get('account_id'), row.get('txn_id')) in events
+               or (row.get('origin_account_id'), row.get('origin_txn_id')) in events
+               for part in ('part_i_short_term', 'part_ii_long_term') for row in built['form_8949'][part])
 
 
 def _result_total(result: dict, category: str) -> "float | None":
