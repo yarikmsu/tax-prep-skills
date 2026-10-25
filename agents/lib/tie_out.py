@@ -144,7 +144,11 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "espp_purchase_info",
                   # AA59: withholding for a state whose return this run does
                   # not compute; it is claimed on that state's own return.
-                  "other_state_withholding"}
+                  "other_state_withholding",
+                  # AA63: the same for a locality. An advisory rather than a
+                  # capability block: some states settle local tax on the
+                  # state return, and a flat occupational tax has no return.
+                  "other_local_withholding"}
 _INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
 
 # Informational categories that are POTENTIALLY taxable — never silently
@@ -159,6 +163,15 @@ _INFORMATIONAL_ADVISORIES = {
         "withholding category whose return this run computes never belongs here. "
         "Schedule A line 5a counts it once, from its own form, where an itemizer "
         "deducts it"),
+    "other_local_withholding": (
+        "local income tax withheld for a locality whose return this run does not "
+        "compute — that locality may require its own return to credit or refund it "
+        "(many Ohio and Pennsylvania municipalities do), its state may settle it on "
+        "the state return, or a flat occupational tax may have no return at all; "
+        "confirm the locality's filing rules, or the payment may never be credited "
+        "or refunded. NYC and Yonkers tax under a computed New York return never "
+        "belongs here. Schedule A line 5a counts it once, from its own form, where "
+        "an itemizer deducts it"),
     "state_refund_1099g": (
         "taxable on Schedule 1 line 1 if the prior year itemized and got a "
         "tax benefit from the deduction — verify against the prior-year "
@@ -586,6 +599,8 @@ class LedgerRecord:
     # the breakdown, not just the category total, so a computed state's
     # payment cannot hide in the informational category.
     other_state_withholding_by_state: "tuple[tuple[str, float], ...]" = ()
+    # Keyed "<state>:<locality as the form names it>", e.g. "OH:COLUMBUS".
+    other_local_withholding_by_locality: "tuple[tuple[str, float], ...]" = ()
     ca_investments: "dict | None" = None
     government_benefits: "dict | None" = None
     misc_income: "dict | None" = None
@@ -634,24 +649,51 @@ def _require_str(value, where: str) -> str:
     return value.strip()
 
 
+_LOCALITY_KEY = re.compile(r"([A-Z]{2}):(\S(?:.*\S)?)")
+
+
+def _withholding_breakdown(rec: dict, boxes: dict, where: str, category: str,
+                           valid_key, key_rule: str) -> "tuple[tuple[str, float], ...]":
+    """An advisory withholding category's per-jurisdiction amounts, which
+    must add to the category: the breakdown is what lets a computed return's
+    payment be found if it was hidden there."""
+    field = _BREAKDOWN_FIELDS[category]
+    total = boxes.get(category, 0)
+    raw = rec.get(field, {})
+    if not isinstance(raw, dict):
+        raise TieOutError(f"{where}.{field} must be an object")
+    amounts = []
+    for key, amount in raw.items():
+        if not isinstance(key, str) or not valid_key(key):
+            raise TieOutError(f"{where}.{field} requires {key_rule}")
+        value = _num(amount, f"{where}.{field}[{key}]")
+        if value < 0:
+            raise TieOutError(f"{where}.{field} amounts cannot be negative")
+        amounts.append((key, value))
+    if not math.isclose(sum(v for _, v in amounts), total, rel_tol=0, abs_tol=0.005):
+        raise TieOutError(f"{where}.{field} must sum to {category}; "
+                          "re-read the source's withholding boxes, including for an older record")
+    return tuple(sorted(amounts))
+
+
+_BREAKDOWN_FIELDS = {"other_state_withholding": "other_state_withholding_by_state",
+                     "other_local_withholding": "other_local_withholding_by_locality"}
+
+
 def _other_withholding_states(rec: dict, boxes: dict, where: str) -> "tuple[tuple[str, float], ...]":
     from agents.lib.capabilities import _USPS_STATES
-    total = boxes.get("other_state_withholding", 0)
-    raw = rec.get("other_state_withholding_by_state", {})
-    if not isinstance(raw, dict):
-        raise TieOutError(f"{where}.other_state_withholding_by_state must be an object")
-    amounts = []
-    for state, amount in raw.items():
-        if not isinstance(state, str) or state not in _USPS_STATES:
-            raise TieOutError(f"{where}.other_state_withholding_by_state requires valid uppercase state codes")
-        value = _num(amount, f"{where}.other_state_withholding_by_state[{state}]")
-        if value < 0:
-            raise TieOutError(f"{where}.other_state_withholding_by_state amounts cannot be negative")
-        amounts.append((state, value))
-    if not math.isclose(sum(v for _, v in amounts), total, rel_tol=0, abs_tol=0.005):
-        raise TieOutError(f"{where}.other_state_withholding_by_state must sum to other_state_withholding; "
-                          "re-read the source state boxes, including for an older record")
-    return tuple(sorted(amounts))
+    return _withholding_breakdown(rec, boxes, where, "other_state_withholding",
+                                  lambda key: key in _USPS_STATES, "valid uppercase state codes")
+
+
+def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[tuple[str, float], ...]":
+    from agents.lib.capabilities import _USPS_STATES
+
+    def valid(key):
+        match = _LOCALITY_KEY.fullmatch(key)
+        return match is not None and match.group(1) in _USPS_STATES
+    return _withholding_breakdown(rec, boxes, where, "other_local_withholding", valid,
+                                  'keys of a state code and the form\'s locality name, as in "OH:COLUMBUS"')
 
 
 def load_ledger(raw: dict) -> "list[LedgerRecord]":
@@ -734,6 +776,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                                             or retirement_kind not in RETIREMENT_KINDS):
             raise TieOutError(f"{where}.retirement_kind must be a recognized IRA/pension kind")
         other_states = _other_withholding_states(rec, boxes, where)
+        other_localities = _other_withholding_localities(rec, boxes, where)
         government_benefits = None
         is_1099g = "1099G" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
         if (skipped is None and (is_1099g or any(k in boxes for k in BENEFIT_CATEGORIES))) or "government_benefits" in rec:
@@ -783,7 +826,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
-            other_state_withholding_by_state=other_states, ca_investments=ca_investments,
+            other_state_withholding_by_state=other_states,
+            other_local_withholding_by_locality=other_localities, ca_investments=ca_investments,
             government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
             rental_source=rental_source))
     return records
@@ -1841,15 +1885,21 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
-def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
-                                profile: "dict | None" = None) -> list[str]:
-    """A selected/computed state's payment cannot be demoted to an advisory."""
+# The dedicated route for a computed state's local tax, or why it has none.
+_LOCAL_TAX_ROUTE = {
+    "NY": ("route NYC tax to city_withholding_nyc and Yonkers tax to city_withholding_yonkers, "
+           "the only New York localities that withhold income tax"),
+    "CA": "California has no local income tax; re-read the box, and record an amount labelled SDI or CASDI as sdi_withheld",
+    "NC": "North Carolina has no local income tax; re-read the box",
+}
+
+
+def _dedicated_returns(result: dict, profile: "dict | None") -> "dict[str, str]":
+    """Each state whose dedicated return this run computes or the profile
+    selects, mapped to its state-withholding category. Raises ValueError when
+    the profile cannot say which return is selected."""
     from agents.lib.projection import _section_computed
     from agents.lib.tax_computations.state.registry import BY_SECTION
-    records = [rec for rec in ledger if rec.skipped is None
-               and dict(rec.key_boxes).get("other_state_withholding", 0) > 0]
-    if not records:
-        return []
     computed, supported = {}, {}
     for category in CATEGORY_TARGETS:
         if not category.startswith("state_withholding_"):
@@ -1865,28 +1915,57 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
         try:
             selected = _filing_state(profile)
         except (CapabilityError, ValueError):
-            return ["other_state_withholding: resolve the profile state/NY filing plan before choosing the payment's return"]
+            raise ValueError("unresolved filing state") from None
         # Dropping a selected state's entire result cannot turn its payment
         # into an external-state advisory. Generic estimates have no route.
         if selected in supported:
             computed[selected] = supported[selected]
+    return computed
+
+
+def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
+                                profile: "dict | None" = None) -> list[str]:
+    """A selected/computed state's payment cannot be demoted to an advisory,
+    and neither can a payment to one of its localities."""
+    records = [rec for rec in ledger if rec.skipped is None
+               and any(dict(rec.key_boxes).get(cat, 0) > 0 for cat in _BREAKDOWN_FIELDS)]
+    if not records:
+        return []
+    try:
+        computed = _dedicated_returns(result, profile)
+    except ValueError:
+        present = sorted({cat for rec in records for cat, amount in rec.key_boxes
+                          if cat in _BREAKDOWN_FIELDS and amount > 0})
+        return [f"{' and '.join(present)}: resolve the profile state/NY filing plan before choosing the payment's return"]
     errors = []
     for rec in records:
+        boxes, doc = dict(rec.key_boxes), redact(rec.doc_id)
         # Validate here too for callers constructing typed records directly.
         try:
-            breakdown = _other_withholding_states(
+            states = _other_withholding_states(
                 {"other_state_withholding_by_state": dict(rec.other_state_withholding_by_state)},
-                dict(rec.key_boxes), "other_state_withholding record")
+                boxes, "other_state_withholding record")
         except (TieOutError, TypeError, ValueError) as exc:
-            errors.append(f"other_state_withholding ({redact(rec.doc_id)}): {redact(exc)}")
-            continue
-        for state, amount in breakdown:
+            errors.append(f"other_state_withholding ({doc}): {redact(exc)}")
+            states = ()
+        try:
+            localities = _other_withholding_localities(
+                {"other_local_withholding_by_locality": dict(rec.other_local_withholding_by_locality)},
+                boxes, "other_local_withholding record")
+        except (TieOutError, TypeError, ValueError) as exc:
+            errors.append(f"other_local_withholding ({doc}): {redact(exc)}")
+            localities = ()
+        for state, amount in states:
             if amount > 0 and state in computed:
                 route = computed[state]
                 if state == "CA":
                     route += " for W-2, ca_1099_withholding for 1099/W-2G, or ca_592b_593_withholding for Forms 592-B/593"
-                errors.append(f"other_state_withholding ({redact(rec.doc_id)}): {state} return is selected or computed; "
+                errors.append(f"other_state_withholding ({doc}): {state} return is selected or computed; "
                               f"re-read the source and route its withholding to {route}, not an advisory")
+        for state in sorted({key.split(":", 1)[0] for key, amount in localities if amount > 0}):
+            if state in computed:
+                errors.append(f"other_local_withholding ({doc}): {state} return is selected or computed; "
+                              f"{_LOCAL_TAX_ROUTE[state]}, not an advisory")
     return errors
 
 

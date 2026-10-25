@@ -11,11 +11,13 @@ from agents.lib.secure_fs import secure_path, write_secure
 from tests.skill_text import skill_text
 
 
-def record(boxes, *, doc_id="withholding", form="1099-R", breakdown=None):
+def record(boxes, *, doc_id="withholding", form="1099-R", breakdown=None, localities=None):
     raw = {"doc_id": doc_id, "file": f"documents/{doc_id}.pdf", "form_type": form,
            "payer": "Synthetic payer", "person": "primary", "key_boxes": boxes}
     if breakdown is not None:
         raw["other_state_withholding_by_state"] = breakdown
+    if localities is not None:
+        raw["other_local_withholding_by_locality"] = localities
     if form == "W-2G":
         from tests.test_w2g_intake import source
         raw["w2g_income"] = source(box_1=0,box_4=0,schedule_1_income=0)
@@ -211,3 +213,88 @@ def test_parse_and_compute_contracts_name_each_separate_ca_component():
         assert f"`{category}`" in parse
         for field in T.CATEGORY_TARGETS[category][1]:
             assert f"`{field}`" in compute
+
+
+# AA63: local tax withheld that no return here claims.
+
+def local(localities, total=125):
+    return record({"other_local_withholding": total}, form="W-2", localities=localities)
+
+
+@pytest.mark.parametrize("key,result,route", [
+    ("CA:CASDI", {"california_540": {"ca_standard_deduction": 5000}}, "sdi_withheld"),
+    ("NY:NEW YORK CITY", {"new_york_it201": {"line_34_deduction": 8000}}, "city_withholding_nyc"),
+    ("NY:YONKERS", {"meta": {"ny_return_type": "IT203"}, "new_york_it203": it203()}, "city_withholding_yonkers"),
+    ("NC:RALEIGH", {"north_carolina_d400": {"line_11_deduction": 12000}}, "no local income tax"),
+])
+def test_a_computed_states_local_tax_cannot_hide_in_the_advisory(key, result, route):
+    checked = report([local({key: 125})], result)
+    assert checked.failed
+    message, = [m for m in checked.missing_result_targets if m.startswith("other_local_withholding")]
+    assert "return is selected or computed" in message and route in message
+
+
+@pytest.mark.parametrize("result,localities", [
+    ({"form_1040": {}}, {"OH:COLUMBUS": 120, "PA:PITTSBURGH": 5}),
+    ({"california_540": {"ca_standard_deduction": 5000}}, {"OH:COLUMBUS": 125}),
+    # NYC tax with no New York return here: claimed on NY's own return.
+    ({"california_540": {"ca_standard_deduction": 5000}}, {"NY:NEW YORK CITY": 125}),
+])
+def test_a_locality_no_return_here_claims_stays_advisory(result, localities):
+    checked = report([local(localities)], result)
+    # Only the routing question; a bare result can fail its own unrelated checks.
+    assert not [m for m in checked.missing_result_targets if "other_local_withholding" in m]
+    advisory, = [a for a in checked.advisories if a.startswith("other_local_withholding (125.00)")]
+    assert "may require its own return" in advisory and "Schedule A line 5a" in advisory
+
+
+@pytest.mark.parametrize("localities", [None, {}, [], {"oh:columbus": 125}, {"OH": 125}, {"OH:": 125},
+    {"OH: COLUMBUS": 125}, {"ZZ:SOMEWHERE": 125}, {"OH:COLUMBUS": True}, {"OH:COLUMBUS": -125},
+    {"OH:COLUMBUS": float("nan")}, {"OH:COLUMBUS": float("inf")}, {"OH:COLUMBUS": 124},
+    # Sums to 125, so only the per-locality sign check can refuse it.
+    {"OH:COLUMBUS": 250, "PA:PITTSBURGH": -125}])
+def test_local_breakdowns_require_a_state_and_locality_finite_amounts_and_a_complete_sum(localities):
+    with pytest.raises(T.TieOutError, match="other_local_withholding_by_locality"):
+        T.load_ledger({"records": [local(localities)]})
+
+
+def test_a_locality_breakdown_without_its_category_is_refused():
+    raw = record({"federal_withholding_w2": 10}, form="W-2", localities={"OH:COLUMBUS": 125})
+    with pytest.raises(T.TieOutError, match="must sum to other_local_withholding"):
+        T.load_ledger({"records": [raw]})
+
+
+def test_local_breakdown_survives_record_to_ledger_assembly(tmp_path):
+    documents = tmp_path / "documents"
+    documents.mkdir()
+    secure_path(documents)
+    write_secure(documents / "withholding.pdf", "synthetic document placeholder")
+    parse_records.write_record(tmp_path, local({"OH:COLUMBUS": 100, "PA:PITTSBURGH": 25}))
+    ledger = json.loads(parse_records.write_ledger(tmp_path).read_text(encoding="utf-8"))
+    assert ledger["records"][0]["other_local_withholding_by_locality"] == {"OH:COLUMBUS": 100, "PA:PITTSBURGH": 25}
+    assert dict(T.load_ledger(ledger)[0].other_local_withholding_by_locality) == {
+        "OH:COLUMBUS": 100, "PA:PITTSBURGH": 25}
+
+
+def test_a_typed_local_record_cannot_bypass_the_missing_breakdown_check():
+    rec = T.LedgerRecord("synthetic", "documents/form.pdf", "W-2", "Synthetic payer", "primary",
+                         (("other_local_withholding", 100),), None)
+    checked = T.evaluate([rec], {}, [rec.file])
+    assert checked.failed
+    assert any(m.startswith("other_local_withholding (") for m in checked.missing_result_targets)
+
+
+@pytest.mark.parametrize("state", ["CA", "NY", "NC", "OH"])
+def test_a_selected_states_locality_cannot_be_made_external_by_dropping_its_result(state):
+    recs = T.load_ledger({"records": [local({f"{state}:SOMEWHERE": 125})]})
+    checked = T.evaluate(recs, {"form_1040": {}}, [r.file for r in recs],
+                         profile={"address": {"state": state}})
+    assert checked.failed == (state in {"CA", "NY", "NC"})
+
+
+def test_an_unresolved_profile_names_the_local_category():
+    recs = T.load_ledger({"records": [local({"OH:COLUMBUS": 125})]})
+    checked = T.evaluate(recs, {"form_1040": {}}, [r.file for r in recs],
+                         profile={"address": {"state": "CA"}, "state_filings": "malformed"})
+    assert any(m.startswith("other_local_withholding: resolve the profile state")
+               for m in checked.missing_result_targets), checked.missing_result_targets
