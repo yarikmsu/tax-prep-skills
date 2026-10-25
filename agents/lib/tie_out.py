@@ -1003,6 +1003,10 @@ def _digital_proceeds_checks(result: dict) -> "tuple[float, list[str]]":
         return 0.0, problems + ['Digital-asset proceeds totals must remain finite']
     summary = result.get('crypto_summary')
     claimed = summary.get('reporting_proceeds_above_forms', 0) if isinstance(summary, dict) else 0
+    # A hand-prepared row's column (d) is the preparer's, and the import that
+    # left it out reported no excess for it: set the merged manual rows'
+    # excess over their own broker figures aside before comparing.
+    difference = round(difference - _manual_excess(result), 2)
     if problems:
         # A missing or malformed figure counted as 0 would add a second,
         # misleading "exceeds by" line beside the accurate one.
@@ -1018,6 +1022,14 @@ def _digital_proceeds_checks(result: dict) -> "tuple[float, list[str]]":
     return max(difference, 0.0), problems
 
 
+def _manual_excess(result: dict) -> float:
+    pending = _manual_entries(result) or []
+    keys = {(entry.get('account_id'), entry.get('txn_id')) for entry in pending}
+    rows = [row for merged in _manual_rows_by_key(result.get('form_8949'), keys).values() for _, row in merged]
+    return math.fsum(row['proceeds'] - row['broker_proceeds'] for row in rows
+                     if _whole_cents(row.get('proceeds')) and _whole_cents(row.get('broker_proceeds')))
+
+
 def _manual_disposals_on_the_return(result: dict) -> list[str]:
     """Each disposal the import left for manual preparation, merged as
     account-tagged Form 8949 rows with a box. Its broker form is normally in
@@ -1028,22 +1040,21 @@ def _manual_disposals_on_the_return(result: dict) -> list[str]:
     sits in, and per term the rows' broker figures and FIFO basis must be
     what the import recorded: column (d) can tie while a short-term slice
     sits in Part II, and a $0-basis slice moves no basis between terms."""
-    from agents.lib.crypto_importer import _SCHEDULE_D_TARGETS
-    summary = result.get('crypto_summary')
-    pending = summary.get('manual_disposals', []) if isinstance(summary, dict) else []
-    if not isinstance(pending, list) or any(not isinstance(entry, dict) for entry in pending):
+    pending = _manual_entries(result)
+    if pending is None:
         return ['crypto_summary.manual_disposals is malformed; re-run the import and copy it']
     keys = {(entry.get('account_id'), entry.get('txn_id')) for entry in pending}
-    merged = _manual_rows_by_key(result.get('form_8949'), keys, _SCHEDULE_D_TARGETS)
+    merged = _manual_rows_by_key(result.get('form_8949'), keys)
     problems = []
     for entry in pending:
         key = (entry.get('account_id'), entry.get('txn_id'))
         name = f'crypto disposal {key[0]}/{key[1]}'
-        claimed = entry.get('broker_proceeds')
+        claimed, boxes = entry.get('broker_proceeds'), entry.get('boxes_by_term')
         terms = {field: entry.get(field) for field in ('broker_proceeds_by_term', 'fifo_cost_basis')}
         if not _whole_cents(claimed) or any(
                 not isinstance(value, dict) or not all(_whole_cents(value.get(p)) for p in ('short', 'long'))
-                for value in terms.values()):
+                for value in terms.values()) or not (
+                isinstance(boxes, dict) and all(isinstance(boxes.get(p), list) for p in ('short', 'long'))):
             problems.append(f'crypto_summary.manual_disposals entry {key[0]}/{key[1]} is malformed or from an '
                             'older import; re-run the import and copy it')
             continue
@@ -1053,13 +1064,21 @@ def _manual_disposals_on_the_return(result: dict) -> list[str]:
                             'its fifo_rows as a Form 8949 row with its account_id, txn_id, box, broker_proceeds '
                             'and fifo_cost_basis')
             continue
-        problems += _manual_rows_problems(name, rows, round(claimed * 100), terms)
+        problems += _manual_rows_problems(name, rows, round(claimed * 100), terms, boxes)
     return problems
 
 
-def _manual_rows_by_key(form, keys, targets) -> dict:
+def _manual_entries(result: dict) -> "list | None":
+    summary = result.get('crypto_summary')
+    pending = summary.get('manual_disposals', []) if isinstance(summary, dict) else []
+    if not isinstance(pending, list) or any(not isinstance(entry, dict) for entry in pending):
+        return None
+    return pending
+
+
+def _manual_rows_by_key(form, keys) -> dict:
     """The boxed account rows of each pending manual disposal, each with the
-    part it sits in and the part its box routes it to."""
+    part it sits in."""
     merged: dict = {}
     for part in ('part_i_short_term', 'part_ii_long_term'):
         for row in ((form.get(part) or []) if isinstance(form, dict) else []):
@@ -1067,29 +1086,31 @@ def _manual_rows_by_key(form, keys, targets) -> dict:
                 continue
             key = (row.get('account_id'), row.get('txn_id'))
             if key in keys:
-                routed = targets.get(row['box'], (None,))[0]
-                merged.setdefault(key, []).append((part, routed, row))
+                merged.setdefault(key, []).append((part, row))
     return merged
 
 
-def _manual_rows_problems(name: str, rows: list, claimed: int, terms: dict) -> list[str]:
+def _manual_rows_problems(name: str, rows: list, claimed: int, terms: dict, boxes: dict) -> list[str]:
     def cents(value):
         return round(value * 100) if _whole_cents(value) else 0
-    if any(routed != part for part, routed, _ in rows):
-        return [f'{name} has a merged row whose box routes it to the other part of Form 8949, or names no '
-                'digital-asset box; give each slice the box of the part its holding period puts it in']
-    broker = sum(cents(row.get('broker_proceeds')) for _, _, row in rows)
+    # A row's box decides its Schedule D line and its Form 8949 checkbox: it
+    # must be one the form type gives the term of the part the row sits in.
+    if any(row['box'] not in boxes['short' if part == 'part_i_short_term' else 'long'] for part, row in rows):
+        return [f'{name} has a merged row whose box is not one its form type gives the part it sits in '
+                f"(Part I {', '.join(boxes['short'])}, Part II {', '.join(boxes['long'])}); give each slice the "
+                'box of the part its holding period puts it in']
+    broker = sum(cents(row.get('broker_proceeds')) for _, row in rows)
     if broker != claimed:
         # Every slice of it, once: the rows' broker figures must add to the
         # forms' proceeds the import recorded.
         return [f'{name} is ' + ('only partly' if broker < claimed else 'more than once')
                 + f' on the return: its merged rows\' broker_proceeds add to {broker / 100:,.2f}, '
                 f'not the {claimed / 100:,.2f} its forms report']
-    if any(not _whole_cents(row.get('fifo_cost_basis')) for _, _, row in rows):
+    if any(not _whole_cents(row.get('fifo_cost_basis')) for _, row in rows):
         return [f'{name} has a merged row without its fifo_cost_basis; copy each slice\'s from its fifo_rows']
     for field in ('broker_proceeds_by_term', 'fifo_cost_basis'):
         recorded = terms[field]
-        found = {period: sum(cents(row.get(field.removesuffix('_by_term'))) for part, _, row in rows
+        found = {period: sum(cents(row.get(field.removesuffix('_by_term'))) for part, row in rows
                              if part == ('part_i_short_term' if period == 'short' else 'part_ii_long_term'))
                  for period in ('short', 'long')}
         if any(found[period] != round(recorded[period] * 100) for period in ('short', 'long')):

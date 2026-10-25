@@ -352,10 +352,12 @@ disposal's lots, so later sales and inventory keep their FIFO basis. Its rows le
 import's Form 8949 rows, its Schedule D totals and its box routing, and
 `broker_reporting.manual_disposals` records its form ids, the unmodeled boxes,
 the forms' proceeds, and per holding period its share of those proceeds
-(`broker_proceeds_by_term`) and its FIFO basis (`fifo_cost_basis`). Its
-`fifo_rows` are the slices to start the preparation from, each with its
-`holding_period` and its `broker_proceeds` share, spread over the slices as a
-routed disposal's would be. The output opens with a `MANUAL` caveat, and
+(`broker_proceeds_by_term`), its FIFO basis (`fifo_cost_basis`) and the boxes
+its form type gives that term (`boxes_by_term`). Its `fifo_rows` are the
+slices to start the preparation from, each with its `holding_period` and its
+`broker_proceeds` share as a routed disposal's rows take it: forms split by
+term give each term's slices their own form's figure, and otherwise the forms'
+total is spread over the slices by their proceeds. The output opens with a `MANUAL` caveat, and
 `crypto_summary.manual_disposals` lists the disposals with the same figures.
 
 Prepare each by hand under the form's own instructions, then merge each of its
@@ -364,9 +366,12 @@ included) as a Form 8949 row in its holding period's part, with its
 `account_id`, `txn_id`, a box of that part, `broker_proceeds` and
 `fifo_cost_basis`, adding the same amounts into each box's Schedule D digital
 row. Tie-out fails, whether or not the parse ledger still holds the form,
-until every merged row's box routes to the part it sits in, the rows'
-broker figures add to the forms' proceeds, and per part their broker figures
-and FIFO basis are the recorded per-term figures. These are totals, so they
+until every merged row's box is one its form type gives the part it sits in,
+the rows' broker figures add to the forms' proceeds, and per part their broker
+figures and FIFO basis are the recorded per-term figures. A merged row's
+column (d) may exceed its broker figure, the correct higher proceeds being the
+preparer's to enter: the cross-check of column (d) against the import's
+`reporting_proceeds_above_forms` sets the manual rows' excess aside. These are totals, so they
 catch a slice left out or merged twice, a short-term slice in Part II
 (including one with no basis) and a box from the other part; they do not
 check each slice row by row. The money columns are the preparer's; the term
