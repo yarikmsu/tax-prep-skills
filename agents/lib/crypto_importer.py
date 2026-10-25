@@ -1163,7 +1163,11 @@ def _treat_term(t, form, group, basis_gap, resolution) -> None:
 
 def _routed_rows(form, group, t, regime, fifo_basis) -> 'dict[int, Form8949Row]':
     routed = {}
-    broker_proceeds = _spread(form['proceeds'], [row.quantity_exact for row in group])
+    # Allocate the form's figure in proportion to each row's own column (d),
+    # which is the form's figure itself wherever the form reconciles: fills of
+    # one order sell at different prices, so units would misattribute it.
+    weights = t.proceeds if any(t.proceeds) else [row.quantity_exact for row in group]
+    broker_proceeds = _spread(form['proceeds'], weights)
     for i, row in enumerate(group):
         adjustment = t.costs[i] + t.corrections[i]
         routed[id(row)] = replace(

@@ -266,10 +266,16 @@ normalized input on a rerun so old tax amounts and new audit amounts cannot
 be merged separately. Equity rows stay separate.
 
 The tie sums the digital rows' own broker figures alongside equity proceeds;
-it never subtracts `crypto_summary.reporting_proceeds_above_forms`. That legacy
-scalar remains informational in import workpapers; sums and advisories use
-current rows. If present it still requires valid finite, nonnegative numeric
-data. A non-zero
+it never subtracts `crypto_summary.reporting_proceeds_above_forms`, so a stale
+scalar cannot offset an equity over-merge. Column (d) is held to the forms
+separately: the form-backed digital rows' column (d) may exceed their broker
+figures only by exactly that scalar, the excess the import reported with
+reviewed evidence. A column (d) merged twice, or a broker figure that went
+stale, leaves a difference no import reported and fails, as does column (d)
+below its broker figures. The scalar must be a finite, nonnegative whole-cent
+amount; absent, it reads as zero. A row's broker figure is allocated from its
+form in proportion to its own column (d), so fills of one order at different
+prices each keep their own. A non-zero
 no-form row keeps the tie verifiable, so
 a form wrongly declared "not received" fails it instead of warning.
 

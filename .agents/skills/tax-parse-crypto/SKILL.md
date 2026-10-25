@@ -349,7 +349,6 @@ classifications and deductions in the WA compute reference before confirming
 `classification_complete`. The workpaper supports per-sale domicile review;
 the WA return engine still refuses part-year/nonresident domicile changes.
 
-Update `result.json` from the main session only — never from a delegated sub-task:
 On a rerun, rebuild all crypto rows from the complete normalized input. Use the
 existing import workpapers to identify and replace the prior crypto Form 8949
 rows and reset the `line_*_digital_assets` amounts before adding the new import.
@@ -357,6 +356,7 @@ Do not retain a stale tax total beside a newly copied broker figure. Preserve
 the equity rows. An old digital row missing broker figures needs a reviewed
 re-import; never infer them from `reporting_proceeds_above_forms`.
 
+Update `result.json` from the main session only — never from a delegated sub-task:
 1. **`form_1040.digital_asset_question`** ← result `digital_asset_question`. This is mandatory
    and independent of the dollars.
 2. **`form_8949.part_i_short_term` / `part_ii_long_term`** ← APPEND the crypto rows to any
@@ -366,7 +366,10 @@ re-import; never infer them from `reporting_proceeds_above_forms`.
    `line_*_digital_assets` row it names, and set that row's `adjustment_code` to
    the box's. Also sum its `broker_proceeds` into that row for form-backed boxes;
    leave it null for no-form boxes. This is the broker's audit figure, separate
-   from column (d). Tie-out uses it directly, never the legacy excess scalar.
+   from column (d). Tie-out sums it against the ledger, and holds column (d) to
+   it: the digital rows' column (d) may exceed their broker figures only by the
+   import's `crypto_summary.reporting_proceeds_above_forms`, so copy that
+   summary from the same import as the rows.
    Each is part of its Schedule D line, and of line 7 or 15, like any other row; recompute them and
    `line_16_combined`. Never merge crypto into a 1099-B row: those carry the
    `employer_stock` flag, whose tie reads the row's whole adjustment. A row without a box is

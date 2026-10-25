@@ -340,7 +340,7 @@
 
   "crypto_summary": {
     "_include_if": "has_crypto flag is true (populated by /tax-parse-crypto)",
-    "_note": "Crypto is PROPERTY (Notice 2014-21): wash-sale (§1091) does NOT apply. FIFO basis segregated by explicit account ID; preserve complete/unresolved_inputs and reporting_complete/reporting_unresolved metadata from the importer. Preserve each Form 8949 and Schedule D digital row's broker_proceeds from its reviewed forms (null for no-form rows); tie-out sums those figures, never the legacy reporting_proceeds_above_forms scalar and retain the secured account_fifo and broker_reporting workpapers. Capital rows feed form_8949/schedule_d; ordinary_income.total feeds Schedule 1 line 8 (Schedule C + SE tax if mining/staking is a business).",
+    "_note": "Crypto is PROPERTY (Notice 2014-21): wash-sale (§1091) does NOT apply. FIFO basis segregated by explicit account ID; preserve complete/unresolved_inputs and reporting_complete/reporting_unresolved/reporting_proceeds_above_forms metadata from the importer, and retain the secured account_fifo and broker_reporting workpapers. Preserve each Form 8949 and Schedule D digital row's broker_proceeds from its reviewed forms (null for no-form rows): tie-out sums those figures against the ledger, and column (d) may exceed them only by the importer's reporting_proceeds_above_forms. Capital rows feed form_8949/schedule_d; ordinary_income.total feeds Schedule 1 line 8 (Schedule C + SE tax if mining/staking is a business).",
     "realized_capital_gain": 0,
     "ordinary_income": 0,
     "disposals": 0,

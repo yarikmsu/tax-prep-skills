@@ -902,60 +902,70 @@ def _digital_row_placement_checks(result: dict) -> list[str]:
     return []
 
 
-def _digital_broker_proceeds(name: str, row: dict) -> float:
+def _whole_cents(value) -> bool:
+    try:
+        return _is_figure(value) and round(value, 2) == value
+    except OverflowError:
+        return False
+
+
+def _digital_broker_proceeds(name: str, row: dict) -> "tuple[float, str | None]":
+    """A digital row's own broker figure, and why it cannot be trusted if it
+    cannot. A problem is a missing result target, never a raise: a raise
+    would read as a malformed ledger and hide every other finding."""
     value = row.get('broker_proceeds')
     if name in _NO_BROKER_FORM_DIGITAL_ROWS:
-        if value is not None:
-            raise TieOutError('A no-form digital-asset row cannot claim broker_proceeds')
-        return 0.0
+        if value not in (None, 0):
+            return 0.0, 'A no-form digital-asset row cannot claim broker_proceeds'
+        return 0.0, None
     active = any(row.get(field) not in (None, 0, '') for field in (
         'proceeds', 'cost', 'adjustment', 'gain', 'adjustment_code', 'source'))
     if value is None and not active:
-        return 0.0  # untouched template scaffold
-    try:
-        valid = _is_figure(value) and round(value, 2) == value
-    except OverflowError:
-        valid = False
-    if not valid:
-        raise TieOutError(f'{name}.broker_proceeds needs a finite non-negative whole-cent amount; '
-                          'rebuild digital-asset rows from the reviewed import, never infer it from the legacy excess scalar')
-    return float(value)
+        return 0.0, None  # untouched template scaffold
+    if not _whole_cents(value):
+        return 0.0, (f'{name}.broker_proceeds needs a finite non-negative whole-cent amount; '
+                     'rebuild digital-asset rows from the reviewed import, never infer it from the legacy excess scalar')
+    return float(value), None
 
 
-def _crypto_proceeds_above_forms(result: dict) -> float:
-    """Informational only; derive from the rows, never the legacy scalar.
+def _digital_proceeds_checks(result: dict) -> "tuple[float, list[str]]":
+    """Column (d) of the form-backed digital rows above their broker figures,
+    and the problems that keep the capital-proceeds tie from trusting them.
 
-    The capital-proceeds tie sums each form-backed row's own broker figure.
-    An unrelated equity row cannot be offset by stale crypto excess metadata.
+    The tie itself sums each row's broker figure, so column (d) has to be
+    held to the ledger here: its excess over those figures must be exactly the
+    excess the import reported with reviewed evidence. A column (d) merged
+    twice, or a broker figure that went stale, leaves a difference no import
+    reported, and the equity rows can no longer be offset by a stale scalar.
     """
-    summary = result.get('crypto_summary')
-    if isinstance(summary, dict) and 'reporting_proceeds_above_forms' in summary:
-        try:
-            valid = _is_figure(summary['reporting_proceeds_above_forms'])
-        except OverflowError:
-            valid = False
-        if not valid:
-            raise TieOutError('Legacy reporting_proceeds_above_forms must still be finite and non-negative; it is never used in a tie')
-    reported, broker = [], []
+    problems, reported, broker = [], [], []
     for name, row in _digital_asset_rows(result):
-        own_broker = _digital_broker_proceeds(name, row)
-        if name not in _NO_BROKER_FORM_DIGITAL_ROWS:
-            proceeds = row.get('proceeds', 0)
-            try:
-                valid = _is_figure(proceeds) and round(proceeds, 2) == proceeds
-            except OverflowError:
-                valid = False
-            if not valid:
-                raise TieOutError('Digital-asset proceeds must be finite non-negative whole-cent amounts')
-            reported.append(proceeds)
-            broker.append(own_broker)
+        own_broker, problem = _digital_broker_proceeds(name, row)
+        if problem:
+            problems.append(problem)
+        if name in _NO_BROKER_FORM_DIGITAL_ROWS:
+            continue
+        proceeds = row.get('proceeds', 0)
+        if not _whole_cents(proceeds):
+            problems.append('Digital-asset proceeds must be finite non-negative whole-cent amounts')
+            continue
+        reported.append(proceeds)
+        broker.append(own_broker)
     try:
         difference = round(math.fsum(reported) - math.fsum(broker), 2)
     except OverflowError:
-        raise TieOutError('Digital-asset proceeds totals must remain finite') from None
+        return 0.0, problems + ['Digital-asset proceeds totals must remain finite']
+    summary = result.get('crypto_summary')
+    claimed = summary.get('reporting_proceeds_above_forms', 0) if isinstance(summary, dict) else 0
     if difference < 0:
-        raise TieOutError('Digital-asset column (d) is below its broker proceeds; rebuild the reconciled rows')
-    return difference
+        problems.append('Digital-asset column (d) is below its broker proceeds; rebuild the reconciled rows')
+    elif not _whole_cents(claimed):
+        problems.append('crypto_summary.reporting_proceeds_above_forms must be a finite non-negative amount')
+    elif difference != round(claimed, 2):
+        problems.append(f'Digital-asset column (d) exceeds its rows\' broker_proceeds by {difference:,.2f}, '
+                        f'but the import reported {claimed:,.2f} above its forms; rebuild the digital rows '
+                        'and crypto_summary from one import')
+    return max(difference, 0.0), problems
 
 
 # Digital-asset sales keep Schedule D rows of their own beside the 1099-B rows
@@ -1127,7 +1137,7 @@ def _result_total(result: dict, category: str) -> "float | None":
                 if isinstance(row, dict):
                     p = row.get("proceeds")
                     if row_key.endswith(_DIGITAL_ASSET_ROW_SUFFIX):
-                        broker = _digital_broker_proceeds(row_key, row)
+                        broker, _ = _digital_broker_proceeds(row_key, row)  # problems: _digital_proceeds_checks
                         if broker or any(row.get(k) not in (None, 0, '') for k in ('proceeds', 'cost', 'adjustment', 'gain')):
                             found = True
                         total += broker
@@ -2581,8 +2591,9 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         if summary.get("reporting_complete") is not True or summary.get("reporting_unresolved") != []:
             missing_targets.append("crypto Form 8949 reporting: reconcile broker forms and route every "
                                    "row to its box before completion")
-        above = _crypto_proceeds_above_forms(result)
-        if above:
+        above, problems = _digital_proceeds_checks(result)
+        missing_targets.extend(problems)
+        if above and not problems:
             advisories.append(f"crypto proceeds exceed their broker forms by {above:,.2f} — Form 8949 "
                               "column (d) shows the correct figure under reviewed evidence; the "
                               "capital_proceeds tie sums each digital row's own broker_proceeds; confirm them against the forms")
