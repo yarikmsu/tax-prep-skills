@@ -89,7 +89,6 @@ Trigger and range behavior is documented in
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | AA44-AA46 — prior-return import, multi-year Roth planning and the YoY report's PDF embed. | Larger product extensions; AA46's embed waits on a pipeline-order decision. |
 | **4. Other states** | **AA79** — review TY2026 for the NY and NC payment forecasts. **AA63** — say when a local tax is withheld that no return here claims. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 moves up the day one does, since the last 2026 estimate is due 2027-01-15. |
-| **5. The repository** | **AA56** — tell the shipped index's two PR numberings apart. | It changes a test, not a return. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -158,16 +157,6 @@ Trigger and range behavior is documented in
   map must keep a full one for the fill-group `group_id` collision check (#44),
   which refuses a group named after ANY transaction, a buy or another year's
   sale included. Found by AA41's review.
-
-- **AA56 (P3, S): Tell the shipped index's two PR numberings apart.**
-  `test_every_shipped_row_names_a_pull_request_that_really_merged` builds its
-  merged set from every subject in history that ends in `(#N)`. Pull-request
-  numbers restarted at #1 when the repository was recreated on 2026-10-10, and
-  old and new merges already share #3, #4 and #8, so a row naming a new number
-  that never merged passes on an old merge carrying it: a new #5 would pass on
-  one from 2026-03-08. The test needs a way to tell which numbering a row
-  means, such as the merge's side of that date. Found by the review that
-  recorded Y2 as shipped.
 
 
 - **AA63 (P2, S): Say when a local tax is withheld that no return here claims.**
@@ -566,6 +555,7 @@ merge.
 | AA82 | #42 | — |
 | AA61 | #43 | — |
 | AA85 | #49 | — |
+| AA56 | #53 | — |
 | AA49 | #51 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
