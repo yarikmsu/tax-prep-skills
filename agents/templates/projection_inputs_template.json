@@ -23,6 +23,8 @@
   },
   "state_projection": null,
   "amt_projection": null,
+  "foreign_tax_credit_projection": null,
+  "_comment_foreign_tax_credit_projection": "Optional reviewed full-year regular FTC alone while AMT remains unmodeled. Bind tax_year, canonical filing_status, full_year_inputs_confirmed, federal_agi_at_review, taxable_income_at_review, regular_tax_at_review and regular_foreign_tax_credit (allowed amount, including a worked zero, never gross foreign taxes paid). Review eligibility, elections and limits externally for the covered year and record the workpaper in answers.md; see tax-project/references/amt-irmaa.md. Do not combine with amt_projection. A prior AMT credit still requires the full AMT worksheet.",
   "_comment_amt_projection": "Reviewed full-year Form 6251 preference, deduction and credit worksheet; see tax-project/references/amt-irmaa.md. Null leaves AMT explicitly unmodeled: federal total and payment targets then exclude it and may be low. A present incomplete or unsupported worksheet refuses computation. No archived ISO spread or guessed zero preferences.",
   "irmaa_projection": null,
   "_comment_irmaa_projection": "Reviewed full-year Medicare MAGI and beneficiary/coverage worksheet; see tax-project/references/amt-irmaa.md. Premium year is income year+2; CLI reads that premium year's separately fetched tax_law cache. Unpublished or empty future tiers leave the premium estimate unresolved, never replaced by income-year rates. Surcharges stay separate from income tax and payment targets.",

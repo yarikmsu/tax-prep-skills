@@ -242,6 +242,11 @@ Life-event flags read False when absent, so a legacy profile still passes.
   A reviewed `amt_projection` adds Form 6251 AMT and eligible FTC/Form 8801
   credits to federal liability and payment targets. Missing inputs banner an
   AMT-excluding estimate; present unsupported preferences refuse. A separate
+  `foreign_tax_credit_projection` accepts an externally reviewed allowed
+  regular FTC without a full AMT worksheet, bound to the covered-year income
+  and regular-tax frame, which `--review-frame` prints alone, with no payment.
+  It preserves the AMT caveat and refuses a positive opening AMT credit without
+  the full worksheet, or any positive FTC without `has_foreign_tax_paid`. A separate
   `irmaa_projection` estimates per-beneficiary Part B+D premium surcharges
   using the income-year-plus-two cache (normally unpublished during the income
   year, so the usual output is the projected MAGI and a not-modeled note), never folding premiums into income tax

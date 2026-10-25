@@ -781,9 +781,11 @@ def render_markdown(r: ProjectionReport) -> str:
               f"| Tax before credits{' (QDCG worksheet)' if f.used_qdcg else ''} | {_money(f.tax_before_credits)} |",
               f"| Child Tax Credit | {_money(-f.ctc)} |"]
     if f.amt is not None:
-        lines += [f"| AMT (Form 6251) | {_money(f.amt)} |",
-                  f"| Foreign tax credit | {_money(-f.foreign_tax_credit)} |",
-                  f"| Prior minimum tax credit (Form 8801) | {_money(-f.minimum_tax_credit)} |"]
+        lines.append(f"| AMT (Form 6251) | {_money(f.amt)} |")
+    if f.amt is not None or r.proj.foreign_tax_credit_projection is not None:
+        lines.append(f"| Foreign tax credit | {_money(-f.foreign_tax_credit)} |")
+    if f.amt is not None:
+        lines.append(f"| Prior minimum tax credit (Form 8801) | {_money(-f.minimum_tax_credit)} |")
     lines += [
               f"| SE tax | {_money(f.se_tax)} |",
               f"| Additional Medicare | {_money(f.additional_medicare)} |",
