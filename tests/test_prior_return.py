@@ -356,3 +356,22 @@ def test_short_form_reference_does_not_classify_another_page_as_form_540():
 
 def test_8995a_is_never_read_with_the_simplified_8995_line_map():
     assert P._form("Form 8995-A 2025\n16 3000") is None
+
+
+def test_allowable_capital_loss_is_required_even_when_a_smaller_amount_was_filed(workspace, monkeypatch):
+    # Pub550 requires the ALLOWABLE deduction, even if not claimed. Taking a
+    # filed1000 instead of allowable3000 would overstate next year's STcarry2000.
+    doc = pages()
+    doc[0] = doc[0].replace("7a (3,000)", "7a (1,000)")
+    doc[1] = doc[1].replace("21 (3,000)", "21 (1,000)")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    _, review = pending(workspace)
+    with pytest.raises(P.ImportError, match="allowable loss"):
+        P.confirm_import(workspace, 2025, review)
+
+
+def test_confirmed_mfs_status_requires_its_own_capital_loss_limit(workspace):
+    _, review = pending(workspace)
+    review["filing_status"] = "MFS"
+    with pytest.raises(P.ImportError, match="allowable loss"):
+        P.confirm_import(workspace, 2025, review)

@@ -249,6 +249,7 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         add("capital_loss_carryforward_short_term", short, records)
         add("capital_loss_carryforward_long_term", long, records)
         worksheets["capital_loss"] = {"taxable_income_before_zero_floor": round(taxable_before_floor, 2),
+            "schedule_d_net": net, "schedule_d_deduction": reported,
             "deduction_used": round(used, 2), "short_term": round(short, 2), "long_term": round(long, 2),
             "source": SOURCES["capital_worksheet"]}
     else:
@@ -431,6 +432,16 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
         raise ImportError("Answer every unresolved question; manual_required remains blocking")
     if decisions["filing_status"] not in STATUSES:
         raise ImportError("Confirm the prior return's canonical filing status")
+    capital = seed.get("worksheets", {}).get("capital_loss")
+    if capital:
+        from agents.lib.rollover import _capital_loss_cap
+        cap, _ = _capital_loss_cap(decisions["filing_status"])
+        net, reported = capital.get("schedule_d_net"), capital.get("schedule_d_deduction")
+        if net is None or reported is None:
+            raise ImportError("Re-import capital-loss inputs for the filing-status cross-check")
+        allowable = -min(-net, cap) if net < 0 else 0
+        if reported != allowable:
+            raise ImportError("Schedule D line 21 does not match its allowable loss for the confirmed filing status")
     owners = decisions["ira_owners"]
     ira_keys = {key for key in seed["fields"] if key.startswith("ira_basis_page_")}
     if (not isinstance(owners, dict) or set(owners) != ira_keys
