@@ -251,6 +251,15 @@ Missing matches remain unresolved; never drop a transfer to make the report pass
 Input order within an account declares the reviewed order at equal timestamps;
 obtain explicit `sequence` evidence where export order is ambiguous.
 
+If independent source records establish that an export lost unit precision or
+misstated a USD value, use the contract's `broker_reporting.source_corrections` list.
+Obtain the taxpayer's confirmation and evidence, record it in `answers.md`,
+and immediately run `sh agents/lib/run.sh -m agents.lib.secure_fs answers.md`.
+Copy the original context and values before entering the corrected facts.
+Never adopt a broker figure solely to clear a mismatch. FIFO is recomputed;
+all form and capability gates still apply. This path cannot change dates,
+fees, identities or lot selection. Preserve its complete correction workpaper.
+
 Add `broker_reporting` from the parsed broker forms — the schema, the year
 table and every treatment are in `docs/contributing/crypto-accounts.md`
 (Broker-form reconciliation). Ask the user, for EVERY account with a filing-year
@@ -283,8 +292,9 @@ Immediately after writing, run
 sh agents/lib/run.sh agents/lib/crypto_importer.py compute crypto_transactions.json --year {year} --account-aware
 ```
 
-Review `account_fifo` inventory, transfer slices and provenance, plus Schedule D,
-ordinary income, Form 1040 digital-asset answer and `needs_basis`, then
+Review `account_fifo` inventory, transfer slices and provenance, any
+`source_corrections` before/after records and evidence, Schedule D, ordinary
+income, Form 1040 digital-asset answer and `needs_basis`, then
 `broker_reporting`: each form's broker and FIFO figures and the Form 8949
 routing. **Exit 2, `crypto_summary.complete` or `reporting_complete` other than
 true, any unresolved input, or any missing basis: STOP.** Show the user each

@@ -426,6 +426,43 @@ TY2026 to `_REPORTING_REGIMES`: AA48 still needs that year's Form 8949
 instructions, including the no-form boxes. Form 1099-DA's own Form 8949 code
 list cannot substitute for that review. The existing TY2026 refusal remains.
 
+## Reviewed source corrections (AA47)
+
+If an export lost unit precision or contains an incorrect USD value, obtain
+the full source figure and the taxpayer's confirmation before changing it.
+Record that fact in the optional `broker_reporting.source_corrections` list:
+
+```json
+{"account_id": "exchange-A", "txn_id": "sale-1",
+ "expected": {"date": "2025-03-01", "asset": "BTC", "kind": "sell", "usd_amount": 150},
+ "corrected": {"usd_amount": 150.01}, "evidence": "reviewed-trade-confirmation"}
+```
+
+Each entry requires exactly those five keys. `expected` copies the original
+date, asset, kind and every financial field being corrected. `corrected`
+changes only `quantity` and/or `usd_amount`, retaining full decimal precision
+where the source supplies it. Account and transaction IDs must be explicit and
+unique. Missing, stale, repeated, unchanged, nonfinite or unsupported changes
+refuse. A transfer does not use `usd_amount`; its basis and ownership evidence
+must be prepared through the existing transfer path.
+
+This replaces a source fact before FIFO and recomputes inventory, acquisition
+basis and disposal gain; it is not a broker-form adjustment or rounding
+tolerance. The engine checks the original values and context before applying
+copies, leaves the source array and export intact, and retains the complete
+correction record in its JSON workpaper. Broker units, proceeds, basis and
+holding periods must still reconcile afterward. A difference alone cannot
+establish that the export or broker is wrong. Never fill the correction with
+the broker's figure solely to make reconciliation pass.
+
+Review and preserve `source_corrections` with the import's secured workpaper in
+`summaries/`. Dates, account identities, fees, lot selection and special form
+treatments are outside this correction path. It does not clear the option
+exercise screen or unsupported boxes. Those cases, calendar corrections and
+optional annual reporting remain AA47 follow-ups.
+Corrections live inside the broker-review object so an older engine's closed
+key set refuses them instead of silently ignoring a new top-level input.
+
 ## Primary authorities
 
 The IRS treats transfers between owned wallets as non-taxable, except digital
