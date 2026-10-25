@@ -85,7 +85,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA81** — show the CA payment total where the reconciliation is asked. **AA78** — let a foreign-tax filer's projection take a reviewed credit without the full AMT worksheet. **AA82** — check IRMAA tiers when `set` writes them. **AA61** — review the TY2023-2024 Form 1099-B boxes the import never names. **AA47**, **AA49**, **AA50** — the crypto follow-ups AA41 filed. | Nothing here waits on a publication. AA81 is the one CA item that can ship before FTB publishes TY2026. The rest is federal work a CA filer reaches: AA78 stops `/tax-project` for a routine profile, and AA82 lands before CMS's November table. AA61 is P2, because crypto on a 1099-B stopped with TY2024's forms. AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. |
+| **1. California filers: ready now** | **AA85** — refuse an acquisition dated after its sale in any account import. **AA47** — the 1099-DA cases that still block. **AA49**, **AA50** — the other crypto follow-ups AA41 filed. | Nothing here waits on a publication; every item is federal work a CA filer reaches. AA85 is a small correctness fix to a row the import reports complete. AA47 turns a permanent block into a return. AA49 must be reproduced first, and AA50 is a performance change, so it needs a before-and-after benchmark. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | AA44-AA46 — prior-return import, multi-year Roth planning and expanded YoY reports. | Larger product extensions. |
 | **4. Other states** | **AA79** — review TY2026 for the NY and NC payment forecasts. **AA63** — say when a local tax is withheld that no return here claims. | No current user files in New York, North Carolina or a locality with a return of its own. AA79 moves up the day one does, since the last 2026 estimate is due 2027-01-15. |
@@ -101,23 +101,23 @@ Trigger and range behavior is documented in
 
 - **AA47 (P2, M): Give the 1099-DA cases AA41 blocks for good a way through.**
   AA41 links each form to one disposal by `txn_id` and requires matching units
-  and proceeds, so four cases block for good: a broker using §1.6045-1(d)(10)'s
-  optional aggregate method for qualifying stablecoins or specified NFTs (one
-  form per stablecoin type, date sold possibly blank); one form line covering
-  several partial fills; units that differ only in precision (box 1c asks for
-  18 decimal places, which an import or broker may not carry); and a proceeds
-  gap of a cent or so that no recorded fee explains. Two more block every way:
-  a filled box the engine does not model (ordinary, accrued market discount,
-  wash sale, loss not allowed, and the six 1099-DA boxes AA59 added: 3a's
-  net proceeds, the QOF box 3b, customer-provided acquisition information,
-  the optional aggregate method, first-sale NFT proceeds and CUSIP) refuses the WHOLE
-  import, though the doc says to report that one transaction manually and no
-  input can mark it so, and an acknowledged `digital_asset_option_exercise`
-  leaves that sale in the import, priced without its premium; and a sale the import dates January 1
-  that the broker dates December 31 in UTC fails both years, because a date a
-  day off matches only within one year. Each needs its own evidenced
-  treatment, not a tolerance. Until then the import blocks instead of
-  guessing. Found by AA41's review.
+  and proceeds, so some cases blocked for good. Three now have evidenced
+  treatments: linked partial fills (#44), reviewed source corrections for an
+  export's lost precision or wrong USD value (#45), and a reviewed filing date
+  for a sale the import and the broker put on opposite sides of year-end (#46).
+  Still blocking: a broker using §1.6045-1(d)(10)'s optional aggregate method
+  for qualifying stablecoins or specified NFTs (one form per stablecoin type,
+  date sold possibly blank); a filled box the engine does not model (ordinary,
+  accrued market discount, wash sale, loss not allowed, 3a's net proceeds, the
+  QOF box 3b, customer-provided acquisition information, first-sale NFT
+  proceeds and CUSIP), which refuses the WHOLE import though the doc says to
+  report that one transaction manually and no input can mark it so; an
+  acknowledged `digital_asset_option_exercise`, which leaves that sale in the
+  import priced without its premium; and fills priced in fractions of a cent,
+  each rounded on its own while the broker rounds the order once, which leave
+  a one-cent gap that group resolutions may not close (#44's review). Each
+  needs its own evidenced treatment, not a tolerance. Until then the import
+  blocks instead of guessing. Found by AA41's review.
 
 - **AA48 (P1, S): Add the TY2026 Form 8949 boxes before TY2026 crypto imports.**
   `_REPORTING_REGIMES` holds TY2023-2025 only, so every TY2026 import with a
@@ -136,7 +136,10 @@ Trigger and range behavior is documented in
   URL that does not resolve yet: the source test checks the prefix and the
   year, not that the file exists. AA55 re-read every TY2026 Form 1099-DA box,
   whether the import reads it or not, and each kept its meaning, so the entry
-  needs no per-year input map.
+  needs no per-year input map. A TY2026 import cannot carry `broker_reporting`
+  until this lands, so a TY2025 return that moved a sale back from 2026-01-01
+  under AA47's reviewed dates (#46) relies on its `YEAR MOVE` record in
+  `answers.md` until then.
 
 - **AA49 (P3, M): Tie each form-backed digital-asset row to its own broker
   figures.** The `capital_proceeds` tie subtracts one aggregate,
@@ -164,17 +167,6 @@ Trigger and range behavior is documented in
   means, such as the merge's side of that date. Found by the review that
   recorded Y2 as shipped.
 
-- **AA61 (P2, S): Review the TY2023-2024 Form 1099-B boxes the import never names.**
-  Crypto reported on Form 1099-B for TY2023-2024 reconciles through the same
-  importer, whose 1099-B key set AA59 left empty: AA55 reviewed Form 1099-DA
-  only. The 1099-B has unread boxes of its own, among them box 3's
-  collectibles checkbox, whose gain is taxed at up to 28%, its QOF checkbox,
-  box 6's gross or net proceeds and the CUSIP field. Re-read every box of each
-  year's 1099-B against that year's instructions and form, record them in a
-  table like AA55's, and give each a key in `_FORM_UNSUPPORTED_BY_TYPE` or a
-  stated reason. Until then the gap is silent: a TY2024 NFT sale with box 3's
-  collectibles box checked routes at capital-gain rates rather than up to
-  28%. Found by AA59's design.
 
 - **AA63 (P2, S): Say when a local tax is withheld that no return here claims.**
   `/tax-parse` records local tax withheld only for NYC and Yonkers, whose
@@ -188,23 +180,6 @@ Trigger and range behavior is documented in
   return, deciding between them by whether the payment is ever claimed
   without one. Found while fixing AA59's Schedule A recipe.
 
-- **AA78 (P1, S): Let a foreign-tax filer's projection take its credit without
-  the full AMT worksheet.** With no `amt_projection` worksheet, `/tax-project`
-  refuses the payment projection when `has_foreign_tax_paid` is true or the
-  profile carries a prior-year AMT credit (`_unmodeled_credit_screen` in
-  `agents/lib/projection/exposure.py`). The refusal is right on its own terms:
-  the projection's foreign tax credit stays zero unless that worksheet supplies
-  `regular_foreign_tax_credit`, so the AMT-excluding estimate would over-state
-  the payment. But foreign tax paid is routine for anyone holding an
-  international fund in a taxable account, and many such filers can take the
-  credit under §904(j)'s election without Form 1116. Before AA42 they got a
-  silent over-statement; now they get a refusal whose easiest way around is
-  setting the flag false, which the return's own foreign tax credit section
-  also keys on (`result_template.json`). Accept a reviewed regular foreign tax
-  credit on its own, keep the AMT-not-modeled note, and keep refusing a
-  prior-year AMT credit, whose filers are the ones the worksheet exists for. If
-  the path is limited to the §904(j) election, its ceiling is statutory but
-  must still be fetched or listed in AGENTS.md §2. Found by AA42's review.
 
 - **AA79 (P2, M): Review TY2026 for the NY and NC payment forecasts.** AA43
   shipped for the TY2025 form year only: `_REVIEWED_YEARS` in
@@ -238,30 +213,7 @@ Trigger and range behavior is documented in
   that test, as `ca_use_tax` and `ca_noniso_amt` already have, with a test
   pinning the wording. Found by AA74's review.
 
-- **AA81 (P2, S): Show the CA payment total where the reconciliation is
-  asked.** The CA builder refuses until `estimated_payments.ca_verified` is
-  true, the answer that the payments were reconciled against the FTB account
-  (`agents/lib/return_builder.py`). It refuses a repeated `payment_id`, but one
-  payment entered twice under two ids passes once that answer is given, and
-  under-states the balance due by the whole payment. Reconciling against the
-  account is the right control, since two equal payments on one day can both
-  be real, but a total is easier to check against the account than a list.
-  Where `ca_verified` is asked, state the payment count and the total claimed
-  for the credited year, and record a question in `answers.md`, not a refusal,
-  for two records sharing state, credited year, kind, person, date and amount.
-  Found by AA70's review.
 
-- **AA82 (P3, XS): Check the IRMAA tiers when `set` writes them.** The
-  fetcher's `set` checks a `federal.irmaa.tiers.*` list for shape and order
-  (`_check_ascending` in `agents/lib/tax_law_fetcher.py`). AA53's
-  `validate_irmaa_tiers` (`agents/lib/tax_computations/federal/irmaa.py`),
-  with the statutory row count, the printed boundaries and the first-dollar
-  refusal, runs only when `/tax-roth-convert` or `/tax-project` reads the
-  table. A malformed table still cannot price anything, but the refusal
-  arrives at planning time, far from the fetch that caused it. Call the same
-  validator from `set` with the cache's `tax_year`, the premium year the read
-  already uses, before CMS publishes the next premium-year table in November.
-  Found by AA53's review.
 
 - **AA83 (P1, M): Review the TY2026 Form 540 before TY2026 CA returns.** The
   CA return path is reviewed for TY2025 only, at four gates:
@@ -292,6 +244,16 @@ Trigger and range behavior is documented in
   [October 2025 Tax News](https://www.ftb.ca.gov/about-ftb/newsroom/tax-news/2025/10.html)
   (the October 2026 issue returned 404 on 2026-10-24), and then on re-reading
   the planner's CA contracts against them. Found by the same review.
+
+- **AA85 (P3, XS): Refuse an acquisition dated after its sale in any
+  account import.** `build_crypto_import` refuses a Form 8949 row whose date
+  acquired is later than its date sold only when a `tax_calendar_review` is
+  present (#46). FIFO orders by the UTC instant while each row's dates are
+  read in its own record's offset, so an import whose records already mix
+  offsets can print one: a buy at `2025-06-02T00:30+08:00` funding a sale at
+  `2025-06-01T20:00Z`, a later instant, routes as acquired 2025-06-02, sold
+  2025-06-01, with the import complete. Run the check on every import, and
+  say which records' offsets disagree. Found by #46's review.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -603,6 +565,10 @@ that checks each row cannot yet; that is AA56.
 | AA43 | #33 | Reviewed TY2025 form year only: TY2026 mid-year runs refuse until that year is reviewed. |
 | AA42 | #34 | The IRMAA dollar figure needs the premium-year table CMS publishes the November before, so a mid-year run normally reports MAGI only. |
 | AA53 | #34 | — |
+| AA81 | #40 | Rows sharing every field become questions in `answers.md`, not refusals; the review reads only the profile. |
+| AA78 | #41 | Regular credit only: an AMT foreign tax credit, or a positive prior-year AMT credit, still needs the full Form 6251 worksheet. |
+| AA82 | #42 | — |
+| AA61 | #43 | — |
 | AA34 | #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
