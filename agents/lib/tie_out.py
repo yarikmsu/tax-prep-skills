@@ -147,7 +147,8 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "other_state_withholding",
                   # AA63: the same for a locality. An advisory rather than a
                   # capability block: some states settle local tax on the
-                  # state return, and a flat occupational tax has no return.
+                  # state return, and an occupational tax on wages may have
+                  # no return at all.
                   "other_local_withholding"}
 _INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
 
@@ -167,11 +168,12 @@ _INFORMATIONAL_ADVISORIES = {
         "local income tax withheld for a locality whose return this run does not "
         "compute — that locality may require its own return to credit or refund it "
         "(many Ohio and Pennsylvania municipalities do), its state may settle it on "
-        "the state return, or a flat occupational tax may have no return at all; "
-        "confirm the locality's filing rules, or the payment may never be credited "
-        "or refunded. NYC and Yonkers tax under a computed New York return never "
-        "belongs here. Schedule A line 5a counts it once, from its own form, where "
-        "an itemizer deducts it"),
+        "the state return, or an occupational tax on wages may have no return at "
+        "all; confirm the locality's filing rules, or the payment may never be "
+        "credited or refunded. NYC and Yonkers tax under a computed New York return "
+        "never belongs here, and neither does a flat head tax, which is not an "
+        "income tax. Schedule A line 5a counts it once, from its own form, where an "
+        "itemizer deducts it"),
     "state_refund_1099g": (
         "taxable on Schedule 1 line 1 if the prior year itemized and got a "
         "tax benefit from the deduction — verify against the prior-year "
@@ -1885,6 +1887,11 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
+# New York's localities that withhold income tax, by name with its spacing
+# and punctuation dropped: a row pairing one with another state's code would
+# otherwise hide it from a computed New York return.
+_NY_LOCALITY_NAMES = {"NYC", "NEWYORKCITY", "CITYOFNEWYORK", "NEWYORK", "YONKERS", "CITYOFYONKERS"}
+
 # The dedicated route for a computed state's local tax, or why it has none.
 _LOCAL_TAX_ROUTE = {
     "NY": ("route NYC tax to city_withholding_nyc and Yonkers tax to city_withholding_yonkers, "
@@ -1962,6 +1969,11 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
                     route += " for W-2, ca_1099_withholding for 1099/W-2G, or ca_592b_593_withholding for Forms 592-B/593"
                 errors.append(f"other_state_withholding ({doc}): {state} return is selected or computed; "
                               f"re-read the source and route its withholding to {route}, not an advisory")
+        named = {state for state, place in (key.split(":", 1) for key, amount in localities if amount > 0)
+                 if "NY" in computed and re.sub(r"[^A-Z]", "", place.upper()) in _NY_LOCALITY_NAMES}
+        if named - {"NY"}:
+            errors.append(f"other_local_withholding ({doc}): a New York City or Yonkers locality under another "
+                          f"state's code while the NY return is selected or computed; {_LOCAL_TAX_ROUTE['NY']}")
         for state in sorted({key.split(":", 1)[0] for key, amount in localities if amount > 0}):
             if state in computed:
                 errors.append(f"other_local_withholding ({doc}): {state} return is selected or computed; "

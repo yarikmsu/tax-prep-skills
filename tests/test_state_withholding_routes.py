@@ -298,3 +298,19 @@ def test_an_unresolved_profile_names_the_local_category():
                          profile={"address": {"state": "CA"}, "state_filings": "malformed"})
     assert any(m.startswith("other_local_withholding: resolve the profile state")
                for m in checked.missing_result_targets), checked.missing_result_targets
+
+
+@pytest.mark.parametrize("key", ["OH:NEW YORK CITY", "NJ:NYC", "PA:Yonkers", "DC:City of New York"])
+def test_ny_city_tax_under_another_states_code_cannot_hide_from_a_computed_ny(key):
+    checked = report([local({key: 125})], {"new_york_it201": {"line_34_deduction": 8000}})
+    assert any("New York City or Yonkers locality under another state's code" in m
+               for m in checked.missing_result_targets), checked.missing_result_targets
+    # The same row is advisory when no New York return is selected or computed.
+    other = report([local({key: 125})], {"form_1040": {}})
+    assert not [m for m in other.missing_result_targets if "other_local_withholding" in m]
+
+
+def test_every_dedicated_state_names_its_local_tax_route():
+    dedicated = {category.removeprefix("state_withholding_").upper()
+                 for category in T.CATEGORY_TARGETS if category.startswith("state_withholding_")}
+    assert set(T._LOCAL_TAX_ROUTE) == dedicated
