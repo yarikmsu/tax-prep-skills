@@ -1110,13 +1110,26 @@ def _form_groups(rows, forms):
     return groups, None
 
 
+def _exact_net(raw) -> 'Fraction | None':
+    """A record's exact USD amount net of its fee, before any rounding to
+    cents; None for a record that carries no USD amount (a transfer leg)."""
+    if raw.get('usd_amount') is None:
+        return None
+    return _exact(raw['usd_amount'], 'source USD amount') - _exact(raw.get('fee_usd', 0), 'source fee')
+
+
 def _treat_proceeds(t, form, gap, weights, resolution, split_cent, fee_left,
-                    premium_left=0) -> 'tuple[int, int]':
+                    premium_left=0, rounded_once=False) -> 'tuple[int, int]':
     """Column (d) for a proceeds gap (FIFO less form, in cents); returns the
     recorded fee and reviewed written-call premium still left to explain a
     later form's code E."""
     if gap and split_cent and abs(gap) <= 1:
         t.proceeds = _absorb(t.proceeds, -gap)  # split-form apportionment cent
+    elif gap and rounded_once:
+        # A group's fills each round to cents, while the broker rounded the
+        # order once; the form equals that exact total rounded, so the gap is
+        # those roundings alone and the form's figure stands.
+        t.proceeds = _absorb(t.proceeds, -gap)
     elif gap > 0 and resolution.get('proceeds') == 'taxpayer_records':
         t.used.add('proceeds')  # i8949 column (d): enter the correct, higher proceeds
         t.above += gap
@@ -1209,6 +1222,9 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
     # unreported basis stays FIFO, so mixing the two can change total gain.
     split = len(forms) > 1
     proceeds_cent = split and sum(form['proceeds'] for form in forms) == sum(_cents(row.proceeds) for row in rows)
+    # A single disposal's rows already add to its once-rounded total, so this
+    # can move only a fill group's cents.
+    rounded_once = not split and event.get('net') is not None and forms[0]['proceeds'] == _cents(event['net'])
     basis_cent = split and (all(form['reported'] for form in forms) and sum(
         form['cost_basis'] for form in forms) == sum(_cents(row.cost_basis) for row in rows))
     # The only costs a form can leave unreflected are the fee the import
@@ -1236,7 +1252,8 @@ def _reconcile_forms(rows, forms, event, regime, resolutions):
         weights = [row.quantity_exact for row in group]
         t = _FormTreatment(fifo_proceeds, fifo_basis, [0] * len(group), [0] * len(group), [set() for _ in group])
         fee_left, premium_left = _treat_proceeds(t, form, sum(fifo_proceeds) - form['proceeds'], weights,
-                                                 resolution, proceeds_cent, fee_left, premium_left)
+                                                 resolution, proceeds_cent, fee_left, premium_left,
+                                                 rounded_once)
         basis_gap = 0 if form['cost_basis'] is None else form['cost_basis'] - sum(fifo_basis)
         _treat_basis(t, form, basis_gap, weights, fifo_basis, resolution, basis_cent)
         _treat_term(t, form, group, basis_gap, resolution)
@@ -1345,7 +1362,9 @@ def _fill_group_rows(reporting, by_txn, events):
         if len({e['asset'] for e in source}) != 1 or len({e['date'] for e in source}) != 1:
             raise CryptoImportError('A fill group must be one same-asset, same-day broker sale')
         grouped[key] = [row for member in keys for row in by_txn[member]]
-        expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source)}
+        nets = [e['net'] for e in source]
+        expanded[key] = {**source[0], 'fee': sum(e['fee'] for e in source),
+                         'net': None if None in nets else sum(nets)}
         for member in keys:
             del grouped[member]
         used.update(keys)
@@ -1964,7 +1983,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
         off_year = 0
     if account_mode:
         events = {(raw['account_id'], raw['txn_id']): {'asset': txn.asset, 'fee': _cents(txn.fee_usd),
-                                                        'date': _parse_dt(raw['date'], 'date').date()}
+                                                        'date': _parse_dt(raw['date'], 'date').date(),
+                                                        'net': _exact_net(raw)}
                   for raw, txn in zip(transactions, txns)}
         for event in reviewed_options['events'] if reviewed_options else []:
             record = events[(event['account_id'], event['txn_id'])]

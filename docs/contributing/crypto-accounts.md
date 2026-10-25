@@ -311,7 +311,11 @@ groups are collected. Intervening purchases and transfers keep their original
 position. Output rows retain their own transaction IDs, dates and FIFO basis;
 the form workpaper names the group and `fill_groups` retains its membership
 and evidence. Fees are summed once for the group's reconciliation. Units and
-amounts must reconcile under the existing exact checks. Group-level
+amounts must reconcile under the existing exact checks, with one exact
+exception: each fill rounds to cents on its own, while a broker reporting the
+order rounds it once. A single form whose proceeds equal the fills' exact
+total, net of fees, rounded once takes the form's figure, the difference
+landing on the largest row; any other difference is unresolved. Group-level
 `resolutions` are refused: spreading an adjustment across differently priced
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.

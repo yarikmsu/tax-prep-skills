@@ -2013,3 +2013,34 @@ def test_a_missing_broker_figure_is_reported_once_not_as_a_second_excess():
     report = tie_out.evaluate(_broker_ledger(140), result, ['documents/1099DA.pdf'],
         option_exercise_answer=False, specific_identification_answer=False)
     assert not any('exceeds its rows' in t for t in report.missing_result_targets)
+
+
+def _subcent_fills(broker):
+    # Two fills of 0.5 BTC at 75.005 each: rounded on their own they post
+    # 75.01 + 75.01 = 150.02, while the order's exact 150.010 rounds once to
+    # 150.01, which is what the broker reports.
+    tx = [event('A', 'buy', 'buy', '2023-01-01', 1, 100),
+          event('A', 'fill1', 'sell', '2025-03-01T10:00:00', '0.5', '75.005'),
+          event('A', 'fill2', 'sell', '2025-03-01T10:01:00', '0.5', '75.005')]
+    block = {**reporting(form(txn_id='order1', proceeds=broker)),
+             'fill_groups': [dict(account_id='A', group_id='order1', txn_ids=['fill1', 'fill2'],
+                                  evidence='single-sale-confirmation')]}
+    return run(block, tx)
+
+
+def test_a_group_form_equal_to_its_once_rounded_total_takes_the_forms_figure():
+    result = resolved(_subcent_fills(150.01))
+    assert sorted(row['proceeds'] for row in rows(result)) == [75.0, 75.01]
+    assert result['broker_reporting']['proceeds_above_forms'] == 0
+
+
+@pytest.mark.parametrize('broker', [150.0, 150.03])
+def test_a_group_form_off_its_exact_total_still_blocks(broker):
+    # Neither is the order's exact 150.010 rounded once, nor the fills' own
+    # 150.02 (which ties row for row): a real difference stays unresolved.
+    blocked(_subcent_fills(broker), 'proceeds differ')
+
+
+def test_a_form_showing_the_fills_own_rounded_sum_ties_row_for_row():
+    result = resolved(_subcent_fills(150.02))
+    assert sorted(row['proceeds'] for row in rows(result)) == [75.01, 75.01]
