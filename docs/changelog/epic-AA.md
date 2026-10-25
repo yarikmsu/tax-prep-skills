@@ -3682,3 +3682,79 @@ rounds reshaped the original:
 Still open: until AA48, a TY2026 import cannot carry `broker_reporting`, and an
 acquisition dated after its sale is refused only under a calendar review
 (AA85).
+
+## AA85 — an acquisition dated after its sale refuses on every import (#49)
+
+FIFO orders account records by their UTC instant, while each Form 8949 row
+prints its dates in its own record's offset. Exports in different offsets
+could therefore fund a sale from a lot whose own calendar dates it after the
+sale, and the import reported complete: a buy at 2025-06-02T00:30+08:00
+funding a sale at 2025-06-01T20:00Z routed as acquired 2025-06-02, sold
+2025-06-01. The check that refuses such a row ran only under a
+`tax_calendar_review` (#46). It now runs on every import and names the sale
+and the lot by their opaque account and transaction IDs.
+
+## AA47 (part) — reviewed option premiums (#47)
+
+An acknowledged digital-asset option exercise left the sale in the import
+priced without its premium. An externally reviewed, plain-USD premium now
+adjusts the original buy or sell before FIFO, per Pub. 550 Table 4-3 (a
+purchased call or written put moves basis, a written call or purchased put
+moves proceeds), reaching prior-year lots, transfers, later sales and
+inventory. An explicit inclusion answer stops a premium already in the export
+being applied twice. Tie-out rebuilds `crypto_transactions.json` and compares
+the workpaper, the account-tagged Form 8949 rows and the Schedule D digital
+rows at exact cents, and the receipt binds the normalized source.
+Compensation, section 1256, straddles, holding-period adjustments, non-USD
+premiums, grouped option-caused sales and unreviewed years refuse.
+
+The merge review found that tie-out accepted a true option flag once any
+review existed, so a review naming only a lot sold in an earlier year passed
+a return whose option-affected sale was priced without its premium. A
+reviewed event must now be a filing-year row's own sale or the acquisition
+its lot came from, and a false flag fails only when one is. A premium that
+changes an earlier year's sale gets the same `PRIOR-YEAR RETURN` caveat as a
+source correction. Left open, in AA47: the purchased-put holding-period check
+reads only the lots sold, and a written call's premium shows as proceeds above
+the form rather than code E.
+
+## AA46 (part) — earlier-year columns and a saved YoY report (#50)
+
+`yoy_diff` compared two years and printed inline Markdown only. `--trend-years
+N` (1-3) adds columns for the archived years before the prior one, each
+resolved under the workspace and refused if missing, while every Δ and the
+choice of movers stay prior year to this year. A year read without its own tax
+law shows no marginal bracket, and a state row shows none for a year without
+that state's section. `--save` writes the same markdown owner-only to
+`reviews/yoy_diff_{prior}_to_{year}.md`. `/tax-review` still runs the diff
+without it.
+
+The design doc had named `summaries/`; the merge review moved the report,
+because `/tax-parse` and `/tax-compute` read each `summaries/*.md` as a source
+document's figures. It also put the trend archives under the workspace
+containment `--prior` already had, and turned an unreadable or malformed
+archive into an `ERROR` exit rather than a traceback. The PDF embed is
+AA46's remaining scope.
+
+## AA49 — each digital row ties to its own broker figures (#51)
+
+The `capital_proceeds` tie subtracted one aggregate,
+`crypto_summary.reporting_proceeds_above_forms`, from the result side. A stale
+excess surviving a re-merge could offset an equal over-merge of unrelated
+equity proceeds: a digital form of 140 reported at 150, a stale excess of 20,
+and equity merged at 1,010 against 1,000 tied 1,140 to 1,140. Each routed Form
+8949 row now carries `broker_proceeds`, allocated from its form in proportion
+to its own column (d), and each Schedule D digital row sums them; the tie adds
+those beside the equity proceeds.
+
+The merge review found that summing broker figures alone took column (d) out
+of the tie, so a sale or loss merged twice, or unrelated proceeds folded into
+a crypto row, passed where main failed them. Column (d) is now held to the
+forms: the digital rows' column (d) may exceed their broker figures only by
+exactly the excess the import reported. Where the merged Form 8949 account
+rows are present, each Schedule D digital row must equal their sum for its box
+in every column, which catches a gain moved between short and long term and a
+$0 loss merged twice, which the totals cannot see. A missing or malformed
+broker figure is a missing result target (exit 2) rather than a raise that
+read as a malformed ledger. Still open: a stale import whose figures agree
+with each other.
