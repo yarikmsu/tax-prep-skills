@@ -267,7 +267,9 @@ An original offset-free timestamp needs documented UTC-source confirmation;
 a date alone cannot supply a time. Preserve the complete correction and
 calendar workpapers. Fees, identities and lot selection remain unsupported.
 A `PRIOR-YEAR RETURN` caveat means the correction changes a year already
-reported: show it to the user and offer `/tax-amend` for that year.
+reported: show it to the user and offer `/tax-amend` for that year. A
+`YEAR MOVE` caveat means every import covering the named years must carry the
+same review and corrections; record that in `answers.md` for the next year.
 
 Add `broker_reporting` from the parsed broker forms — the schema, the year
 table and every treatment are in `docs/contributing/crypto-accounts.md`

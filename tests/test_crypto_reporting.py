@@ -1344,7 +1344,7 @@ def test_reviewed_acquisition_cost_correction_reprices_later_fifo_disposals():
     (lambda c: c['corrected'].update(usd_amount=True), 'must be a number'),
     (lambda c: c['corrected'].update(usd_amount=-1), 'cannot be negative'),
     (lambda c: c.update(corrected={}), 'changes only quantity'),
-    (lambda c: c['corrected'].update(date='2025-03-02'), 'changes only quantity'),
+    (lambda c: c['corrected'].update(date='2025-03-02'), 'requires review of all account dates'),
     # Fees, basis and received units are outside this path: each would move
     # gain while the source record and its broker form still read the same.
     (lambda c: c['corrected'].update(fee_usd=40), 'changes only quantity'),
@@ -1468,23 +1468,125 @@ def test_reviewed_same_instant_tax_date_can_cross_the_year_boundary(original, co
     assert tx == before
 
 
-@pytest.mark.parametrize('change', [
-    lambda c,b: b.pop('tax_calendar_review'),
-    lambda c,b: b['tax_calendar_review'].update(all_account_dates_reviewed=False),
-    lambda c,b: b['tax_calendar_review'].update(all_account_dates_reviewed=1),
-    lambda c,b: b['tax_calendar_review'].update(evidence=''),
-    lambda c,b: b['tax_calendar_review'].update(calendar_label=''),
-    lambda c,b: b['tax_calendar_review'].update(unknown=True),
-    lambda c,b: c['corrected'].update(date='2025-12-31'),
-    lambda c,b: c['corrected'].update(date='2025-12-31T17:00:00'),
-    lambda c,b: c['corrected'].update(date='2025-12-31T16:00:00-08:00'),
-    lambda c,b: c['corrected'].update(date='2026-01-01T02:00:00+01:00'),
+@pytest.mark.parametrize('change,refusal', [
+    (lambda c,b: b.pop('tax_calendar_review'), 'requires review of all account dates'),
+    (lambda c,b: b['tax_calendar_review'].update(all_account_dates_reviewed=False), 'all_account_dates_reviewed true'),
+    (lambda c,b: b['tax_calendar_review'].update(all_account_dates_reviewed=1), 'all_account_dates_reviewed true'),
+    (lambda c,b: b['tax_calendar_review'].update(evidence=''), 'non-empty string'),
+    (lambda c,b: b['tax_calendar_review'].update(calendar_label=''), 'non-empty string'),
+    (lambda c,b: b['tax_calendar_review'].update(unknown=True), 'all_account_dates_reviewed true'),
+    (lambda c,b: c['corrected'].update(date='2025-12-31'), 'full ISO timestamp'),
+    # The same instant written without an offset: refused for the missing
+    # offset itself, even where naive originals are confirmed UTC.
+    (lambda c,b: (c['corrected'].update(date='2026-01-01T01:00:00'),
+                  b['tax_calendar_review'].update(naive_timestamps_are_utc=True)), 'corrected timestamp needs an offset'),
+    (lambda c,b: c['corrected'].update(date='2025-12-31T16:00:00-08:00'), 'exact UTC instant'),
+    (lambda c,b: c['corrected'].update(date='2026-01-01T02:00:00+01:00'), 'by one day'),
+    (lambda c,b: c['corrected'].update(date='2025-12-31T17:00:00-08:60'), 'invalid UTC offset'),
+    (lambda c,b: c['corrected'].update(date='2025-12-31T12:30:00-12:30'), 'between -12:00 and \\+14:00'),
 ])
-def test_tax_date_corrections_require_a_reviewed_calendar_and_unchanged_instant(change):
+def test_tax_date_corrections_require_a_reviewed_calendar_and_unchanged_instant(change, refusal):
     tx, correction, block = tax_date_case()
     change(correction, block)
-    with pytest.raises(C.CryptoImportError):
+    with pytest.raises(C.CryptoImportError, match=refusal):
         source_run([correction], tx, block)
+
+
+def test_a_reviewed_date_cannot_jump_two_calendar_days():
+    # 2025-12-30T23:30-12:00 and 2026-01-01T01:30+14:00 are one instant, two
+    # calendar days apart: a correction may only re-read a year-end day.
+    tx, correction, block = tax_date_case()
+    tx[1]['date'] = correction['expected']['date'] = '2026-01-01T01:30:00+14:00'
+    correction['corrected']['date'] = '2025-12-30T23:30:00-12:00'
+    with pytest.raises(C.CryptoImportError, match='by one day'):
+        source_run([correction], tx, block)
+
+
+@pytest.mark.parametrize('acquired,sold,corrected', [
+    # Correcting the purchase alone: 2024-06-14 Z against a 2025-06-15 +08:00
+    # sale reads long; in either one calendar the hold is exactly a year, short.
+    ('2024-06-15T01:00:00+08:00', '2025-06-15T01:00:00+08:00', 'buy'),
+    # Correcting the sale alone (the documented example): 2024-12-31 +08:00
+    # against 2025-12-31 Z reads short; in either one calendar it is long.
+    ('2024-12-31T01:00:00+08:00', '2026-01-01T01:00:00+08:00', 'sale'),
+])
+def test_near_the_one_year_line_both_dates_must_come_from_one_calendar(acquired, sold, corrected):
+    tx = [event('A', 'buy', 'buy', acquired, usd=100), event('A', 'sale', 'sell', sold, usd=150)]
+    utc = {'buy': '2024-06-14T17:00:00Z' if corrected == 'buy' else '2024-12-30T17:00:00Z',
+           'sale': '2025-06-14T17:00:00Z' if corrected == 'buy' else '2025-12-31T17:00:00Z'}
+    block = {**reporting(form(date_sold=utc['sale'][:10])), 'tax_calendar_review': calendar_review()}
+    index = 0 if corrected == 'buy' else 1
+    one = [source_correction(tx[index], date=utc[corrected])]
+    with pytest.raises(C.CryptoImportError, match='different calendars'):
+        source_run(one, tx, block)
+    # Both dates re-read in UTC: one calendar, so the true holding period.
+    both = [source_correction(tx[0], date=utc['buy']), source_correction(tx[1], date=utc['sale'])]
+    result = resolved(source_run(both, tx, block))
+    row = only(result)
+    part = 'part_i_short_term' if corrected == 'buy' else 'part_ii_long_term'
+    assert (row['date_acquired'], row['date_sold']) == (utc['buy'][:10], utc['sale'][:10])
+    assert result['form_8949'][part] == [row]
+
+
+def test_a_bare_date_purchase_near_the_one_year_line_cannot_be_read_in_the_sales_calendar():
+    # 2024-12-31 has no time, so whether the UTC sale on 2025-12-31 is a day
+    # past its anniversary cannot be established.
+    tx = [event('A', 'buy', 'buy', '2024-12-31', usd=100),
+          event('A', 'sale', 'sell', '2026-01-01T01:00:00+08:00', usd=150)]
+    block = {**reporting(form(date_sold='2025-12-31')), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='different calendars'):
+        source_run([source_correction(tx[1], date='2025-12-31T17:00:00Z')], tx, block)
+
+
+def test_a_hold_far_from_the_one_year_line_needs_no_second_correction():
+    # The purchase is a bare date, so it has no calendar to re-read, but no
+    # reading of 2023-01-01 against 2025-12-31 is within a year.
+    tx, correction, block = tax_date_case()
+    result = resolved(source_run([correction], tx, block))
+    assert result['form_8949']['part_ii_long_term'] == [only(result)]
+    assert result['caveats'][0].startswith('YEAR MOVE') and 'TY2026 to TY2025' in result['caveats'][0]
+
+
+def test_a_reviewed_date_cannot_move_a_filing_year_sale_into_a_later_year():
+    # The TY2026 import would have to carry the same correction to report
+    # it; without it the sale re-dates into TY2025, which excluded it.
+    tx = [BASE[0], {**BASE[1], 'date': '2025-12-31T11:00:00Z'}]
+    correction = source_correction(tx[1], date='2026-01-01T01:00:00+14:00')
+    block = {**reporting(received=False), 'tax_calendar_review': calendar_review()}
+    with pytest.raises(C.CryptoImportError, match='cannot move a TY2025 disposal or income event into a later year'):
+        source_run([correction], tx, block)
+    income = event('A', 'reward', 'income', '2025-12-31T11:00:00Z', usd=10, income_type='staking')
+    with pytest.raises(C.CryptoImportError, match='into a later year'):
+        source_run([source_correction(income, date='2026-01-01T01:00:00+14:00')], [income], block)
+
+
+def test_a_later_years_import_may_carry_a_move_into_the_earlier_year():
+    # TY2026's run of the AA47 case: the carried correction leaves its sale
+    # in TY2025, and the caveat says which return holds it.
+    tx, correction, block = tax_date_case()
+    block['accounts']['A']['forms_received'] = False
+    block['forms'] = []
+    result = C.build_crypto_import(tx, tax_year=2024, specific_identification=False, broker_reporting=block | {
+        'source_corrections': [correction]})
+    assert result['caveats'][0].startswith('YEAR MOVE') and 'TY2026 to TY2025' in result['caveats'][0]
+
+
+def test_an_acquisitions_year_move_changes_no_return_and_raises_no_year_caveat():
+    tx = [{**BASE[0], 'date': '2025-01-01T01:00:00+08:00'}, BASE[1]]
+    purchase = source_correction(tx[0], date='2024-12-31T17:00:00Z')
+    block = {**reporting(form()), 'tax_calendar_review': calendar_review()}
+    result = resolved(source_run([purchase], tx, block))
+    assert only(result)['date_acquired'] == '2024-12-31'
+    assert not any(c.startswith('YEAR MOVE') for c in result['caveats'])
+
+
+def test_cli_refuses_a_misplaced_top_level_calendar_review(tmp_path):
+    tx, correction, block = tax_date_case()
+    path = tmp_path / 'crypto_transactions.json'
+    path.write_text(json.dumps(dict(transactions=tx, tax_calendar_review=calendar_review(),
+                                   broker_reporting=block)), encoding='utf-8')
+    with pytest.raises(C.CryptoImportError, match='inside broker_reporting'):
+        C._cli_compute([str(path), '--account-aware', '--year', '2025'])
 
 
 def test_a_naive_original_timestamp_requires_explicit_utc_source_confirmation():

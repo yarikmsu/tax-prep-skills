@@ -1458,6 +1458,10 @@ def _reviewed_tax_timestamp(value, *, naive_utc=False):
         if not naive_utc:
             raise CryptoImportError('An original naive timestamp needs explicit UTC source confirmation; the corrected timestamp needs an offset')
         parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    elif not -12 * 3600 <= parsed.utcoffset().total_seconds() <= 14 * 3600:
+        # Civil time runs from UTC-12:00 to UTC+14:00; an offset outside it
+        # names no calendar and could only push a date across a year.
+        raise CryptoImportError('Tax date correction offset must lie between -12:00 and +14:00')
     try:
         utc = parsed.astimezone(datetime.timezone.utc)
         fraction = Fraction('0.' + match['fraction']) if match['fraction'] else Fraction(0)
@@ -1480,13 +1484,13 @@ def _apply_source_corrections(transactions, corrections, account_mode, calendar_
     if corrections is None:
         if calendar:
             raise CryptoImportError('Tax calendar review has no date corrections')
-        return transactions, [], None
+        return transactions, [], None, []
     if not isinstance(corrections, list):
         raise CryptoImportError('source_corrections must be a list of reviewed source facts')
     if not corrections:
         if calendar:
             raise CryptoImportError('Tax calendar review has no date corrections')
-        return transactions, [], None
+        return transactions, [], None, []
     if not account_mode:
         raise CryptoImportError('Source corrections require explicit account and transaction IDs')
     indices = {}
@@ -1499,6 +1503,7 @@ def _apply_source_corrections(transactions, corrections, account_mode, calendar_
             raise CryptoImportError('Source corrections require unique account/transaction IDs')
         indices[key] = index
     updated, records, used, date_changes = list(transactions), [], set(), False
+    moves = []
     for correction in corrections:
         if not isinstance(correction, dict) or set(correction) != {
                 'account_id', 'txn_id', 'expected', 'corrected', 'evidence'}:
@@ -1536,6 +1541,8 @@ def _apply_source_corrections(transactions, corrections, account_mode, calendar_
                 days = abs((corrected_date.date() - original_date.date()).days)
                 if days == 0 or days > 1:
                     raise CryptoImportError('A tax date correction must change the calendar date by one day')
+                if corrected_date.year != original_date.year:
+                    moves.append((key, original_date.year, corrected_date.year))
                 date_changes = True
                 continue
             if name == 'quantity' and not isinstance(value, str):
@@ -1559,7 +1566,53 @@ def _apply_source_corrections(transactions, corrections, account_mode, calendar_
                             corrected=dict(values), evidence=evidence))
     if calendar and not date_changes:
         raise CryptoImportError('Tax calendar review has no date corrections')
-    return updated, records, calendar if date_changes else None
+    return updated, records, calendar if date_changes else None, moves
+
+
+def _timestamp_offset(value, naive_utc):
+    """The UTC offset a recorded timestamp's calendar date is read in, or
+    None when it has none to read: a date alone, or a naive time nobody
+    confirmed was UTC."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    text = (text.removesuffix(' UTC') + ('+00:00' if text.endswith(' UTC') else '')).replace('Z', '+00:00')
+    if not re.match(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', text):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return datetime.timedelta(0) if naive_utc else None
+    return parsed.utcoffset()
+
+
+def _check_reviewed_calendar(rows_all, transactions, records, calendar) -> None:
+    """A corrected date moves one record to another calendar. Near the
+    one-year line, a row whose two dates are read in different calendars can
+    flip between short and long term while each date is individually right.
+    Within two days of it, both dates must carry one offset."""
+    corrected = {(r['account_id'], r['txn_id']) for r in records if 'date' in r['corrected']}
+    by_key = {(t['account_id'], t['txn_id']): t for t in transactions}
+    naive_utc = calendar.get('naive_timestamps_are_utc', False)
+    two_days = datetime.timedelta(days=2)
+    for row in rows_all:
+        sale, origin = (row.account_id, row.txn_id), (row.origin_account_id, row.origin_txn_id)
+        if row.date_acquired == 'UNKNOWN' or not ({sale, origin} & corrected):
+            continue
+        acquired, sold = (datetime.date.fromisoformat(row.date_acquired),
+                          datetime.date.fromisoformat(row.date_sold))
+        if _holding_period(acquired, sold - two_days) == _holding_period(acquired, sold + two_days):
+            continue
+        source = by_key.get(origin, {})
+        acquired_raw = source.get('acquired') if str(source.get('kind', '')).lower() == 'receive' else source.get('date')
+        offsets = {_timestamp_offset(by_key.get(sale, {}).get('date'), naive_utc),
+                   _timestamp_offset(acquired_raw, naive_utc)}
+        if None in offsets or len(offsets) != 1:
+            raise CryptoImportError('A reviewed tax date leaves a sale within two days of its one-year holding '
+                                    'period with its dates in different calendars; correct the acquisition and '
+                                    'sale dates in one calendar, or prepare that sale externally')
 
 
 def _prior_years_corrected(rows_all, records, tax_year) -> 'list[int]':
@@ -1613,7 +1666,7 @@ def build_crypto_import(transactions: 'list[dict]', *,
                    if isinstance(broker_reporting, dict) else None)
     calendar_review = (broker_reporting.get('tax_calendar_review')
                        if isinstance(broker_reporting, dict) else None)
-    transactions, correction_records, reviewed_calendar = _apply_source_corrections(
+    transactions, correction_records, reviewed_calendar, date_moves = _apply_source_corrections(
         transactions, corrections, account_mode, calendar_review)
     if isinstance(broker_reporting, dict) and ('source_corrections' in broker_reporting or 'tax_calendar_review' in broker_reporting):
         broker_reporting = dict(broker_reporting)
@@ -1662,6 +1715,19 @@ def build_crypto_import(transactions: 'list[dict]', *,
     if reviewed_calendar and any(
             row.date_acquired != 'UNKNOWN' and row.date_acquired > row.date_sold for row in rows_all):
         raise CryptoImportError('Reviewed calendar leaves an acquisition date after its disposal; reconcile all account dates')
+    year_moves = []
+    if reviewed_calendar:
+        _check_reviewed_calendar(rows_all, transactions, correction_records, reviewed_calendar)
+        taxable_keys = ({(r.account_id, r.txn_id) for r in rows_all}
+                        | {(e.account_id, e.txn_id) for e in all_incomes})
+        year_moves = [move for move in date_moves if move[0] in taxable_keys]
+        if tax_year is not None and any(old == tax_year and new > tax_year for _, old, new in year_moves):
+            # TY{new}'s import would have to carry this same correction to
+            # report the event; without it, it re-dates back into this year,
+            # which already excluded it, and no return reports it at all.
+            raise CryptoImportError(f'A reviewed tax date cannot move a TY{tax_year} disposal or income event '
+                                    'into a later year; report it in this year under its import date, or '
+                                    'prepare the year-end case externally')
     taxable_disposals = [d for d in disposals if d.taxable]  # excludes non-taxable `send`
     if tax_year is not None:
         rows = [r for r in rows_all if int(r.date_sold[:4]) == tax_year]
@@ -1784,6 +1850,12 @@ def build_crypto_import(transactions: 'list[dict]', *,
         result['tax_calendar_review'] = reviewed_calendar
         result['caveats'].append('Filing dates follow the externally reviewed tax calendar; '
                                  'preserve tax_calendar_review with the source-correction workpaper.')
+    if year_moves:
+        pairs = ', '.join(sorted({f'TY{old} to TY{new}' for _, old, new in year_moves}))
+        result['caveats'].insert(0, f'YEAR MOVE: a reviewed tax date moves {len(year_moves)} disposal or income '
+                                    f'event(s) from {pairs}. Every import covering those years must carry the '
+                                    'same tax_calendar_review and source_corrections, or one year reports the '
+                                    'event again; review a filed return among them for /tax-amend.')
     result['crypto_summary'].update(reporting_complete=reporting['complete'],
                                     reporting_unresolved=reporting['unresolved'],
                                     reporting_proceeds_above_forms=reporting['proceeds_above_forms'])

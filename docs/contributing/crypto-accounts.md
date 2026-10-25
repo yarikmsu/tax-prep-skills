@@ -506,10 +506,27 @@ FIFO still orders the actual instants. The reviewed date also controls
 acquisition holding periods, income and filing-year selection. Reconcile the
 original acquisition dates as well: a known acquisition date after its
 disposal refuses, and missing inventory still blocks. An unused calendar
-review, a changed instant, an unconfirmed UTC assumption or an unreviewed
-form year refuses. Preserve `tax_calendar_review` and the before/after
-`source_corrections` with the secured import workpaper. Source arrays and
-exports remain unchanged.
+review, a changed instant, an unconfirmed UTC assumption, an offset outside
+-12:00 to +14:00 or an unreviewed form year refuses. Preserve
+`tax_calendar_review` and the before/after `source_corrections` with the
+secured import workpaper. Source arrays and exports remain unchanged.
+
+A correction re-reads one record in another calendar, and a row's two dates
+can then come from different calendars. Within two days of the one-year line
+that can flip a sale between short and long term, so a corrected row there
+must have both its acquisition and sale timestamps in one offset: correct the
+other date too. A bare date, an unconfirmed naive time or a receive's
+`acquired` (which this path cannot correct) has no calendar to compare, so
+such a row refuses; prepare it externally.
+
+A correction that moves a disposal or income event across a year boundary
+opens the output with a `YEAR MOVE` caveat naming both years. Every import
+covering either year must carry the same review and corrections, or one year
+reports the event again; a filed return among them may need `/tax-amend`.
+Moving a filing-year event into a later year refuses outright: that later
+import, without the correction, would re-date it back into this year, which
+already excluded it, and no return would report it. Report it in the year its
+import dates it, or prepare that case externally.
 
 ## Primary authorities
 
