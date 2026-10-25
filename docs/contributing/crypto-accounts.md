@@ -281,9 +281,10 @@ amounts must reconcile under the existing exact checks. Group-level
 fills could move gain between holding periods. Correct the underlying records
 from evidence or prepare that case externally.
 
-This handles linked partial fills only. Optional annual stablecoin/NFT reports,
-precision differences, unexplained proceeds gaps, manual special treatments
-and cross-year date corrections remain AA47 follow-ups. An optional-method box
+This handles linked partial fills only. An export's lost precision or wrong
+USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47).
+Optional annual stablecoin/NFT reports, manual special treatments and
+cross-year date corrections remain AA47 follow-ups. An optional-method box
 still refuses; this grouping cannot clear an unreviewed reporting year.
 
 ### Reviewed Form 1099-B inputs (AA61)
