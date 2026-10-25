@@ -455,6 +455,26 @@ def test_a_purchased_put_refuses_while_any_same_asset_lot_takes_the_married_put_
         resolved(compute(source))
 
 
+@pytest.mark.parametrize('extra', [
+    # Linked to a second account, which sold it before the put: not held.
+    [event('B', 'other', 'buy', '2024-03-01', usd=40), event('B', 'out', 'send', '2024-04-01', transfer_id='t1'),
+      event('C', 'in', 'receive', '2024-04-01T01:00:00', transfer_id='t1'),
+      event('C', 'other-sale', 'sell', '2024-05-01', usd=45)],
+    # The same short-term holding sent out, but of another asset.
+    [{**event('B', 'other', 'buy', '2024-03-01', usd=40), 'asset': 'ETH'},
+      {**event('B', 'out', 'send', '2024-04-01', external_transfer_confirmed=True), 'asset': 'ETH'}],
+])
+def test_only_an_external_send_of_the_same_asset_counts_as_still_held(extra):
+    source = inputs('purchased_put')
+    source['transactions'] += extra
+    for account in sorted({t['account_id'] for t in extra}):
+        source['broker_reporting']['accounts'][account] = dict(forms_received=False,
+                                                                evidence=f'statement-{account}')
+    if any(t.get('transfer_id') for t in extra):
+        source['transfer_links'] = {'t1': dict(ownership_confirmed=True, evidence='own-wallets')}
+    resolved(compute(source))
+
+
 @pytest.mark.parametrize('bought,sent', [('2024-08-01', '2024-09-01'), ('2024-01-01', '2024-07-01')])
 def test_a_lot_sent_to_the_taxpayers_own_wallet_still_counts_for_the_married_put_rule(bought, sent):
     # Bought after the put, or five months old when it was bought, then sent

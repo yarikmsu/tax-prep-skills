@@ -1472,7 +1472,15 @@ def _reconcile_broker_reporting(rows, tax_year, events, reporting):
                 'form_ids': [form['form_id'] for form in txn_forms],
                 'unmodeled_boxes': sorted({box for form in txn_forms for box in form['unmodeled']}),
                 'broker_proceeds': _money(sum(form['proceeds'] for form in txn_forms) / 100),
-                'fifo_rows': [_row_dict(replace(row, fifo_cost_basis=row.cost_basis)) for row in txn_rows]})
+                # Each FIFO slice's term is fixed by its lot, whatever the
+                # hand preparation does to the money columns.
+                'fifo_cost_basis': {period: _money(sum(row.cost_basis for row in txn_rows
+                                                       if row.holding_period == period))
+                                    for period in ('short', 'long')},
+                # Keyed as the summary and tie-out key it, a fill group's
+                # group_id included, so the slices merge as given.
+                'fifo_rows': [_row_dict(replace(row, txn_id=txn, fifo_cost_basis=row.cost_basis))
+                              for row in txn_rows]})
         elif declared is None:
             issues.append(_issue('declare whether this account received broker forms for the filing year',
                                  account, txn))
@@ -2188,7 +2196,8 @@ def build_crypto_import(transactions: 'list[dict]', *,
                                     'preparation; prepare that import externally')
         result['crypto_summary']['manual_disposals'] = [
             {'account_id': entry['account_id'], 'txn_id': entry['txn_id'],
-             'broker_proceeds': entry['broker_proceeds']} for entry in manual]
+             'broker_proceeds': entry['broker_proceeds'],
+             'fifo_cost_basis': entry['fifo_cost_basis']} for entry in manual]
         boxes = sorted({box for entry in manual for box in entry['unmodeled_boxes']})
         result['caveats'].insert(0, f'MANUAL: {len(manual)} disposal(s) carry a broker-form box this engine '
                                     f"does not model ({', '.join(boxes)}); they are left out of Form 8949 and "

@@ -325,8 +325,9 @@ from evidence or prepare that case externally.
 
 This handles linked partial fills only. An export's lost precision or wrong
 USD value goes through [reviewed source corrections](#reviewed-source-corrections-aa47).
-Optional annual stablecoin/NFT reports, manual special treatments and
-cross-year date corrections remain AA47 follow-ups. An optional-method box
+Optional annual stablecoin/NFT reports and cross-year date corrections remain
+AA47 follow-ups; a box this engine does not model goes through
+[manual disposals](#manual-disposals-aa47). An optional-method box
 still refuses; this grouping cannot clear an unreviewed reporting year.
 
 ### Manual disposals (AA47)
@@ -354,13 +355,18 @@ the forms' proceeds and the FIFO slices to start the preparation from. The
 output opens with a `MANUAL` caveat, and `crypto_summary.manual_disposals`
 lists the disposals.
 
-Prepare each by hand under the form's own instructions, then merge its Form
-8949 rows with their `account_id`, `txn_id`, `box` and `broker_proceeds`
-(their share of the form's proceeds), adding the same amounts into each box's
-Schedule D digital row. `crypto_summary.manual_disposals` keeps each
-disposal's forms' proceeds, and tie-out fails until the merged rows' broker
-figures add to exactly that, whether or not the parse ledger still holds the
-form: one slice of a two-lot sale is not the sale. An option-reviewed import cannot
+Prepare each by hand under the form's own instructions, starting from its
+`fifo_rows` (keyed by the entry's own `txn_id`, a fill group's `group_id`
+included), then merge each slice as a Form 8949 row with its `account_id`,
+`txn_id`, `box`, `broker_proceeds` (its share of the form's proceeds) and
+`fifo_cost_basis`, adding the same amounts into each box's Schedule D digital
+row. `crypto_summary.manual_disposals` keeps each disposal's forms' proceeds
+and its FIFO basis per holding period, and tie-out fails until the merged
+rows' broker figures add to exactly the first, once, and their
+`fifo_cost_basis` puts exactly the second in Part I and Part II, whether or
+not the parse ledger still holds the form: one slice of a two-lot sale is not
+the sale, and a short-term slice merged into Part II is not its term. The
+money columns are the preparer's; the term is the lot's. An option-reviewed import cannot
 also leave a disposal manual, since its tie-out rebuilds every account row from
 the source.
 
@@ -684,7 +690,9 @@ basis and is outside this path. A purchased put additionally requires every
 sold lot to have been held long-term already on `option_opened`, and no lot of
 the same asset in any account, a lot sent to the taxpayer's own outside
 wallet included, to be held one year or less on that date or bought after it
-and no later than the exercise. Pub. 550's married-put rule
+and no later than the exercise. A sent lot counts as held from the send on,
+even if a later receive returns it: the engine cannot tie a receive to the
+send it reverses, so that round trip refuses too. Pub. 550's married-put rule
 makes such holdings short-term and restarts their holding period, which the
 engine does not model, so the import refuses and that case is prepared
 externally. Opening inventory with
