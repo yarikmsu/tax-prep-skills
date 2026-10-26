@@ -3870,3 +3870,59 @@ different assets, its `asset` is box 1b's text, and units, count and proceeds
 tie as a stablecoin aggregate's do. A first-sale form, box 11c filled and box
 1f blank, still refuses. With it every case AA41 blocked for good has an
 evidenced treatment, and AA47 has shipped.
+
+## AA49 (follow-up) — form-backed rows need a ledgered proceeds category (#67)
+
+The `capital_proceeds` tie runs only for a category the ledger holds. A broker
+form ledgered without its proceeds total, a 1099-DA reporting zero or a 1099-B
+whose proceeds the parse dropped, left every form-backed Schedule D row passing
+with no tie and no unverifiable warning, a zero-proceeds loss included. The
+tie-out now fails when such rows exist and the ledger has no `capital_proceeds`:
+1099-B rows outside Box C/F with any figure, and digital rows carrying
+`broker_proceeds`, an explicit zero included. Codex's change covered the digital
+rows; review found the 1099-B rows had the same hole and extended it.
+
+## AA44 (part) — the reviewed prior-return import (#69)
+
+A filer new to the toolkit has no archive for `/tax-rollover` to read.
+`agents/lib/prior_return.py` reads TY2025 Form 1040/1040-SR, Schedule D, Form
+8606, 8801, 8995, Form 540 and FTB 3510 lines from a text-bearing PDF into an
+owner-only pending seed that rollover refuses until every figure, question and
+IRA owner is confirmed, bound by digest to the seed, profile and PDF.
+
+Codex's reader passed its tests on invented page text and read almost nothing
+on the official layouts: Form 1040's rotated label extracts as "mroF 1040",
+sidebars put text before line numbers ("Refund 34", "$15,750 14"), Schedule D
+line 7's box sits on a wrapped row, and instruction text such as "1040-NR,
+line 7a" refused every return with a Schedule D as nonresident. Review rebuilt
+it on the forms' own running headers and right-hand boxes (dot leader or bullet,
+pre-printed parentheses, FTB's cents column), with a fixture built from the
+blank forms' extracted text. Five review rounds followed. They closed a
+duplicate Form 8606 copy forcing a phantom spouse basis (now `duplicate_of:`,
+and a page printing an SSN is held to the assigned person's `ssn_last4`), a
+seed storing a file name that could hold an SSN (the PDF is now found by
+digest), a confirmed seed blocking `/tax-project`, a dingbat tick on Form 540's
+AMENDED box, and an unreadable neighbour PDF naming itself in a traceback. A
+simulated flattened PDF still puts Form 540 Side 4's amounts on separate rows,
+which fail closed. The table readers (#70) remain open.
+
+## AA45 — reviewed multi-year Roth plans (#71)
+
+`agents/lib/roth_plan.py` prices a reviewed plan of up to ten years: explicit
+annual income and law (fetched, or a named held/indexed hypothetical), Form 8606
+pro-rata carrying individual basis and balance between years, and federal, CA
+and premium-year IRMAA costs reported apart, unknown costs null. Additional
+Medicare Tax now maps QSS to the single threshold while NIIT keeps the joint
+one.
+
+Review found the plan under-stating conversion cost, the planner's hard-error
+direction, in several ways. Form 8606 line 6 omitted the year's growth. An
+indexed hypothetical scaled each IRMAA table on its own instead of deriving
+joint and MFS amounts from the unmarried one (42 USC 1395r(i)(3)(C)) and
+indexing the $500,000 top only from 2028 ((i)(5)(C)). Medicare MAGI could leave
+out tax-exempt interest. A following-year plan could start below the closing
+line 6 plus line 4, the backdoor deposit its basis already counts. Each is
+fixed with a hand-worked test. Two attempts to price a filing-year conversion
+against a return's recorded Dec 31 value (a realized rate, then the larger of
+two timings) each failed review because deposits no 8606 line shows break any
+bound, so such a plan now refuses: that year's conversion is a counterfactual.
