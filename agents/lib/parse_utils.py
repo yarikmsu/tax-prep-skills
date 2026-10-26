@@ -425,12 +425,17 @@ _ROW_TOLERANCE = 3
 
 
 def _word_rows(words: list[dict]) -> list[list[dict]]:
+    """Rows as pdfplumber's text forms them: each word joins the row of the
+    word above it in reading order when their tops are within the tolerance,
+    so a row can step down in small changes of font size."""
     rows: list[list[dict]] = []
+    previous = None
     for word in sorted(words, key=lambda w: (w["top"], w["x0"])):
-        if rows and word["top"] - rows[-1][0]["top"] <= _ROW_TOLERANCE:
+        if rows and word["top"] - previous <= _ROW_TOLERANCE:
             rows[-1].append(word)
         else:
             rows.append([word])
+        previous = word["top"]
     return [sorted(row, key=lambda w: w["x0"]) for row in rows]
 
 

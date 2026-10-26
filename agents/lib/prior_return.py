@@ -320,6 +320,8 @@ def _left_of(words: list, word: dict) -> list:
 
 def _phrase(words: list, word: dict, phrase: tuple) -> bool:
     """`word` begins `phrase` on its row."""
+    if word["text"] != phrase[0]:
+        return False
     current = word
     for text in phrase[1:]:
         after = _right_of(words, current)
@@ -491,8 +493,10 @@ def _schedule_b_checks(v: dict) -> None:
     """Every printed subtotal, the line 8 combination and the shaded cells."""
     def total(line, labels):
         return round(sum(v[line, label] for label in labels), 2)
+    if any(v[line, "(viii)"] != v[line, "(vii)"] for line in _SB_LINES):
+        raise _Unreadable("page 2's column (viii) does not carry page 1's subtotal (vii)")
     for line in _SB_LINES:
-        if (v[line, "(vii)"] != total(line, _SB_HEADINGS[0][:6]) or v[line, "(viii)"] != v[line, "(vii)"]
+        if (v[line, "(vii)"] != total(line, _SB_HEADINGS[0][:6])
                 or v[line, "(xiv)"] != total(line, _SB_HEADINGS[1][:6])):
             raise _Unreadable(f"line {line} fails its printed subtotals")
     for label in _SB_COLUMNS:
@@ -541,15 +545,24 @@ def _ftc_baskets(schedule_pages: list, words: dict, year: int, source_digest: st
             "provenance": {"sha256": source_digest, "pages": [page + 1, page + 2], "form": "1116B"},
         }
         index += 2
+    # Page 2 prints no category. With one category the adjacent page 2 is its
+    # own; with several, a page 1 carrying nothing in (vii) binds by position
+    # alone, and two such pairs printed out of order would swap unseen.
+    if len(out) > 1 and any(not any(b["reconciliation"][line]["(vii)"] for line in _SB_LINES) for b in out.values()):
+        raise _Unreadable("with several categories, each page 1 must carry a subtotal its page 2 repeats")
     return list(out.values())
 
 
 # Schedule P (540) Part III lines that carry a credit forward, by section, and
-# the codes the form prints itself. A solar credit's Section B2 carryover is
-# Section C's credit amount; its carryforward is Section C's column (d).
+# the codes the form prints itself. All of them are on Sides 3 and 4, which
+# print no Part I or II line. A solar credit's Section B2 carryover is Section
+# C's credit amount; its carryforward is Section C's column (d). Line 4's
+# carryover (code 162 above the business-credit limit, Side 2) is not read.
 _SP_SECTIONS = {"6": "A2", "7": "A2", "8": "A2", "9": "A2", "10": "A2", "16": "B2", "17": "B2",
                 "18": "B2", "19": "B2", "21": "B4", "23": "C", "24": "C"}
 _SP_PRINTED = {"10": "188", "21": "242", "23": "180", "24": "181"}
+_SP_SOLAR = {"180", "181"}
+_SP_LINES = {str(n) for n in range(6, 26)}
 _SP_HEADINGS = (("(a)",), ("(b)", "(b)*"), ("(c)",), ("(d)",))
 
 
@@ -565,52 +578,64 @@ def _schedule_p_columns(row: list) -> list | None:
 
 
 def _schedule_p_lines(words: list) -> dict:
-    """{line: {"code", "a", "b", "c", "d"}} for each carryover line on one Side."""
+    """{line: {"code", "a", "b", "c", "d"}} for every Part III line on Side 3
+    or 4. Each figure from the first line to the last carryover line must
+    land in one line's cells; one that lands in none is never ignored."""
     rows = _word_rows(words)
     headings = [(row, columns) for row in rows if (columns := _schedule_p_columns(row))]
     if not headings:
-        return {}
-    grid_left = min(columns[0][0] for _, columns in headings)
-    numbers = _margin_numbers(words, set(_SP_SECTIONS), grid_left)
-    found = {}
-    for line, number in numbers.items():
-        code_label = next((w for w in _right_of(words, number) if w["text"] == "Code:"), None)
-        if code_label is None:
-            continue  # Parts I and II reuse these numbers for AMT lines
-        after = _right_of(words, code_label)
-        code = after[0]["text"] if after and re.fullmatch(r"\d{3}", after[0]["text"]) else None
-        # The line's own headings, above the next row that starts in the margin.
+        raise _Unreadable("the column headings are missing")
+    grid = (min(columns[0][0] for _, columns in headings), max(columns[-1][1] for _, columns in headings))
+    numbers = _margin_numbers(words, _SP_LINES, grid[0])
+    if not set(_SP_SECTIONS) & set(numbers):
+        raise _Unreadable("no carryover line is where Side 3 or 4 prints one")
+    found, placed, last = {}, set[int](), 0.0
+    for line, number in sorted(numbers.items(), key=lambda item: item[1]["top"]):
+        # The number's row holds the code, entered or printed, and the name.
+        label = sorted((w for w in words if _overlaps(w, number)), key=lambda w: w["x0"])
+        text = " ".join(w["text"] for w in label if w["x0"] > number["x0"])
+        code = re.match(r"Code:?\s*(\d{3})\b", text)
         following = next((row[0]["top"] for row in rows
-                          if row[0]["top"] > number["bottom"] and row[0]["x0"] < grid_left), float("inf"))
-        later = [(row, columns) for row, columns in headings if number["top"] < row[0]["top"] < following]
-        if not later:
+                          if row[0]["top"] > number["bottom"] and row[0]["x0"] < grid[0]), float("inf"))
+        own = [(row, columns) for row, columns in headings if number["top"] < row[0]["top"] < following]
+        if not own:
             raise _Unreadable(f"line {line} has no column headings")
-        heading, columns = min(later, key=lambda item: item[0][0]["top"])
+        heading, columns = min(own, key=lambda item: item[0][0]["top"])
         bottom = max(w["bottom"] for w in heading)
-        stop = next((row[0]["top"] for row in rows if row[0]["top"] > bottom and row[0]["x0"] < columns[0][0]),
+        stop = next((row[0]["top"] for row in rows if row[0]["top"] > bottom and row[0]["x0"] < grid[0]),
                     float("inf"))
         band = [w for w in words if w["top"] >= bottom - 1 and w["bottom"] <= stop + 1]
         if any(not columns[0][0] <= _mid(w, "x0", "x1") < columns[-1][1] for w in band):
             raise _Unreadable(f"line {line} prints a figure outside its columns")
+        placed.update(id(w) for w in label + heading + band)
         cells = {key: _cell([w for w in band if left <= _mid(w, "x0", "x1") < right])
                  for key, (left, right) in zip("abcd", columns)}
-        if all(value is None for value in cells.values()):
-            continue
-        if code is None or _SP_PRINTED.get(line, code) != code:
-            raise _Unreadable(f"line {line} has figures without its credit code")
-        found[line] = {"code": code, **cells}
+        if line in _SP_SECTIONS:
+            last = max(last, stop)
+            if any(value is not None for value in cells.values()):
+                if code is None or _SP_PRINTED.get(line, code[1]) != code[1]:
+                    raise _Unreadable(f"line {line} has figures without its credit code")
+                found[line] = {"code": code[1], **cells}
+    first = min(number["top"] for number in numbers.values())
+    if any(id(w) not in placed and _VALUE.fullmatch(w["text"]) and grid[0] <= _mid(w, "x0", "x1") < grid[1]
+           and first <= w["top"] < last for w in words):
+        raise _Unreadable("a figure sits in no line's columns")
     return found
 
 
 def _ca_credits(schedule_pages: list, words: dict, source_digest: str) -> list:
-    """Each credit code's carryforward, kept apart from every other code."""
+    """Each credit code's carryforward, kept apart from every other code.
+    `schedule_pages` are (page, side); every carryover line is on Side 3 or 4."""
+    sides = sorted(side for _, side in schedule_pages if side in (3, 4))
+    if sides != [3, 4]:
+        raise _Unreadable("Schedule P needs Sides 3 and 4, once each")
     lines: dict[str, dict] = {}
-    for page in schedule_pages:
+    for page, side in schedule_pages:
+        if side not in (3, 4):
+            continue
         if page not in words:
             raise _Unreadable("Schedule P needs its word positions")
         for line, record in _schedule_p_lines(words[page]).items():
-            if line in lines:
-                raise _Unreadable(f"Schedule P line {line} is printed twice")
             lines[line] = {**record, "page": page + 1}
     by_code: dict[str, list] = {}
     for line in sorted(lines, key=int):
@@ -627,6 +652,8 @@ def _ca_credits(schedule_pages: list, words: dict, source_digest: str) -> list:
             raise _Unreadable(f"credit code {code} is entered twice in one section")
         if any(prior["carryover"] != row["amount"] for prior, row in zip(rows, rows[1:])):
             raise _Unreadable(f"credit code {code}'s carryover does not reach its next section")
+        if code in _SP_SOLAR and rows[-1]["section"] != "C" and rows[-1]["carryover"]:
+            raise _Unreadable(f"credit code {code}'s Section B2 carryover has no Section C line")
         last = rows[-1]
         out.append({"code": code, "carryforward": last["carryover"],
                     "not_carried": round(sum(row["amount"] - row["used"] - row["carryover"] for row in rows), 2),
@@ -712,7 +739,7 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
     ira = []
     ira_owner_ssn: dict[int, str] = {}
     schedule_b: list[tuple[int, bool]] = []
-    schedule_p: list[int] = []
+    schedule_p: list[tuple[int, int]] = []
     unreviewed: set[str] = set()
     first_pages: list[int] = []
     for page, raw in pages.items():
@@ -736,7 +763,8 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
         elif page_year != year:
             raise ImportError("Official form page belongs to a different tax year")
         if form == "P540":
-            schedule_p.append(page)
+            side = re.search(r"(?m)(?:Schedule P \(540\) 20\d{2} Side (\d)$|^Side (\d) Schedule P \(540\))", text)
+            schedule_p.append((page, int(side[1] or side[2]) if side else 0))
         if form == "1040" and "Filing Status" in text:
             first_pages.append(page)
         lines = locate_lines(text, form, page + 1, source_digest)
@@ -1208,8 +1236,10 @@ def imported_changes(prior, current) -> list:
             ("ca_credits", [{"code": c["code"], "carryforward": c["carryforward"], "not_carried": c["not_carried"],
                              "provenance": c["provenance"]} for c in evidence.get("ca_credits", [])],
              # A column (d) below (a) less (b) is an FTB 3870 election or an
-             # unread figure; either way a person settles it.
-             lambda row: row["carryforward"] or row["not_carried"])):
+             # unread figure; either way a person settles it. Code 188 rolls
+             # as FTB 3510 line 39 when that was read, and is not counted twice.
+             lambda row: (row["carryforward"] or row["not_carried"])
+             and not (row["code"] == "188" and "ca_amt_credit_carryforward" in seed["fields"]))):
         if not rows:
             continue
         path = "prior_year.imported_" + key

@@ -974,6 +974,27 @@ class TestEveryExtractionRouteMasks:
         out = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
         assert [w["text"] for w in out] == ["Your", "social", "security", "number", f"JANE Q DOE {MASKED}"]
 
+    def test_pdf_words_mask_a_row_that_steps_down_in_font_size(self, tmp_path):
+        """A first name at 14pt, a last name at 11pt and the comb at 8pt on one
+        baseline: their tops step down in small changes, and pdfplumber's
+        text keeps them on one row under the label. So must the words."""
+        from reportlab.pdfgen import canvas
+        from agents.lib.parse_utils import extract_pdf_text, extract_pdf_words
+        pdf = tmp_path / "f1040.pdf"
+        page = canvas.Canvas(str(pdf))
+        page.setFont("Helvetica", 7)
+        page.drawString(472, 700, "Your social security number")
+        for size, x, text in ((14, 40, "JANE"), (11, 90, "DOE")):
+            page.setFont("Helvetica", size)
+            page.drawString(x, 684, text)
+        page.setFont("Helvetica", 8)
+        for index, digit in enumerate("00000" + LAST4):
+            page.drawCentredString(469 + 107 / 9 * (index + 0.5), 684, digit)
+        page.save()
+        assert MASKED in extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
+        words = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
+        assert [w["text"] for w in words][-1] == f"JANE DOE {MASKED}"
+
     def test_pdf_text_masks_a_flattened_comb_field(self, tmp_path):
         """Drawn the way a flattened Form 1040 prints it: the label row, then
         each digit centred in its own box of the comb field (Form 1040 page 1,
