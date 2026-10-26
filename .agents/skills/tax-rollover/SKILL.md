@@ -22,7 +22,8 @@ months of CA residence. New-year residency/allocations must be interviewed again
 Example: after `/tax-setup 2025` for TY2025, run `/tax-rollover 2024` to pull from `archive/2024/`.
 
 ## Prerequisites
-- `archive/{prior_year}/result.json` exists with matching `meta.tax_year`
+- `archive/{prior_year}/result.json` exists with matching `meta.tax_year`, or an
+  original, text-bearing prior-return PDF is available for the import below
 - Current-year workspace initialized (`result.json` + `taxpayer_profile.json` at root with `meta.tax_year > prior_year`)
 
 ## Steps
@@ -47,6 +48,17 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 ### 1. Input validation
 
 **SECURITY:** Validate `{prior_year}` is a 4-digit integer (2000–2099). Reject non-numeric.
+
+### 1.5. First-time users: import an official-form PDF
+
+If there is no toolkit archive and the filer has last year's software return,
+follow [references/prior-return-import.md](references/prior-return-import.md).
+The importer currently has reviewed TY2025 official-line mappings only, for
+rollover into TY2026. It creates an owner-only, pending archive seed. Neither
+the agent nor `rollover` may use a pending seed. Confirm every extracted figure
+against the PDF, resolve the ownership and missing-worksheet questions, and
+record that review through the importer. Missing values are never zeros.
+This seed is only for rollover, never a complete computed-return baseline.
 
 ### 2. Compute the diff
 

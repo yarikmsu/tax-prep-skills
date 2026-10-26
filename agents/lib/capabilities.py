@@ -1162,6 +1162,8 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     prior = profile.get("prior_year", {})
     if not isinstance(prior, dict):
         raise CapabilityError("prior_year must be an object")
+    if prior.get("import_unresolved"):
+        raise CapabilityError("Prior-return import has unresolved worksheets; reconcile every named carryover before computation")
     rental_opening = prior.get("rental_carryforward")
     derived["has_rental_income"] = rental_plan is not None or rental_opening is not None
     from agents.lib.tax_computations.federal.rentals import rental_in_computed_scope

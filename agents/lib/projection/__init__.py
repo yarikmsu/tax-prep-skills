@@ -42,6 +42,7 @@ from agents.lib.projection.types import (  # noqa: E402,F401
     _prior_year_floor_applied,
 )
 from agents.lib.rollover import (  # noqa: E402
+    ImportedSeedError,
     RolloverError,
     _validate_year_arg,
     load_prior,
@@ -3657,12 +3658,15 @@ def _report_to_dict(r: ProjectionReport) -> dict:
 
 def load_prior_baseline(archive_dir, prior_year: int):
     """Return PriorReturn for archive_dir, or None if the directory is absent
-    (degraded mode). Re-raises a year mismatch as ProjectionError."""
+    or holds only a prior-return import seed (degraded mode, as for any filer
+    new to the toolkit). Re-raises a year mismatch as ProjectionError."""
     p = Path(archive_dir)
     if not p.exists():
         return None
     try:
         return load_prior(p, prior_year)
+    except ImportedSeedError:
+        return None
     except RolloverError as e:
         raise ProjectionError(str(e)) from e
 

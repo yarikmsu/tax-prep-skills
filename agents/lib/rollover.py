@@ -23,6 +23,11 @@ class RolloverError(Exception):
     """Raised when /tax-rollover cannot safely proceed."""
 
 
+class ImportedSeedError(RolloverError):
+    """The archive is a prior-return import seed, which holds carryforwards
+    for rollover and nothing a complete-return comparison could use."""
+
+
 # --- FIELD_MAP -------------------------------------------------------------
 # Stable carryforward/identity keys → JSON paths in source and target files.
 # Schema renames in newer toolkit versions don't break older archived returns
@@ -239,7 +244,7 @@ def _read_json(path: Path) -> dict:
     return data
 
 
-def load_prior(archive_dir: Path, year: int) -> PriorReturn:
+def load_prior(archive_dir: Path, year: int, *, allow_imported: bool = False) -> PriorReturn:
     archive_dir = Path(archive_dir)
     if not archive_dir.exists():
         raise RolloverError(
@@ -252,6 +257,16 @@ def load_prior(archive_dir: Path, year: int) -> PriorReturn:
             f"Archive at {redact(archive_dir)} is for TY{meta_year}, not "
             f"TY{year}. Refusing to roll inconsistent data."
         )
+    if result.get("meta", {}).get("source") == "imported_prior_return" or "prior_return_import" in result:
+        if not allow_imported:
+            raise ImportedSeedError(
+                "An imported seed is not a complete computed return; use it only for reviewed rollover")
+        from agents.lib.prior_return import ImportError, validate_reviewed, verify_source
+        try:
+            validate_reviewed(result, profile)
+            verify_source(archive_dir.parent.parent, result)
+        except (ImportError, ValueError, TypeError, KeyError) as exc:
+            raise RolloverError("Imported prior return is pending review or has changed; confirm it before rollover") from exc
     return PriorReturn(year=year, result=result, profile=profile)
 
 
@@ -1074,6 +1089,17 @@ def compute_diff(
     tax_law_new: dict,
 ) -> dict[str, list[Change]]:
     out: dict[str, list[Change]] = {}
+    if prior.result.get("meta", {}).get("source") == "imported_prior_return" or "prior_return_import" in prior.result:
+        from agents.lib.prior_return import ImportError, imported_changes, validate_reviewed
+        try:
+            validate_reviewed(prior.result, prior.profile)
+            if "carryforwards" in categories:
+                out["carryforwards"] = imported_changes(prior, current)
+        except (ImportError, ValueError, TypeError, KeyError) as exc:
+            raise RolloverError("Imported prior return must be reviewed and consistent before rollover") from exc
+        # Imported identity/dependents are re-interviewed at setup: a masked
+        # PDF is not an instruction to replace this year's reviewed identity.
+        return out
     if "carryforwards" in categories:
         out["carryforwards"] = _diff_carryforwards(prior, current)
     if "identity" in categories:
@@ -1288,7 +1314,7 @@ def _main(argv: list[str]) -> int:
         hold_workspace(workspace, "rollover")
         src = resolve_under_workspace(args.src, workspace)
         # CLI's --year is the NEW year; archive should contain prior return (year - 1)
-        prior = load_prior(src, year - 1)
+        prior = load_prior(src, year - 1, allow_imported=True)
         # Inside the boundary: the workspace files go through the same
         # non-finite refusal as the archive, and it must print as one line.
         current = _load_current_state(workspace, year)
