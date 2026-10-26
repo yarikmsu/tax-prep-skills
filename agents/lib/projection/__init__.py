@@ -230,6 +230,20 @@ def _binary_status_key(filing_status: "str | None",
     return "mfj" if _canonical_status(filing_status, where) in _MFJ_LIKE else "single"
 
 
+def additional_medicare_threshold(tax_law: dict, filing_status: "str | None"):
+    """Form 8959 status grouping differs from ordinary brackets and NIIT.
+
+    QSS uses the single threshold, despite using joint ordinary brackets and
+    the joint NIIT threshold. See TY2025 Form 8959 instructions, page 1:
+    https://www.irs.gov/pub/irs-prior/i8959--2025.pdf
+    Values still come exclusively from the covered-year cache.
+    """
+    status = _canonical_status(filing_status, "Additional Medicare Tax")
+    key = {"MFJ": "mfj", "MFS": "mfs"}.get(status, "single")
+    thresholds = ((tax_law.get("federal", {}) or {}).get("additional_medicare_tax", {}) or {}).get("threshold") or {}
+    return thresholds.get(key)
+
+
 def capital_gains_limits(tax_law: dict, filing_status: "str | None",
                          where: str = "tax computation") -> "tuple[float | None, float | None]":
     """`(zero_pct_limit, fifteen_pct_limit)` for the status — the ONE read site.
@@ -1291,8 +1305,7 @@ def project_federal_tax(proj: ProjectedInputs, profile: dict, tax_law: dict,
             ctc = compute_child_tax_credit(n_ctc, amount, agi, phaseout)["credit_allowed"]
 
     addl_cfg = fed.get("additional_medicare_tax", {}) or {}
-    threshold_map = addl_cfg.get("threshold") or {}
-    addl_threshold = threshold_map.get(full_key) or threshold_map.get(bin_key)
+    addl_threshold = additional_medicare_threshold(tax_law, fs)
     medicare_wages = proj.medicare_wages or proj.wages
     if addl_threshold is not None:
         addl = compute_additional_medicare(

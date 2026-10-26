@@ -235,7 +235,10 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   assumptions. Show tax, Medicare premiums and distribution effects separately;
   a future-year forecast must not masquerade as a filing computation.
   Design #58 approved 2026-10-25: ten-year cap, both held/indexed hypothetical
-  law options and bracket/IRMAA fill targets. Implementation follows AA44.
+  law options and bracket/IRMAA fill targets. Implementation in review follows
+  AA44: explicit annual validation, keystone forecasts, individual basis/balance
+  carry, premium-year costs, safe fill targets and secured plan artifacts. CA
+  years still require AA84's separate review; no future-year gate is lifted.
   Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 

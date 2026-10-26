@@ -1,6 +1,6 @@
 ---
 name: tax-roth-convert
-description: Roth conversion ladder modeler — sweep conversion amounts $0–$100K, chart the marginal cost per dollar, and flag exactly which conversion trips the LTCG 0/15/20% breakpoints, NIIT, and IRMAA tiers. Federal, planning-only. Use when the user asks whether or how much to convert to a Roth, or mentions a Roth conversion ladder, filling a bracket, or IRMAA.
+description: Model single-year Roth conversion ladders or reviewed multi-year plans, with individual IRA basis, explicit income and law assumptions, and separate federal, state and Medicare costs. Use when the user asks whether or how much to convert to a Roth, a conversion ladder across years, filling a bracket, or IRMAA. Planning-only.
 license: Apache-2.0
 ---
 
@@ -68,6 +68,13 @@ then still reads as a complete procedure while every script it names is absent.
 So a failure to RUN this check IS the blocking condition, never a step to skip.
 
 ### Procedure
+
+**Multi-year request:** after the same preflight, follow
+[references/multi-year-plan.md](references/multi-year-plan.md) instead of the
+single-year sweep below. The separate plan engine requires reviewed annual
+assumptions, keeps individual basis/balances between years and prices Medicare
+against the premium year two years later. Never substitute a hypothetical for
+missing fetched law without the user's explicit plan selection.
 
 1. **Validate prerequisites.** Confirm `result.json`, `taxpayer_profile.json`, and
    `tax_law_{year}.json` exist. If `result.json` lacks a computed line 24 or line 12,

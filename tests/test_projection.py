@@ -482,6 +482,22 @@ def test_project_federal_niit_added_when_threshold_fetched():
     assert fed.total_tax == 66210.00
 
 
+def test_qss_additional_medicare_is_single_while_niit_is_joint():
+    # TY2025 Form 8959 instructions p1 and Form 8960 instructions p2 give
+    # distinct status groups. Synthetic covered-year cache thresholds below
+    # also exercise the projection, rather than just its lookup helper.
+    law = _tax_law_2026()
+    law["federal"]["niit"] = {"rate": .038, "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}}
+    prof = _profile_mfj()
+    prof["filing_status"] = "QSS"
+    fed = P.project_federal_tax(_proj(wages=220000, ordinary_dividends=20000, medicare_wages=220000), prof, law)
+    # MAGI240k is below joint NIIT250k; wages220k exceed single Medicare200k
+    # by20k, so Additional Medicare is180. Joint brackets remain in use.
+    assert fed.niit == 0
+    assert fed.additional_medicare == 180
+    assert fed.taxable_income == 210000
+
+
 def test_project_schedule_1a_reduces_taxable_income_not_agi_or_niit():
     """I2 projection parity: a Schedule 1-A forecast override is a BELOW-AGI
     deduction — it drops taxable income but leaves AGI, NIIT, and Additional
