@@ -71,12 +71,13 @@ the left margin; nothing assumes a page offset.
 - [Schedule P (540)](https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf) Part
   III: lines 6-10, 16-19, 21 and 23-24 by credit code, from Sides 3 and 4,
   each needed once with every line number it prints. Every figure on them
-  must be a line number, a credit code, a line a description cites, or in a
-  box its line has. Column (d) must not exceed (a) less (b). A solar credit's
-  Section B2 carryover must be its Section C credit amount, and a Section C
-  left blank is a question. Code 188 must agree with FTB 3510 line 39 and
-  rolls as that line. Line 4's carryover (code 162 above the business-credit
-  limit, Side 2) is not read: a figure in its column (d) is a question.
+  must be a line number, a credit code, part of a credit name or a line a
+  description cites, or in a box its line has. Column (d) must not exceed (a)
+  less (b). A solar credit's Section B2 carryover must be its Section C credit
+  amount, and a Section C left blank is a question. Code 188 must agree with
+  FTB 3510 line 39 and rolls as that line. Line 4's carryover (code 162 above
+  the business-credit limit) is not read; reconcile it with the other credit
+  worksheets.
 - Form 1040's marked filing-status box is read the same way. The confirmed
   status must match it.
 

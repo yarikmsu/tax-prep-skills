@@ -465,9 +465,10 @@ def _schedule_b_year(words: list) -> int:
     """The calendar year entered after its printed "20". A fiscal-year
     schedule fills the dates after "beginning" and "ending" instead."""
     calendar = _phrases(words, ("calendar", "year"))
-    if len(calendar) != 1:
+    year_word = _right_of(words, calendar[0])[:1] if len(calendar) == 1 else []
+    if not year_word or year_word[0]["text"] != "year":
         raise _Unreadable("the calendar-year entry is missing")
-    row = _right_of(words, _right_of(words, calendar[0])[0])
+    row = _right_of(words, year_word[0])
     entry = []
     for word in row:
         if word["text"] == ",":
@@ -555,8 +556,8 @@ def _ftc_baskets(schedule_pages: list, words: dict, year: int, source_digest: st
 # the codes the form prints itself. Side 3 prints lines 6-15 and Side 4 lines
 # 16-25, and neither prints a Part I or II line. A solar credit's Section B2
 # carryover is Section C's credit amount; its carryforward is Section C's
-# column (d). Line 4, on Side 2, carries code 162 only above the business
-# credit limit and is never read: a carryover there is a question.
+# column (d). Line 4's carryover (code 162 above the business-credit limit,
+# Side 2) is not read.
 _SP_SECTIONS = {"6": "A2", "7": "A2", "8": "A2", "9": "A2", "10": "A2", "16": "B2", "17": "B2",
                 "18": "B2", "19": "B2", "21": "B4", "23": "C", "24": "C"}
 _SP_PRINTED = {"10": "188", "21": "242", "23": "180", "24": "181"}
@@ -588,9 +589,10 @@ def _schedule_p_headings(words: list) -> tuple[list, list, float]:
     return rows, headings, min(columns[0][0] for _, columns in headings)
 
 
-def _schedule_p_cells(words: list, page: tuple, number: dict, line: str) -> tuple[list, dict, float]:
+def _schedule_p_cells(words: list, page: tuple, number: dict, line: str) -> tuple[list, list, dict, float]:
     """One line's heading row and the band of figures under it, to the next
-    row starting in the margin, with its cells (a)-(d) and where it stops."""
+    row starting in the margin, with its columns, its cells (a)-(d) and
+    where it stops."""
     rows, headings, margin = page
     following = next((row[0]["top"] for row in rows
                       if row[0]["top"] > number["bottom"] and row[0]["x0"] < margin), float("inf"))
@@ -607,7 +609,7 @@ def _schedule_p_cells(words: list, page: tuple, number: dict, line: str) -> tupl
         raise _Unreadable(f"line {line} prints a figure outside its columns")
     cells = {key: _cell([w for w in band if left <= _mid(w, "x0", "x1") < right])
              for key, (left, right) in zip("abcd", columns)}
-    return heading + band, cells, stop
+    return heading + band, columns, cells, stop
 
 
 def _schedule_p_lines(words: list, side: int) -> dict:
@@ -624,12 +626,18 @@ def _schedule_p_lines(words: list, side: int) -> dict:
         # The number's row holds the code, entered or printed, and the name.
         label = sorted((w for w in words if _overlaps(w, number)), key=lambda w: w["x0"])
         code = re.match(r"Code:?\s*(\d{3})\b", " ".join(w["text"] for w in label if w["x0"] > number["x0"]))
-        # A description cites other lines by number: "line 3".
-        cited = {id(after[0]) for w in label if w["text"] == "line" and (after := _right_of(label, w))}
-        stray = [w for w in label if w is not number and id(w) not in cited and _VALUE.fullmatch(w["text"])]
+        accounted, columns, cells, stop = _schedule_p_cells(words, page, number, line)
+        # A description cites other lines by number ("line 3"), and a credit
+        # name typed after "Name:" can hold one ("Program 3.0") up to column
+        # (d). A column (b) figure drawn up into the name leaves an amount not
+        # carried, which blocks; one from (a) or (d) lands outside it.
+        text = {id(after[0]) for w in label if w["text"] == "line" and (after := _right_of(label, w))}
+        named = next((w for w in label if w["text"] == "Name:"), None)
+        if named:
+            text |= {id(w) for w in label if w["x0"] >= named["x1"] and _mid(w, "x0", "x1") < columns[3][0]}
+        stray = [w for w in label if w is not number and id(w) not in text and _VALUE.fullmatch(w["text"])]
         if stray and not (code and len(stray) == 1 and stray[0]["text"] == code[1]):
             raise _Unreadable(f"line {line} prints a figure beside its name")
-        accounted, cells, stop = _schedule_p_cells(words, page, number, line)
         if any(cells[key] is not None for key in "abcd" if key not in _SP_BOXES.get(line, "abcd")):
             raise _Unreadable(f"line {line} prints a figure in a column it has no box in")
         placed.update(id(w) for w in label + accounted)
@@ -643,34 +651,18 @@ def _schedule_p_lines(words: list, side: int) -> dict:
     return found
 
 
-def _check_side_2(words: list) -> None:
-    """Side 2's line 4 carries code 162 forward only above the business
-    credit limit, and is not read: a carryover there is a question."""
-    page = _schedule_p_headings(words)
-    line_4 = [row[0] for row in page[0] if row[0]["text"] == "4" and row[0]["x1"] <= page[2]
-              and re.match(r"Code:?\s*162\b", " ".join(w["text"] for w in row[1:]))]
-    if len(line_4) != 1:
-        raise _Unreadable("line 4 is not where Side 2 prints it")
-    if _schedule_p_cells(words, page, line_4[0], "4")[1]["d"]:
-        raise _Unreadable("line 4 carries code 162 forward on Side 2, which is not read")
-
-
 def _ca_credits(schedule_pages: list, words: dict, source_digest: str) -> list:
     """Each credit code's carryforward, kept apart from every other code.
-    `schedule_pages` are (page, side); every carryover line read is on Side 3
-    or 4, and Side 2, where printed, must carry nothing from line 4."""
+    `schedule_pages` are (page, side); every carryover line is on Side 3 or 4."""
     sides = sorted(side for _, side in schedule_pages if side in (3, 4))
     if sides != [3, 4]:
         raise _Unreadable("Schedule P needs Sides 3 and 4, once each")
     lines: dict[str, dict] = {}
     for page, side in schedule_pages:
-        if side not in (2, 3, 4):
+        if side not in (3, 4):
             continue
         if page not in words:
             raise _Unreadable("Schedule P needs its word positions")
-        if side == 2:
-            _check_side_2(words[page])
-            continue
         for line, record in _schedule_p_lines(words[page], side).items():
             lines[line] = {**record, "page": page + 1}
     by_code: dict[str, list] = {}

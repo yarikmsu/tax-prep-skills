@@ -213,6 +213,23 @@ def test_a_fiscal_year_schedule_is_a_question():
     assert "fiscal year" in seed("1116B_page1", "1116B_page2", edit=fiscal)["unresolved"]["ftc_schedule_b"]
 
 
+@pytest.mark.parametrize("others", [
+    # Row grouping joins "calendar" to a "year" drawn lower, which does not
+    # overlap it: nothing lies to the right of "calendar".
+    [{"text": "x", "x0": 10, "x1": 15, "top": 53.0, "bottom": 54.0},
+     {"text": "y", "x0": 20, "x1": 25, "top": 56.0, "bottom": 57.0},
+     {"text": "year", "x0": 205, "x1": 220, "top": 59.0, "bottom": 68.0}],
+    # A mark of another row sits between "calendar" and its "year".
+    [{"text": "year", "x0": 205, "x1": 220, "top": 52.0, "bottom": 61.0},
+     {"text": "q", "x0": 203, "x1": 204, "top": 56.0, "bottom": 57.0}],
+])
+def test_a_calendar_year_split_across_rows_is_a_question(others):
+    words = [{"text": "calendar", "x0": 172, "x1": 202, "top": 50.0, "bottom": 59.0}, *others]
+    assert len(P._phrases(words, ("calendar", "year"))) == 1
+    with pytest.raises(P._Unreadable, match="calendar-year entry is missing"):
+        P._schedule_b_year(words)
+
+
 def test_a_schedule_b_for_another_year_refuses():
     with pytest.raises(P.ImportError, match="different tax year"):
         seed("1116B_page1", "1116B_page2", edit=set_text("1116B_page1", "25", "24", x=238, top=56))
@@ -369,14 +386,26 @@ def test_a_carryover_line_needs_its_amount_and_no_negative_figure(edit):
     assert "line 21 fails (d) at most (a) less (b)" in parsed["unresolved"]["ca_credit_carryovers"]
 
 
-def test_line_4_on_side_2_carrying_code_162_forward_is_a_question():
-    assert credits(seed("P540_side2", "P540_side3", "P540_side4")) == CREDITS
-    def carried(pages, words, where):
-        words[where["P540_side2"]].append({"text": "250", "x0": 552.0, "x1": 566.0, "top": 600.0, "bottom": 609.0})
-    parsed = seed("P540_side2", "P540_side3", "P540_side4", edit=carried)
-    assert "code 162 forward on Side 2" in parsed["unresolved"]["ca_credit_carryovers"]
-    parsed = seed("P540_side2", "P540_side3", "P540_side4", edit=set_text("P540_side2", "162", "163"))
-    assert "line 4 is not where Side 2 prints it" in parsed["unresolved"]["ca_credit_carryovers"]
+@pytest.mark.parametrize("name", ["3.0", "3523", "(234)", "2023"])
+def test_a_credit_name_holding_a_number_is_read(name):
+    """Credit names may hold numbers: the FTB's own "Program 3.0 California
+    Motion Picture..." (code 239), a form number, the code itself, a year."""
+    parsed = seed("P540_side3", "P540_side4", edit=set_text("P540_side3", "Employment", name))
+    assert credits(parsed) == CREDITS
+
+
+@pytest.mark.parametrize("text, x", [("1,500", 155), ("500", 552)])
+def test_a_figure_drawn_up_beside_the_credit_name_is_a_question(text, x):
+    """Columns (a) and (d) sit outside the name: either drawn up into the
+    number row is a question."""
+    parsed = seed("P540_side3", "P540_side4", edit=move("P540_side3", text, dy=-36, x=x, top=134))
+    assert "line 6 prints a figure beside its name" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
+def test_a_used_figure_drawn_up_into_the_credit_name_blocks_as_not_carried():
+    parsed = seed("P540_side3", "P540_side4", edit=move("P540_side3", "1,000", dy=-36, x=285, top=134))
+    line_6 = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "234")
+    assert line_6["carryforward"] == 500 and line_6["not_carried"] == 1000
 
 
 def test_the_commercial_solar_credit_carries_through_line_24():
