@@ -26,7 +26,7 @@ and `documents/prior_return/` must already be owner-only using `secure_fs`.
 
 ## Create and inspect the pending seed
 
-Place the PDF under `documents/prior_return/`. The seed stores no file name;
+Place the PDF directly in `documents/prior_return/`. The seed stores no file name;
 confirmation and rollover find the reviewed PDF there by its digest. Run:
 
 ```bash
@@ -84,6 +84,8 @@ Write an owner-only local JSON review under `summaries/` with exactly:
   (`XXX-XX-1234`) and confirmation holds the assignment to it: a copy prints
   its original's SSN, one SSN on two pages is one owner, and a page assigned
   to a person whose profile `ssn_last4` differs is someone else's worksheet.
+  Two different pages printing one SSN are one person's unless both profile
+  entries record that same `ssn_last4`.
   The report says which pages printed no readable SSN: nothing checks those
   assignments, so confirm them from the name on the page.
 - `questions`: every unresolved id mapped to `not_applicable` or `manual_required`.

@@ -433,8 +433,8 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
         raw = workspace / raw
     path = _validate_file_path(str(raw), {".pdf"}, workspace=str(workspace))
     allowed = resolve_under_workspace("documents/prior_return", workspace)
-    if not path.is_relative_to(allowed):
-        raise ImportError("Prior return PDF must be inside documents/prior_return")
+    if path.parent != allowed:
+        raise ImportError("Prior return PDF must be directly inside documents/prior_return")
     year = current_year - 1
     archive = workspace / "archive" / str(year)
     if archive.exists():
@@ -520,15 +520,21 @@ def verify_source(workspace: Path, result: dict) -> None:
     from agents.lib.workspace import resolve_under_workspace
     seed = result["prior_return_import"]
     allowed = resolve_under_workspace("documents/prior_return", workspace)
-    for candidate in sorted(allowed.iterdir()) if allowed.is_dir() else ():
+    try:
+        candidates = sorted(allowed.iterdir()) if allowed.is_dir() else []
+    except OSError:
+        candidates = []
+    for candidate in candidates:
         if candidate.suffix.lower() != ".pdf":
             continue
+        # Any other file's error would carry its name, which may hold an SSN.
         try:
             checked = _validate_file_path(str(candidate), {".pdf"}, workspace=str(workspace))
+            found = (checked.is_relative_to(allowed)
+                     and hashlib.sha256(checked.read_bytes()).hexdigest() == seed["source_sha256"])
         except (OSError, ValueError):
-            continue  # a link or oversized file is never the reviewed source
-        if (checked.is_relative_to(allowed)
-                and hashlib.sha256(checked.read_bytes()).hexdigest() == seed["source_sha256"]):
+            continue  # a link, an oversized or unreadable file is never the reviewed source
+        if found:
             return
     raise ImportError("Source PDF changed or left the import directory; re-import and review it")
 
@@ -566,6 +572,10 @@ def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
     """A page whose masked SSN differs from the assigned person's is someone
     else's worksheet: last year's spouse, or the other spouse's copy."""
     printed = seed.get("worksheets", {}).get("ira_basis_owners", {})
+    roles_by_ssn: dict[str, set] = {}
+    for key, owner in owners.items():
+        if key in printed and owner in {"primary", "spouse"}:
+            roles_by_ssn.setdefault(printed[key], set()).add(owner)
     for key, owner in owners.items():
         person = current.get(owner) if owner in {"primary", "spouse"} else None
         last4 = person.get("ssn_last4") if isinstance(person, dict) else None
@@ -573,6 +583,10 @@ def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
         digits = re.search(r"(\d{4})$", last4) if isinstance(last4, str) else None
         if key in printed and digits and printed[key] != f"XXX-XX-{digits[1]}":
             raise ImportError("A Form 8606 page prints a different SSN than the person it is assigned to")
+        # Two people sharing four digits is possible, but only both profile
+        # entries can show it; otherwise it is one person's two worksheets.
+        if key in printed and len(roles_by_ssn.get(printed[key], ())) > 1 and not digits:
+            raise ImportError("Two Form 8606 pages print one SSN; record both people's ssn_last4 to assign them apart")
 
 
 def confirm_import(workspace: Path, year: int, decisions: dict) -> None:

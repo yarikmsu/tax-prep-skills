@@ -493,7 +493,7 @@ def test_manual_worksheet_resolution_blocks_compute(workspace):
 def test_import_does_not_read_a_file_outside_prior_return(workspace):
     source = workspace / "other.pdf"
     source.write_bytes(b"%PDF synthetic")
-    with pytest.raises(P.ImportError, match="inside documents"):
+    with pytest.raises(P.ImportError, match="directly inside documents"):
         P.import_pdf(workspace, str(source), 2026)
 
 
@@ -711,16 +711,53 @@ def test_last_years_single_filer_may_be_this_years_spouse(workspace, monkeypatch
     assert diff(archive, "MFJ")["prior_year.ira_basis_by_taxpayer"] == {"spouse": 9000}
 
 
+@pytest.mark.parametrize("spouse_last4", [None, "", "0002"])
+def test_one_ssn_on_two_worksheets_is_one_person_unless_the_profile_shows_two(workspace, monkeypatch, spouse_last4):
+    doc = pages()
+    doc[12] = with_owner(doc[4].replace("13 1,000", "13 10,000").replace("14 9,000", "14 0"), "XXX-XX-0001")
+    doc[4] = with_owner(doc[4], "XXX-XX-0001")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ",
+               "primary": {"ssn_last4": "0001"}, "spouse": {"ssn_last4": spouse_last4}})
+    _, review = pending(workspace)
+    review["filing_status"] = "MFJ"
+    review["ira_owners"]["ira_basis_page_13"] = "spouse"
+    with pytest.raises(P.ImportError, match="one SSN|different SSN"):
+        P.confirm_import(workspace, 2025, review)
+
+
 def test_spouses_sharing_last_four_digits_can_both_own_a_worksheet(workspace, monkeypatch):
     doc = pages()
     doc[12] = with_owner(doc[4].replace("13 1,000", "13 10,000").replace("14 9,000", "14 0"), "XXX-XX-0001")
     doc[4] = with_owner(doc[4], "XXX-XX-0001")
     monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ",
+               "primary": {"ssn_last4": "0001"}, "spouse": {"ssn_last4": "0001"}})
     archive, review = pending(workspace)
     review["filing_status"] = "MFJ"
     review["ira_owners"]["ira_basis_page_13"] = "spouse"
     P.confirm_import(workspace, 2025, review)
     assert diff(archive, "MFJ")["prior_year.ira_basis_by_taxpayer"] == {"primary": 9000, "spouse": 0}
+
+
+def test_an_unreadable_neighbour_never_names_itself_or_hides_the_source(workspace):
+    archive, review = pending(workspace)
+    P.confirm_import(workspace, 2025, review)
+    neighbour = workspace / "documents/prior_return/A Pat Sample 000-00-0000.pdf"
+    neighbour.write_bytes(b"%PDF someone else")
+    neighbour.chmod(0)
+    try:
+        assert load_prior(archive, 2025, allow_imported=True).year == 2025
+    finally:
+        neighbour.chmod(0o600)
+
+
+def test_a_pdf_in_a_subfolder_is_refused_at_import(workspace):
+    nested = workspace / "documents/prior_return/2025"
+    nested.mkdir()
+    (nested / "synthetic.pdf").write_bytes(b"%PDF synthetic")
+    with pytest.raises(P.ImportError, match="directly inside"):
+        P.import_pdf(workspace, "documents/prior_return/2025/synthetic.pdf", 2026)
 
 
 def test_a_software_mask_is_read_as_the_owner_and_the_report_says_when_none_was():
