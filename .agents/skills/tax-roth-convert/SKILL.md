@@ -27,6 +27,10 @@ be priced separately; follow `docs/contributing/state-planning.md` for the
 covered-year inputs, retirement ownership/basis and named limitations.
 
 ## Prerequisites
+
+These prerequisites describe the single-year sweep. The multi-year branch below
+defines its own explicit annual income and law requirements.
+
 - `result.json` with a computed `form_1040.line_24_total_tax` and
   `line_12_standard_deduction` — the deduction the return took, standard or
   itemized, which the engine prices from and refuses without (else: run `/tax-compute`).

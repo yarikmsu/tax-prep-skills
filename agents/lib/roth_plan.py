@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import roth_ladder  # noqa: E402
-from agents.lib.projection import _full_status_key, _validate_tax_law_year  # noqa: E402
+from agents.lib.projection import _canonical_status, _full_status_key, _validate_tax_law_year  # noqa: E402
 from agents.lib.scenario import (  # noqa: E402
     _rate_kwargs, extract_baseline_inputs, read_tax_year, return_deduction, save_scenario,
 )
@@ -178,6 +178,8 @@ def validate_plan(raw: dict, return_year: int) -> dict:
             elif row[key] is not None:
                 raise PlanError("Non-MFS lived-apart answer must be null")
         enrollees = _integer(row["medicare_enrollees_two_years_later"], 0, 2, "Medicare enrollee count")
+        if enrollees > 1 and row["filing_status"] != "MFJ":
+            raise PlanError("Two beneficiaries require a joint lookback return; model separate returns in separate plans")
         months = row["medicare_months_two_years_later"]
         if not isinstance(months, list) or len(months) != enrollees:
             raise PlanError("Record enrollment months for each Medicare beneficiary")
@@ -332,7 +334,9 @@ def _year_inputs(row: dict, law: dict) -> tuple[dict, dict, dict]:
 
 
 def _anchor_checks(row: dict, result: dict, profile: dict, law: dict) -> None:
-    if row["filing_status"] != profile.get("filing_status") or result.get("meta", {}).get("filing_status") != row["filing_status"]:
+    status = _canonical_status(row["filing_status"], "Roth plan")
+    if (_canonical_status(profile.get("filing_status"), "Roth plan") != status
+            or _canonical_status(result.get("meta", {}).get("filing_status"), "Roth plan") != status):
         raise PlanError("The filing-year plan status must match the computed return and profile")
     inputs = extract_baseline_inputs(result)
     form = result["form_1040"]
@@ -354,8 +358,11 @@ def _anchor_checks(row: dict, result: dict, profile: dict, law: dict) -> None:
     if abs(kwargs["deduction"] - return_deduction(result)) > 0.01 or row["ctc_children"] != sum(
             bool(d.get("ctc_eligible")) for d in profile.get("dependents", []) if isinstance(d, dict)):
         raise PlanError("Filing-year deduction/child assumptions must match the computed return")
-    if row["social_security"] and forecast["social_security"]["worksheet"] != inputs["social_security"]["worksheet"]:
-        raise PlanError("Filing-year Social Security assumptions must match the original reviewed worksheet")
+    if row["social_security"]:
+        saved = copy.deepcopy(inputs["social_security"]["worksheet"])
+        saved["filing_status"] = row["filing_status"]
+        if forecast["social_security"]["worksheet"] != saved:
+            raise PlanError("Filing-year Social Security assumptions must match the original reviewed worksheet")
     if row["medicare_lived_apart_all_year"] != profile.get("medicare_lived_apart_all_year"):
         if row["filing_status"] == "MFS":
             raise PlanError("Filing-year MFS Medicare residence answer differs from the profile")
@@ -411,7 +418,7 @@ def _forecast_state(row: dict, law: dict, outcome: dict) -> tuple[float | None, 
         return None, "Record the forecast year's reviewed state_planning_inputs; state cost excluded"
     cfg = law.get("state", {})
     if (p.get("state") != "CA" or p.get("tax_year") != row["year"]
-            or p.get("filing_status") != row["filing_status"] or p.get("scope_confirmed") is not True
+            or str(p.get("filing_status")).upper() != row["filing_status"].upper() or p.get("scope_confirmed") is not True
             or p.get("residency") != "full_year" or cfg.get("code") != "CA"
             or cfg.get("type") != "graduated_income" or p.get("retirement_basis_matches_federal") is not True
             or p.get("income_treatment", {}).get("ira_distribution") != "taxable"):
@@ -440,7 +447,9 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
     return_year = _integer((result.get("meta") or {}).get("tax_year"), 2000, 2099, "computed return year")
     plan = validate_plan(plan, return_year)
     read_tax_year(result, return_year)
-    if profile.get("tax_year") != return_year or profile.get("filing_status") != result.get("meta", {}).get("filing_status"):
+    if (profile.get("tax_year") != return_year
+            or _canonical_status(profile.get("filing_status"), "Roth plan") != _canonical_status(
+                result.get("meta", {}).get("filing_status"), "Roth plan")):
         raise PlanError("Computed return/profile year and filing status must agree")
     if (result.get("meta") or {}).get("source") == "imported_prior_return":
         raise PlanError("An imported seed is not a computed-return planning baseline")

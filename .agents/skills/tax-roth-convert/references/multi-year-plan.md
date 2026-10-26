@@ -48,7 +48,7 @@ Every annual object requires ALL of these fields:
 | `net_investment_income` | The explicit NIIT subset already included in income, not another income addition. |
 | `niit_magi_addbacks`, `irmaa_magi_addbacks` | Separate reviewed amounts: NIIT and Medicare MAGI are different concepts. |
 | `state`, `state_inputs` | `CA` or null for federal-only modeling, with state cost left unknown. For CA, supply that year's reviewed `state_planning_inputs` contract or null to report state cost unmodeled. Filing-year data come from the computed return and must agree. |
-| `medicare_enrollees_two_years_later`, `medicare_months_two_years_later` | Zero through two beneficiaries, and a matching list of each beneficiary's enrollment months. Empty list for no beneficiaries. Partial years are explicit. |
+| `medicare_enrollees_two_years_later`, `medicare_months_two_years_later` | Zero through two beneficiaries, and a matching list of each beneficiary's enrollment months. Two beneficiaries require MFJ for the lookback year; other returns can model one person's premium. Empty list for no beneficiaries. Partial years are explicit. |
 | `medicare_parts_b_and_d_confirmed` | Confirm both parts for beneficiaries whose combined B/D surcharge is priced; the cache holds a combined amount. |
 | `medicare_lived_apart_all_year` | Explicit boolean for MFS in the income/lookback year, null otherwise. |
 | `rmd_not_required_confirmed` | True for every year. End the plan before required distributions begin; do not infer RMD age from an address or incomplete birth record. |

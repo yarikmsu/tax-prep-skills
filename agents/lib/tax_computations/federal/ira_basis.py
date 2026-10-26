@@ -15,7 +15,7 @@ SCHEMA = "individual-8606/v1"
 OWNERS = {"primary", "spouse"}
 IRA_KINDS = {"traditional_ira", "sep_ira", "simple_ira"}
 RETIREMENT_KINDS = IRA_KINDS | {"pension", "roth_ira", "inherited_ira"}
-STATUSES = {"Single", "MFJ", "MFS", "HOH", "QSS"}
+STATUSES = {"Single", "MFJ", "MFS", "HOH", "HoH", "QSS"}
 EXCLUSIONS = {"qcd", "rollover", "hsa_funding", "returned_contribution", "recharacterization"}
 
 

@@ -102,6 +102,31 @@ def test_filing_year_reuses_existing_ladder_exactly():
     assert row["taxable_conversion"] == ladder.rungs[-1].taxable_conversion
 
 
+@pytest.mark.parametrize("recorded_status", ["HoH", "HOH"])
+@pytest.mark.parametrize("benefits", [False, True])
+def test_filing_year_accepts_existing_canonical_hoh_spelling(recorded_status, benefits):
+    p = plan()
+    p["years"] = p["years"][:1]
+    p["years"][0]["filing_status"] = "HOH"
+    r, prof = result(), profile()
+    r["meta"]["filing_status"] = recorded_status
+    prof["filing_status"] = "HoH"
+    if benefits:
+        p["years"][0].update(social_security=20000, social_security_inputs={
+            "tax_exempt_interest": 0, "excluded_income_addbacks": 0, "regular_worksheet_confirmed": True})
+        # Benefits are already at their85% cap:40k wages+17k taxableSS,
+        # less10k deduction=47k. Conversion8k spans3k at10% and5k at20%.
+        r["form_1040"].update(line_6a_social_security=20000, line_6b_taxable_ss=17000,
+            line_11_agi=57000, line_24_total_tax=4700)
+        r["social_security_worksheet"] = {"regular_worksheet_confirmed": True, "tax_year": 2025,
+            "inputs": {"ss_benefits": 20000, "other_income": 40000, "tax_exempt_interest": 0,
+                       "adjustments": 0, "filing_status": "HoH", "lived_apart_from_spouse_all_year": None,
+                       "lump_sum_prior_year_benefits": 0, "excluded_income_addbacks": 0}}
+    row = build(p, r=r, prof=prof)["years"][0]
+    assert row["federal_cost"] == (1300 if benefits else 800)
+    assert row["calculation"] == "computed"
+
+
 @pytest.mark.parametrize("status,medicare,niit", [
     ("Single", 200000, 200000), ("HOH", 200000, 200000),
     ("MFJ", 400000, 400000), ("MFS", 100000, 100000),
@@ -173,14 +198,29 @@ def test_premium_increment_is_separate_and_prorated_for_enrollment_months():
     p = plan()
     p["years"] = p["years"][:1]
     row = p["years"][0]
-    row.update(conversion=25000, premium_law={"mode": "hypothetical", "basis": "held_at_2025"},
+    row.update(filing_status="MFJ", conversion=25000, premium_law={"mode": "hypothetical", "basis": "held_at_2025"},
         medicare_enrollees_two_years_later=2, medicare_months_two_years_later=[12, 6],
         medicare_parts_b_and_d_confirmed=True)
-    selected = build(p)["years"][0]
+    r, prof = result(), profile()
+    r["meta"]["filing_status"] = prof["filing_status"] = "MFJ"
+    output = build(p, r=r, prof=prof)
+    selected = output["years"][0]
     # AGI60k crosses first50k tier1000 per beneficiary-year. 18 months=1.5
     # beneficiary-years ->1500 premium cost, separate from2000 federal cost.
     assert selected["irmaa_cost"] == 1500 and selected["federal_cost"] == 2000
-    assert build(p)["totals"]["federal_cost"] == 2000
+    assert output["totals"]["federal_cost"] == 2000
+
+
+@pytest.mark.parametrize("status", ["Single", "HOH", "MFS", "QSS"])
+def test_one_return_cannot_price_a_second_nonjoint_beneficiary(status):
+    p = plan()
+    row = p["years"][0]
+    row.update(filing_status=status, medicare_enrollees_two_years_later=2,
+               medicare_months_two_years_later=[12, 12], medicare_parts_b_and_d_confirmed=True)
+    if status == "MFS":
+        row.update(spouse_itemizes=False, medicare_lived_apart_all_year=True)
+    with pytest.raises(P.PlanError, match="joint lookback return"):
+        P.validate_plan(p, 2025)
 
 
 def test_missing_premium_and_state_costs_remain_null_not_zero():
