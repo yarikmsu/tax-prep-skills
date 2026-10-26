@@ -8247,6 +8247,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
     #                 change the answer. The reason is required, and a probe
     #                 below shows the unvalidated path ignores the status.
     VALIDATION = {
+        "projection/__init__.py::additional_medicare_threshold": "direct",
         "projection/__init__.py::capital_gains_limits": "direct",
         "projection/__init__.py::compute_ca_safe_harbor": "direct",
         "projection/__init__.py::project_state_tax": "direct",

@@ -164,6 +164,7 @@ SKILL_MODULES = (
     ("agents.lib.retirement_dashboard", "/tax-retirement's contribution dashboard", "compute_401k_employee_limit"),
     ("agents.lib.rollover", "/tax-rollover's carryforward pull", "_main"),
     ("agents.lib.roth_ladder", "/tax-roth-convert's conversion ladder", "_main"),
+    ("agents.lib.roth_plan", "/tax-roth-convert's reviewed multi-year forecasts", "_main"),
     ("agents.lib.scenario", "/tax-scenario's what-if engine", "_main"),
     ("agents.lib.secure_fs", "the owner-only permission enforcement every "
                              "runtime write goes through", "secure_path"),

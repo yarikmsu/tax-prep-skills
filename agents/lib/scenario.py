@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _binary_status_key,
+    additional_medicare_threshold,
     capital_gains_limits,
     _capital_loss_limit,
     _full_status_key,
@@ -375,7 +376,6 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None",
     cg_zero, cg_fifteen = capital_gains_limits(tax_law, filing_status, "scenario")
     ctc_cfg = fed.get("child_tax_credit", {}) or {}
     addl_cfg = fed.get("additional_medicare_tax", {}) or {}
-    threshold_map = addl_cfg.get("threshold") or {}
     return {
         "brackets": brackets,
         "cg_zero_limit": cg_zero,
@@ -385,7 +385,7 @@ def _rate_kwargs(profile: dict, tax_law: dict, filing_status: "str | None",
         "num_ctc_children": _num_ctc_children(profile),
         "ctc_per_child": ctc_cfg.get("amount_per_child"),
         "ctc_phase_out_start": (ctc_cfg.get("phase_out_start") or {}).get(bin_key),
-        "addl_medicare_threshold": threshold_map.get(full_key) or threshold_map.get(bin_key),
+        "addl_medicare_threshold": additional_medicare_threshold(tax_law, filing_status),
         "addl_medicare_rate": addl_cfg.get("rate", 0.009),
         "capital_loss_limit": _capital_loss_limit(filing_status, "scenario"),
         "deduction": return_deduction(result),

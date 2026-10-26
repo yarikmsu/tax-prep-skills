@@ -1299,3 +1299,17 @@ headers and amounts by their right-hand line boxes; the tests read the blank
 TY2025 forms' own text with synthetic amounts.
 The skill's [import reference](../../.agents/skills/tax-rollover/references/prior-return-import.md)
 states the initial covered-year/reader scope and manual follow-ups.
+
+## Multi-year Roth forecasts (AA45)
+
+`agents/lib/roth_plan.py` validates a reviewed plan and computes its annual
+conversion, federal cost, separate reviewed CA cost and premium-year IRMAA.
+Invoke through `sh agents/lib/run.sh -m agents.lib.roth_plan --name NAME`.
+Filing-year points reuse `roth_ladder.build_ladder`; future years reuse the
+scenario keystone and regular Social Security/individual IRA engines. All law
+inputs are explicit fetched or named hypothetical selections; source caches
+must pass freshness. Hypotheticals are in-memory and never become return law.
+The [plan reference](../../.agents/skills/tax-roth-convert/references/multi-year-plan.md)
+owns the annual assumptions, scope and output contract. Unknown state/premium
+costs are null and excluded, never zero. Derived files use the existing secured
+scenario writer; no return/profile/rollover record is modified.
