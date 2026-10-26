@@ -934,6 +934,113 @@ def _raw_pdf(path):
     return text, tables
 
 
+def _draw(path, items):
+    """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
+    order given, which is the order pdfplumber meets them in the stream."""
+    from reportlab.pdfgen import canvas
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, top, size, text, *angle in items:
+        page.saveState()
+        page.setFont("Helvetica", size)
+        page.translate(x, 792 - top - size)
+        page.rotate(angle[0] if angle else 0)
+        page.drawString(0, 0, text)
+        page.restoreState()
+    page.save()
+    return path
+
+
+class TestMaskingByPosition:
+    """Page TEXT puts a row between a label and its value whenever something
+    else is printed there: a rotated sidebar, a form-code row, a margin glyph.
+    Each case below leaks under `mask_ssn` alone, which the first assertion
+    shows on the library's own read, and is masked because the PDF routes
+    also ask which label each run sits beside or under on the page."""
+
+    @staticmethod
+    def _read(tmp_path, items):
+        import pdfplumber
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = _draw(tmp_path / "form.pdf", items)
+        with pdfplumber.open(str(pdf)) as document:
+            raw = document.pages[0].extract_text()
+        return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
+
+    @pytest.mark.parametrize("between", [
+        [(570, 108, 5, "R")],                         # Form 540: a margin glyph
+        [(420, 108, 5, "22222")],                     # a W-2 copy's form code, in the value's column
+    ])
+    def test_a_value_just_under_its_label(self, tmp_path, between):
+        items = between + [(380, 100, 7, "Spouse's/RDP's SSN or ITIN"), (380, 114, 10, f"JOHN DOE {_ssn('')}")]
+        raw, out = self._read(tmp_path, items)
+        assert _ssn("") in mask_ssn(raw), "the fixture does not separate label and value"
+        assert _ssn("") not in out and f"JOHN DOE {MASKED}" in out
+
+    def test_a_value_beside_its_label_on_a_raised_baseline(self, tmp_path):
+        """Form 540's header from page 2: the value prints right of
+        "Your SSN or ITIN:", its baseline a few points higher."""
+        raw, out = self._read(tmp_path, [(36, 52, 9, "Special Credits", 90), (247, 55, 10, "Your SSN or ITIN:"),
+                                         (310, 49, 10, _ssn(" "))])
+        assert _ssn(" ") in mask_ssn(raw)
+        assert _ssn(" ") not in out and MASKED in out
+
+    def test_a_column_of_values_under_its_heading(self, tmp_path):
+        """Form 2441's care providers: "(SSN or EIN)" heads a column whose
+        cells sit a provider's name-and-address row apart."""
+        other = "".join(("000", "00", "1111"))
+        raw, out = self._read(tmp_path, [(318, 197, 7, "(c) Identifying number"), (330, 205, 7, "(SSN or EIN)"),
+                                         (56, 242, 9, "KID CARE CENTER"), (319, 242, 9, _ssn("")),
+                                         (56, 266, 9, "JANE SITTER"), (319, 266, 9, other)])
+        assert _ssn("") not in out and other not in out
+        assert f"{MASKED}" in out and "XXX-XX-1111" in out
+
+    def test_a_number_elsewhere_on_the_page_survives(self, tmp_path):
+        """The employer's EIN in the box below and left of the SSN's, an
+        amount down the SSN column after other text, a routing number far
+        from any label: none sits beside or under the label."""
+        cents = " ".join(("850", "00", "2026"))
+        raw, out = self._read(tmp_path, [(150, 38, 7, "a Employee's social security number"),
+                                         (155, 50, 9, _ssn("")), (20, 58, 9, ROUTING),
+                                         (40, 66, 7, "b Employer identification number (EIN)"),
+                                         (40, 74, 9, ROUTING), (150, 120, 7, "1 Wages, tips, other compensation"),
+                                         (155, 132, 9, cents), (400, 300, 9, f"Routing {ROUTING}")])
+        assert MASKED in out
+        assert out.count(ROUTING) == 3 and cents in out
+
+    def test_a_label_carrying_its_value_governs_nothing_under_it(self, tmp_path):
+        raw, out = self._read(tmp_path, [(100, 100, 9, f"SSN {_ssn('-')}"), (100, 112, 9, f"Account {ROUTING}")])
+        assert f"SSN {MASKED}" in out and f"Account {ROUTING}" in out
+        raw, out = self._read(tmp_path, [(100, 100, 9, f"SSN {_ssn('-')}"), (100, 160, 9, ROUTING)])
+        assert out.endswith(ROUTING), "a column under a label with its value is not that label's"
+
+    def test_words_and_tables_are_masked_by_position_too(self, tmp_path):
+        from agents.lib.parse_utils import extract_pdf_words, extract_tables
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Table
+        pdf = _draw(tmp_path / "words.pdf", [(570, 108, 5, "R"), (380, 100, 7, "Spouse's SSN"),
+                                             (380, 114, 10, f"JOHN DOE {_ssn('')}")])
+        words = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
+        assert _ssn("") not in " ".join(w["text"] for w in words)
+        assert f"JOHN DOE {MASKED}" in [w["text"] for w in words]
+        doc = tmp_path / "table.pdf"
+        # The label prints above the table, outside every cell.
+        from reportlab.platypus import Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        SimpleDocTemplate(str(doc), pagesize=letter).build([
+            Paragraph("Your social security number", getSampleStyleSheet()["Normal"]), Spacer(1, 2),
+            Table([[_ssn(""), "Wages"], ["Acme", "100.00"]], hAlign="LEFT",
+                  style=[("GRID", (0, 0), (-1, -1), 0.5, "black")])])
+        tables = extract_tables(str(doc), workspace=str(tmp_path))
+        cells = [cell for table in tables.get(0, []) for row in table for cell in row]
+        assert _ssn("") not in cells and MASKED in cells
+
+    def test_mask_runs_masks_a_run_however_it_is_spaced(self):
+        from agents.lib.secure_fs import mask_runs
+        comb = " ".join(_ssn(""))
+        assert mask_runs(f"A {_ssn('')} B {_ssn(' ')} C {comb}", {_ssn(" ")}) == f"A {MASKED} B {MASKED} C {MASKED}"
+        assert mask_runs(f"1{_ssn('')}", {_ssn("")}) == f"1{_ssn('')}"
+
+
 class TestEveryExtractionRouteMasks:
     """Each route is compared against the UNMASKED library read of the same
     file, so the assertion is "the route applies `mask_ssn` and nothing else

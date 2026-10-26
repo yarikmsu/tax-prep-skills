@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
-    is_reparse_point, mask_ssn, mask_table, names_an_identifier, redact)
+    identifier_spans, is_reparse_point, mask_runs, mask_ssn, mask_table, names_an_identifier, redact)
 from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
@@ -415,7 +415,9 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
             text = pdf.pages[i].extract_text() or ""
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
-            result[i] = mask_ssn(text)
+            runs = _governed_runs(pdf.pages[i].extract_words())
+            budget.tick()
+            result[i] = mask_runs(mask_ssn(text), runs)
     budget.tick()
     return result
 
@@ -439,14 +441,72 @@ def _word_rows(words: list[dict]) -> list[list[dict]]:
     return [sorted(row, key=lambda w: w["x0"]) for row in rows]
 
 
+# A label governs the value printed beside it on its row or just under it in
+# its column: the box a form prints. Page text loses that. A rotated sidebar,
+# a form-code row or a margin glyph can land between the label's line and the
+# value's (Form 540's header SSN, W-2 and 1099 copies), so every PDF route also
+# masks by position. Distances are in the label's own height.
+_UNDER = 2.5   # how far below its label a boxed value may print
+_ASIDE = 4.0   # how far outside the label's span it may start
+
+
+def _row_text(row: list[dict]) -> tuple[str, list]:
+    spans, text = [], ""
+    for word in row:
+        text += " " if text else ""
+        spans.append((len(text), len(text) + len(word["text"]), word))
+        text += word["text"]
+    return text, spans
+
+
+def _span_box(spans: list, start: int, end: int) -> dict:
+    words = [word for low, high, word in spans if low < end and high > start]
+    return {"x0": min(w["x0"] for w in words), "x1": max(w["x1"] for w in words),
+            "top": min(w["top"] for w in words), "bottom": max(w["bottom"] for w in words)}
+
+
+def _governed_runs(words: list[dict]) -> set[str]:
+    """The text of each identifier-shaped run the page prints beside an
+    identifier label on its row, just under a label that has no value of its
+    own, or down a column headed by one with nothing else printed between
+    them (Form 2441's care providers), whatever order the page's text puts
+    them in."""
+    labels, values = [], []
+    for row in _word_rows(words):
+        text, spans = _row_text(row)
+        found_labels, found_values = identifier_spans(text)
+        labels += [(_span_box(spans, low, high), carries) for low, high, carries in found_labels]
+        values += [(text[low:high], _span_box(spans, low, high),
+                    {id(word) for a, b, word in spans if a < high and b > low}) for low, high in found_values]
+    in_values = set().union(*(ids for _, _, ids in values)) if values else set()
+    runs = set()
+    for raw, box, _ in values:
+        # The lowest thing printed above the run in its column that is not
+        # itself a run: a column label governs it only from there down.
+        ceiling = max((w["bottom"] for w in words if id(w) not in in_values and w["bottom"] <= box["top"] + 1
+                       and w["x1"] > box["x0"] and w["x0"] < box["x1"]), default=float("-inf"))
+        for label, carries in labels:
+            height = label["bottom"] - label["top"]
+            beside = box["top"] < label["bottom"] and label["top"] < box["bottom"] and box["x0"] >= label["x1"] - 1
+            near = box["x1"] >= label["x0"] - _ASIDE * height and box["x0"] <= label["x1"] + _ASIDE * height
+            under = not carries and near and -1 <= box["top"] - label["bottom"] <= _UNDER * height
+            column = (not carries and box["top"] > label["bottom"] >= ceiling - 1
+                      and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height)
+            if beside or under or column:
+                runs.add(raw)
+                break
+    return runs
+
+
 def _masked_words(words: list[dict]) -> list[dict]:
     """`mask_ssn` over the page's rows, top to bottom, so a label governs the
-    row printed under it whatever order the content stream drew them in. A
-    row the masker changes comes back as ONE word spanning it, holding the
-    masked row: no position inside it can come back without the identifier."""
+    row printed under it whatever order the content stream drew them in, then
+    the runs a label governs by position. A row the masker changes comes back
+    as ONE word spanning it, holding the masked row: no position inside it
+    can come back without the identifier."""
     rows = _word_rows(words)
     texts = [" ".join(word["text"] for word in row) for row in rows]
-    masked = mask_ssn("\n".join(texts)).split("\n")
+    masked = mask_runs(mask_ssn("\n".join(texts)), _governed_runs(words)).split("\n")
     if len(masked) != len(rows):
         raise RuntimeError("masking changed the page's row count")
     out = []
@@ -540,7 +600,10 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                result[i] = [mask_table(table) for table in tables]
+                runs = _governed_runs(pdf.pages[i].extract_words())
+                budget.tick()
+                result[i] = [[[mask_runs(cell, runs) if isinstance(cell, str) else cell for cell in row]
+                              if isinstance(row, list) else row for row in mask_table(table)] for table in tables]
     budget.tick()
     return result
 

@@ -218,6 +218,10 @@ def redact(text) -> str:
 # 1099 that value line is "PAYER'S TIN RECIPIENT'S TIN" side by side, so a
 # payer EIN typed without its hyphen is masked there too — the safe direction,
 # and the forms print it hyphenated.
+#
+# Text order is not the page. A PDF route also asks where each run sits
+# (`identifier_spans` per row, decided in `parse_utils._governed_runs`) and
+# masks what a label governs by position with `mask_runs`.
 _ID_DELIMITED = re.compile(
     rf"(?<![0-9])[0-9]{{3}}{_SSN_DELIMS}([0-9]{{4}})(?![0-9])")
 _PAYER_SIDE = (r"(?:payer|employer|filer|issuer|lender|trustee|creditor"
@@ -308,6 +312,29 @@ def _mask_under_labels(text: str) -> str:
         if _label_ends(text, starts[above], starts[above] + len(raw[above])):
             lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw[i]))
     return "\n".join(lines)
+
+
+def identifier_spans(row: str) -> tuple[list, list]:
+    """Where one row of page text prints an identifier label and where an
+    identifier-shaped run: `[(start, end, carries)]` and `[(start, end)]`,
+    `carries` saying whether a value already follows that label on its row.
+    A reader that knows where the row sits on the page decides which label
+    governs which run; `mask_runs` masks them."""
+    labels = [(m.start(), m.end(), bool(_ID_ANY_VALUE.search(row, m.end()))) for m in _ID_LABEL_RE.finditer(row)]
+    values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
+    return labels, values
+
+
+def mask_runs(text: str, runs) -> str:
+    """Mask each of `runs`, identifier-shaped text a layout reader found
+    beside or under an identifier label, wherever its digits occur in `text`
+    however they are spaced, in the spelling `mask_ssn` writes."""
+    for raw in sorted(runs, key=len, reverse=True):
+        digits = re.sub(r"[^0-9]", "", raw)
+        masked = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw))
+        pattern = re.compile(r"(?<![0-9])" + r"[^\S\n]*".join(digits) + r"(?![0-9])")
+        text = pattern.sub(lambda _: masked, text)
+    return text
 
 
 def mask_ssn(value):
