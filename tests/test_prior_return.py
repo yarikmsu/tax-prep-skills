@@ -312,11 +312,13 @@ def test_a_negative_amount_on_a_nonnegative_line_refuses(page, old, new):
 
 
 def test_short_form_reference_does_not_classify_another_page_as_form_540():
-    assert P._form("Schedule P (540) 2025 Side 1\n15 Enter taxable income from Form 540 line 19") is None
+    assert P._form("Schedule P (540) 2025 Side 1\n15 Enter taxable income from Form 540 line 19") == ("P540", 2025)
 
 
 def test_8995a_is_never_read_with_the_simplified_8995_line_map():
-    assert P._form("Form 8995-A (2025) Page 2\n. . . 16 3000") is None
+    page = "Form 8995-A (2025) Page 2\n. . . 16 3000"
+    assert P._form(page) == ("8995-A", 2025)
+    assert P.locate_lines(page, "8995-A", 1, SHA) == {}
 
 
 def write_json(path, value):
@@ -339,6 +341,8 @@ def workspace(tmp_path, monkeypatch):
     write_json(tmp_path / "result.json", {"meta": {"tax_year": 2026}})
     write_json(tmp_path / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "Single"})
     monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: pages())
+    # Text-only pages carry no word positions; the table readers have their own tests.
+    monkeypatch.setattr(P, "extract_pdf_words", lambda *a, **kw: {})
     return tmp_path
 
 
@@ -347,6 +351,7 @@ def pending(workspace):
     result = json.loads((archive / "result.json").read_text(encoding="utf-8"))
     parsed = result["prior_return_import"]
     review = {"seed_sha256": P.digest(parsed), "confirmed_fields": list(parsed["fields"]),
+              "confirmed_tables": P.table_confirmation_ids(parsed),
               "questions": {k: "not_applicable" for k in parsed["unresolved"]},
               "filing_status": "Single", "ira_owners": {IRA: "primary"}}
     return archive, review
@@ -432,7 +437,8 @@ def test_validate_reviewed_checks_values_behind_the_digests(workspace, edit, mes
         P.validate_reviewed(result, profile)
 
 
-@pytest.mark.parametrize("field", ["seed_sha256", "confirmed_fields", "questions", "filing_status", "ira_owners"])
+@pytest.mark.parametrize("field", ["seed_sha256", "confirmed_fields", "confirmed_tables", "questions",
+                                   "filing_status", "ira_owners"])
 def test_missing_review_field_refuses(workspace, field):
     _, review = pending(workspace)
     del review[field]
@@ -468,6 +474,7 @@ def test_the_seed_stores_no_source_path_and_finds_the_pdf_by_digest(workspace):
     assert "Pat" not in stored and "0000 2025" not in stored and "synthetic.pdf" not in stored
     parsed = json.loads(stored)["prior_return_import"]
     review = {"seed_sha256": P.digest(parsed), "confirmed_fields": list(parsed["fields"]),
+              "confirmed_tables": P.table_confirmation_ids(parsed),
               "questions": {k: "not_applicable" for k in parsed["unresolved"]},
               "filing_status": "Single", "ira_owners": {IRA: "primary"}}
     named.rename(workspace / "documents/prior_return/renamed.pdf")
@@ -508,7 +515,7 @@ def test_cli_refusal_does_not_echo_source_tokens(workspace):
 
 def test_real_pdf_extraction_and_review_report(workspace, monkeypatch):
     from reportlab.pdfgen import canvas
-    from agents.lib.parse_utils import extract_pdf_text
+    from agents.lib.parse_utils import extract_pdf_text, extract_pdf_words
     from agents.lib.secure_fs import atomic_path
     source = workspace / "documents/prior_return/synthetic.pdf"
     with atomic_path(source) as temp:
@@ -523,6 +530,7 @@ def test_real_pdf_extraction_and_review_report(workspace, monkeypatch):
             pdf.showPage()
         pdf.save()
     monkeypatch.setattr(P, "extract_pdf_text", extract_pdf_text)
+    monkeypatch.setattr(P, "extract_pdf_words", extract_pdf_words)
     archive, _ = pending(workspace)
     result = json.loads((archive / "result.json").read_text(encoding="utf-8"))
     assert values(result["prior_return_import"]) == EXPECTED

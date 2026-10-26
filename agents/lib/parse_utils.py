@@ -420,6 +420,84 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
     return result
 
 
+# pdfplumber's own line tolerance: words whose tops differ by this much share a row.
+_ROW_TOLERANCE = 3
+
+
+def _word_rows(words: list[dict]) -> list[list[dict]]:
+    """Rows as pdfplumber's text forms them: each word joins the row of the
+    word above it in reading order when their tops are within the tolerance,
+    so a row can step down in small changes of font size."""
+    rows: list[list[dict]] = []
+    previous = None
+    for word in sorted(words, key=lambda w: (w["top"], w["x0"])):
+        if rows and word["top"] - previous <= _ROW_TOLERANCE:
+            rows[-1].append(word)
+        else:
+            rows.append([word])
+        previous = word["top"]
+    return [sorted(row, key=lambda w: w["x0"]) for row in rows]
+
+
+def _masked_words(words: list[dict]) -> list[dict]:
+    """`mask_ssn` over the page's rows, top to bottom, so a label governs the
+    row printed under it whatever order the content stream drew them in. A
+    row the masker changes comes back as ONE word spanning it, holding the
+    masked row: no position inside it can come back without the identifier."""
+    rows = _word_rows(words)
+    texts = [" ".join(word["text"] for word in row) for row in rows]
+    masked = mask_ssn("\n".join(texts)).split("\n")
+    if len(masked) != len(rows):
+        raise RuntimeError("masking changed the page's row count")
+    out = []
+    for row, text, safe in zip(rows, texts, masked):
+        if safe == text:
+            out += [{"text": w["text"], **{k: round(float(w[k]), 1) for k in ("x0", "x1", "top", "bottom")}}
+                    for w in row]
+        else:
+            out.append({"text": safe, "x0": round(float(min(w["x0"] for w in row)), 1),
+                        "x1": round(float(max(w["x1"] for w in row)), 1),
+                        "top": round(float(min(w["top"] for w in row)), 1),
+                        "bottom": round(float(max(w["bottom"] for w in row)), 1)})
+    return out
+
+
+def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, list[dict]]:
+    """Extract each page's words with their positions, for a reader that finds
+    a value by where the form prints it: the row of a line number and the
+    column under a heading, which text order does not record.
+
+    Returns a dict mapping page number (0-indexed) to words, each
+    `{"text", "x0", "x1", "top", "bottom"}` in points from the page's top left.
+    Raises as `extract_pdf_text` does.
+    """
+    _require_locked_parsers()
+
+    import pdfplumber
+
+    checked = _validate_file_path(path, {".pdf"}, workspace=workspace)
+
+    budget = _Budget(f"Reading the words in {redact(path)}")
+    result = {}
+    with pdfplumber.open(checked) as pdf:
+        num_pages = len(pdf.pages)
+        target_pages = pages if pages is not None else range(num_pages)
+        _refuse_too_many_pages(len(target_pages), path)
+        for i in target_pages:
+            if i < 0 or i >= num_pages:
+                raise IndexError(
+                    f"Page {i} out of range for {redact(path)} "
+                    f"({num_pages} pages)")
+            budget.tick()
+            words = pdf.pages[i].extract_words()
+            budget.tick()
+            for word in words:
+                budget.charge_cell(word["text"])
+            result[i] = _masked_words(words)
+    budget.tick()
+    return result
+
+
 def extract_tables(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, list[list]]:
     """Extract tables from PDF, page by page.
 
