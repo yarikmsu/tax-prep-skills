@@ -78,7 +78,7 @@ def move(name, text, dx=0.0, dy=0.0, x=None, top=None):
 
 PASSIVE = {"2016": 0.0, "2017": 0.0, "2018": 0.0, "2019": 0.0, "2020": 0.0, "2021": 0.0,
            "2022": 300.0, "2023": 0.0, "2024": 600.0, "2025": 700.0}
-CREDITS = {"183": 500.0, "188": 1700.0, "180": 400.0, "242": 3800.0}
+CREDITS = {"234": 500.0, "188": 1700.0, "180": 400.0, "242": 3800.0}
 
 
 def credits(parsed):
@@ -130,10 +130,48 @@ def general(pages, words, where):
     mark["top"], mark["bottom"] = mark["top"] + 12.1, mark["bottom"] + 12.1
 
 
+def general_of_its_own(pages, words, where):
+    """The general pair carried 250 into 2018 and used it, where passive
+    carried and used 200: each page 1's subtotal is its own."""
+    general(pages, words, where)
+    page_1, page_2 = (max(index for index, text in pages.items() if text == TABLES[name]["text"])
+                      for name in ("1116B_page1", "1116B_page2"))
+    for page, old, new, x, top in ((page_1, "200", "250", 502, 418), (page_1, "500", "550", 741, 418),
+                                   (page_1, "-200", "-250", 500, 442), (page_1, "-200", "-250", 738, 442),
+                                   (page_2, "500", "550", 265, 280), (page_2, "1,500", "1,550", 734, 280),
+                                   (page_2, "-200", "-250", 262, 304), (page_2, "-300", "-350", 738, 304)):
+        word(words[page], old, x, top)["text"] = new
+
+
 def test_two_categories_each_read_from_their_own_pair():
-    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=general)
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=general_of_its_own)
     baskets = {b["basket"]: b["carryforward_by_origin_year"] for b in parsed["table_evidence"]["ftc_baskets"]}
     assert baskets == {"passive": PASSIVE, "general": PASSIVE}
+
+
+def test_a_page_2_after_another_categorys_page_1_is_a_question():
+    """Passive page 1, general's page 2, general page 1, passive's page 2: each
+    page 2 repeats the other page 1's subtotal."""
+    def swapped(pages, words, where):
+        general_of_its_own(pages, words, where)
+        first, second = sorted(index for index, text in pages.items() if text == TABLES["1116B_page2"]["text"])
+        words[first], words[second] = words[second], words[first]
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=swapped)
+    assert "does not carry page 1's subtotal" in parsed["unresolved"]["ftc_schedule_b"]
+
+
+def test_two_categories_with_the_same_subtotals_are_a_question():
+    """Page 2 binds to its page 1 by the subtotal it repeats: two pairs
+    repeating the same one could be printed out of order and swap unseen."""
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=general)
+    assert "subtotal of its own" in parsed["unresolved"]["ftc_schedule_b"]
+
+
+def test_a_page_1_mentioning_page_2_is_still_a_page_1():
+    def mention(pages, words, where):
+        pages[where["1116B_page1"]] += "\nContinued on Page 2"
+    (basket,) = seed("1116B_page1", "1116B_page2", edit=mention)["table_evidence"]["ftc_baskets"]
+    assert basket["carryforward_by_origin_year"] == PASSIVE
 
 
 def test_interleaved_categories_are_not_paired_by_position_alone():
@@ -245,7 +283,18 @@ def test_a_used_amount_printed_positive_is_a_question():
     consistent(values, "3", "(ii)", -100.0)
     consistent(values, "3", "(ii)", 100.0)
     values["8", "(ii)"] = values["8", "(vii)"] = values["8", "(viii)"] = values["8", "(xiv)"] = 150.0
-    with pytest.raises(P._Unreadable, match="positive"):
+    with pytest.raises(P._Unreadable, match="wrong sign"):
+        P._schedule_b_checks(values)
+
+
+@pytest.mark.parametrize("entries", [[("3", -100.0)], [("3", 100.0), ("4", -150.0)]])
+def test_a_negative_carryover_is_a_question(entries):
+    """Line 3 carries in a positive amount, and line 8 is what is left: 100
+    carried in and 150 used would leave line 8 negative."""
+    values = zeros()
+    for line, amount in entries:
+        consistent(values, line, "(ii)", amount)
+    with pytest.raises(P._Unreadable, match="wrong sign"):
         P._schedule_b_checks(values)
 
 
@@ -257,13 +306,13 @@ def test_the_tenth_year_cannot_carry_forward():
 
 
 @pytest.mark.parametrize("edit, message", [
-    (remove("P540_side3", "183"), "without its credit code"),
+    (remove("P540_side3", "234"), "without its credit code"),
     (set_text("P540_side3", "188", "189"), "without its credit code"),
     # Line 10, column (d): more than (a) less (b) is never carried.
     (set_text("P540_side3", "1,700", "1,800", x=544, top=409), "at most (a) less (b)"),
     # The solar credit's B2 carryover (500) must be Section C's credit amount.
     (set_text("P540_side4", "500", "600", x=164, top=590), "does not reach its next section"),
-    (set_text("P540_side3", "183", "188"), "entered twice in one section"),
+    (set_text("P540_side3", "234", "188"), "entered twice in one section"),
     (move("P540_side4", "3,800", dx=60, x=544, top=488), "outside its columns"),
     (set_text("P540_side4", "400", "4OO", x=552, top=590), "cell holds text"),
 ])
@@ -271,6 +320,73 @@ def test_schedule_p_lines_must_reconcile(edit, message):
     parsed = seed("P540_side3", "P540_side4", edit=edit)
     assert message in parsed["unresolved"]["ca_credit_carryovers"]
     assert "table_evidence" not in parsed
+
+
+def shift(name, dy, tops):
+    """The filled figures on the rows printed at `tops`, moved by `dy`."""
+    def edit(pages, words, where):
+        for w in words[where[name]]:
+            if P._VALUE.fullmatch(w["text"]) and w["x0"] > 150 and any(abs(w["top"] - top) < 1.5 for top in tops):
+                w["top"], w["bottom"] = round(w["top"] + dy, 1), round(w["bottom"] + dy, 1)
+    return edit
+
+
+def both(*edits):
+    return lambda *a: [edit(*a) for edit in edits]
+
+
+@pytest.mark.parametrize("edit, message", [
+    # Line 21's figures drawn up into its column headings, then into its name.
+    (shift("P540_side4", -14, [482]), "line 21 prints a figure among its column headings"),
+    (shift("P540_side4", -26, [482]), "line 21 prints a figure beside its name"),
+    # Every figure 13pt high: each lands in its own line's headings.
+    (both(shift("P540_side3", -13, [134, 409]), shift("P540_side4", -13, [134, 422, 482, 543, 590])),
+     "among its column headings"),
+    # Above line 6, and in line 20's column (d), where it has no box.
+    (move("P540_side3", "500", dy=-54, x=552, top=134), "in no line's columns"),
+    (lambda pages, words, where: words[where["P540_side4"]].append(
+        {"text": "400", "x0": 552.0, "x1": 566.0, "top": 422.0, "bottom": 431.0}), "line 20 prints a figure in a column"),
+    # A line number unread: its figures belong to no line.
+    (remove("P540_side3", "6", x=41, top=102), "line number on Side 3 is missing"),
+    (remove("P540_side3", "10", x=36, top=378), "line number on Side 3 is missing"),
+    (lambda pages, words, where: [w.update(text="(e)") for w in words[where["P540_side4"]] if w["text"] == "(d)"],
+     "the column headings are missing"),
+])
+def test_every_figure_on_sides_3_and_4_is_accounted_for(edit, message):
+    parsed = seed("P540_side3", "P540_side4", edit=edit)
+    assert message in parsed["unresolved"]["ca_credit_carryovers"]
+    assert "table_evidence" not in parsed
+
+
+@pytest.mark.parametrize("edit", [
+    # Line 21: column (a) blank beside a carryover, and a used or carried amount negative.
+    remove("P540_side4", "5,000", x=155, top=482),
+    set_text("P540_side4", "1,200", "-1,200", x=286, top=482),
+    set_text("P540_side4", "3,800", "(3,800)", x=544, top=482),
+])
+def test_a_carryover_line_needs_its_amount_and_no_negative_figure(edit):
+    parsed = seed("P540_side3", "P540_side4", edit=edit)
+    assert "line 21 fails (d) at most (a) less (b)" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
+def test_line_4_on_side_2_carrying_code_162_forward_is_a_question():
+    assert credits(seed("P540_side2", "P540_side3", "P540_side4")) == CREDITS
+    def carried(pages, words, where):
+        words[where["P540_side2"]].append({"text": "250", "x0": 552.0, "x1": 566.0, "top": 600.0, "bottom": 609.0})
+    parsed = seed("P540_side2", "P540_side3", "P540_side4", edit=carried)
+    assert "code 162 forward on Side 2" in parsed["unresolved"]["ca_credit_carryovers"]
+    parsed = seed("P540_side2", "P540_side3", "P540_side4", edit=set_text("P540_side2", "162", "163"))
+    assert "line 4 is not where Side 2 prints it" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
+def test_the_commercial_solar_credit_carries_through_line_24():
+    """Code 181 on line 16 carries its B2 figure into Section C's line 24, not
+    line 23, which is the solar energy credit's (180)."""
+    to_181 = set_text("P540_side4", "180", "181", x=93, top=98)
+    parsed = seed("P540_side3", "P540_side4", edit=both(to_181, shift("P540_side4", 48, [590])))
+    assert credits(parsed) == {**{k: v for k, v in CREDITS.items() if k != "180"}, "181": 400.0}
+    parsed = seed("P540_side3", "P540_side4", edit=to_181)
+    assert "credit code 181's Section B2 carryover has no Section C line" in parsed["unresolved"]["ca_credit_carryovers"]
 
 
 def test_a_credit_elected_refundable_is_carried_as_printed():
@@ -488,7 +604,7 @@ def test_an_amount_not_carried_blocks_rollover_by_itself(workspace, monkeypatch)
     current = CurrentState({"meta": {"tax_year": 2026}}, {"filing_status": "MFJ"}, {})
     changes = {c.json_path: c.prior_value for c in compute_diff(prior, current, {"carryforwards"}, {})["carryforwards"]}
     assert {c["code"]: c["carryforward"] for c in changes["prior_year.imported_ca_credits"]} == {
-        "183": 0, "188": 1700, "180": 0, "242": 0}
+        "234": 0, "188": 1700, "180": 0, "242": 0}
     assert "ca_credit_carryovers" in changes["prior_year.import_unresolved"]["questions"]
 
 
@@ -506,6 +622,16 @@ def test_an_amount_not_carried_in_an_earlier_section_is_still_shown():
     parsed = seed("P540_side3", "P540_side4", edit=short)
     solar = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "180")
     assert solar["carryforward"] == 350 and solar["not_carried"] == 50
+
+
+def test_only_the_labels_beside_the_filing_status_heading_are_boxes():
+    def far(pages, words, where):
+        words[0] += [{"text": "Single", "x0": 110.0, "x1": 135.0, "top": 307.5, "bottom": 316.5},
+                     {"text": "X", "x0": 99.0, "x1": 105.0, "top": 307.5, "bottom": 316.5}]
+    assert seed(edit=far)["marked_filing_status"]["value"] == "MFJ"
+    def twice(pages, words, where):
+        words[0].append({"text": "Single", "x0": 300.0, "x1": 325.0, "top": 213.0, "bottom": 222.0})
+    assert "label is printed twice" in seed(edit=twice)["unresolved"]["filing_status_mark"]
 
 
 def test_punctuation_beside_a_box_is_not_a_mark():
@@ -559,6 +685,19 @@ def test_several_categories_with_blank_page_1s_cannot_bind_their_page_2s():
         blank_page_1s(pages, words, where)
     parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=edit)
     assert "must carry a subtotal" in parsed["unresolved"]["ftc_schedule_b"]
+
+
+def test_one_blank_page_1_among_several_categories_still_binds():
+    """Only passive's page 1 is blank: a page 2 printed after the other page 1
+    would repeat the wrong subtotal, so each pair still binds by its own."""
+    def edit(pages, words, where):
+        general_of_its_own(pages, words, where)
+        first = {index: words[index] for index in (where["1116B_page1"], where["1116B_page2"])}
+        blank_page_1s({index: pages[index] for index in first}, first, where)
+        words.update(first)
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=edit)
+    baskets = {b["basket"]: b["carryforward_by_origin_year"] for b in parsed["table_evidence"]["ftc_baskets"]}
+    assert baskets == {"passive": PASSIVE, "general": PASSIVE}
 
 
 def test_one_category_with_a_blank_page_1_binds_by_position():

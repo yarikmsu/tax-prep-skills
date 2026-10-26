@@ -66,15 +66,17 @@ the left margin; nothing assumes a page offset.
   must repeat page 1's (vii), and every printed subtotal, line 8's combination
   of lines 3-7, each sign and each shaded cell must hold. A blank cell is zero
   only while all of them do. Page 2 prints no category, so with several
-  categories each page 1 must carry a subtotal its page 2 repeats.
+  categories each page 1 must carry a subtotal of its own that its page 2
+  repeats.
 - [Schedule P (540)](https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf) Part
   III: lines 6-10, 16-19, 21 and 23-24 by credit code, from Sides 3 and 4,
-  each needed once. Every figure on them must land in one line's columns.
-  Column (d) must not exceed (a) less (b). A solar credit's Section B2
-  carryover must be its Section C credit amount, and a Section C left blank
-  is a question. Code 188 must agree with FTB 3510 line 39 and rolls as that
-  line. Line 4's carryover (code 162 above the business-credit limit) is not
-  read; reconcile it with the other credit worksheets.
+  each needed once with every line number it prints. Every figure on them
+  must be a line number, a credit code, a line a description cites, or in a
+  box its line has. Column (d) must not exceed (a) less (b). A solar credit's
+  Section B2 carryover must be its Section C credit amount, and a Section C
+  left blank is a question. Code 188 must agree with FTB 3510 line 39 and
+  rolls as that line. Line 4's carryover (code 162 above the business-credit
+  limit, Side 2) is not read: a figure in its column (d) is a question.
 - Form 1040's marked filing-status box is read the same way. The confirmed
   status must match it.
 

@@ -49,12 +49,13 @@ SCHEDULE_B_2 = {
     "f2_88[0]": "700", "f2_89[0]": "700",
     "f2_97[0]": "0", "f2_99[0]": "300", "f2_101[0]": "600", "f2_102[0]": "700", "f2_103[0]": "1,600",
 }
-# Schedule P (540) Part III. Side 3: line 6 = 3001 code, 3003-3006 columns (a)-(d);
+# Schedule P (540) Part III, credits in the sections the FTB Credit Table
+# assigns them. Side 3: line 6 = 3001 code, 3003-3006 columns (a)-(d);
 # line 10 (code 188) = 3025-3028. Side 4: line 16 = 4001 code, 4003-4006; line 20
 # (187, no carryover) = 4025-4027; line 21 (242) = 4028-4031; line 22 = 4032;
 # line 23 (180) = 4033-4036. The solar credit's B2 carryover (500) is line 23's (a).
 SCHEDULE_P_3 = {
-    "540P-3001": "183", "540P-3002": "Research",
+    "540P-3001": "234", "540P-3002": "New Employment",
     "540P-3003": "1,500", "540P-3004": "1,000", "540P-3005": "4,000", "540P-3006": "500",
     "540P-3025": "2,000", "540P-3026": "300", "540P-3027": "3,700", "540P-3028": "1,700",
 }

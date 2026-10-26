@@ -318,17 +318,12 @@ def _left_of(words: list, word: dict) -> list:
                   key=lambda w: -w["x1"])
 
 
-def _phrase(words: list, word: dict, phrase: tuple) -> bool:
-    """`word` begins `phrase` on its row."""
-    if word["text"] != phrase[0]:
-        return False
-    current = word
-    for text in phrase[1:]:
-        after = _right_of(words, current)
-        if not after or after[0]["text"] != text:
-            return False
-        current = after[0]
-    return word["text"] == phrase[0]
+def _phrases(words: list, phrase: tuple) -> list:
+    """The first word of each place `phrase` prints along one row. One pass
+    over the rows, however often a word repeats on the page."""
+    size = len(phrase)
+    return [row[i] for row in _word_rows(words) for i in range(len(row) - size + 1)
+            if all(w["text"] == text for w, text in zip(row[i:i + size], phrase))]
 
 
 def _bands(centers: list) -> list:
@@ -443,7 +438,10 @@ def _schedule_b_category(words: list) -> str:
     """The one category box marked, between its letter and its label."""
     marked, seen = [], set()
     for letter, phrase in _SB_CATEGORIES.items():
-        for anchor in (w for w in words if _phrase(words, w, phrase)):
+        anchors = _phrases(words, phrase)
+        if len(anchors) > 1:
+            raise _Unreadable("a category label is printed twice")
+        for anchor in anchors:
             before = _left_of(words, anchor)
             if before and before[0]["text"] == letter:
                 box = None
@@ -451,8 +449,6 @@ def _schedule_b_category(words: list) -> str:
                 box = before[0]
             else:
                 continue
-            if letter in seen:
-                raise _Unreadable("a category label is printed twice")
             seen.add(letter)
             if box is not None and box["text"] not in _EMPTY_BOX:
                 if not _is_mark(box):
@@ -468,7 +464,7 @@ def _schedule_b_category(words: list) -> str:
 def _schedule_b_year(words: list) -> int:
     """The calendar year entered after its printed "20". A fiscal-year
     schedule fills the dates after "beginning" and "ending" instead."""
-    calendar = [w for w in words if _phrase(words, w, ("calendar", "year"))]
+    calendar = _phrases(words, ("calendar", "year"))
     if len(calendar) != 1:
         raise _Unreadable("the calendar-year entry is missing")
     row = _right_of(words, _right_of(words, calendar[0])[0])
@@ -503,7 +499,7 @@ def _schedule_b_checks(v: dict) -> None:
         if v["8", label] != round(sum(v[line, label] for line in _SB_LINES[:5]), 2):
             raise _Unreadable(f"column {label} fails line 8, the combination of lines 3 through 7")
         if any(v[line, label] > 0 for line in ("4", "5", "7")) or any(v[line, label] < 0 for line in ("3", "6", "8")):
-            raise _Unreadable(f"column {label} prints a used, expired or carried-back amount as positive")
+            raise _Unreadable(f"column {label} prints a figure with the wrong sign")
     # Only the 10th preceding year expires; only the current year generates
     # or carries back, and it has nothing carried in or used.
     subtotals = {"(vii)", "(viii)", "(xiv)"}
@@ -546,23 +542,28 @@ def _ftc_baskets(schedule_pages: list, words: dict, year: int, source_digest: st
         }
         index += 2
     # Page 2 prints no category. With one category the adjacent page 2 is its
-    # own; with several, a page 1 carrying nothing in (vii) binds by position
-    # alone, and two such pairs printed out of order would swap unseen.
-    if len(out) > 1 and any(not any(b["reconciliation"][line]["(vii)"] for line in _SB_LINES) for b in out.values()):
-        raise _Unreadable("with several categories, each page 1 must carry a subtotal its page 2 repeats")
+    # own; with several, it binds by the subtotal (vii) it repeats, and two page
+    # 1s carrying the same one (nothing, say) let their pairs, printed out of
+    # order, swap unseen.
+    subtotals = [tuple(b["reconciliation"][line]["(vii)"] for line in _SB_LINES) for b in out.values()]
+    if len(set(subtotals)) < len(subtotals):
+        raise _Unreadable("with several categories, each page 1 must carry a subtotal of its own that its page 2 repeats")
     return list(out.values())
 
 
 # Schedule P (540) Part III lines that carry a credit forward, by section, and
-# the codes the form prints itself. All of them are on Sides 3 and 4, which
-# print no Part I or II line. A solar credit's Section B2 carryover is Section
-# C's credit amount; its carryforward is Section C's column (d). Line 4's
-# carryover (code 162 above the business-credit limit, Side 2) is not read.
+# the codes the form prints itself. Side 3 prints lines 6-15 and Side 4 lines
+# 16-25, and neither prints a Part I or II line. A solar credit's Section B2
+# carryover is Section C's credit amount; its carryforward is Section C's
+# column (d). Line 4, on Side 2, carries code 162 only above the business
+# credit limit and is never read: a carryover there is a question.
 _SP_SECTIONS = {"6": "A2", "7": "A2", "8": "A2", "9": "A2", "10": "A2", "16": "B2", "17": "B2",
                 "18": "B2", "19": "B2", "21": "B4", "23": "C", "24": "C"}
 _SP_PRINTED = {"10": "188", "21": "242", "23": "180", "24": "181"}
 _SP_SOLAR = {"180", "181"}
-_SP_LINES = {str(n) for n in range(6, 26)}
+_SP_SIDES = {3: {str(n) for n in range(6, 16)}, 4: {str(n) for n in range(16, 26)}}
+# The columns a line has boxes in; every other line has all four.
+_SP_BOXES = {"11": "c", "12": "abc", "13": "abc", "14": "abc", "15": "abc", "20": "abc", "22": "c", "25": "c"}
 _SP_HEADINGS = (("(a)",), ("(b)", "(b)*"), ("(c)",), ("(d)",))
 
 
@@ -577,65 +578,100 @@ def _schedule_p_columns(row: list) -> list | None:
                    for head, end in zip(heads, ends)])
 
 
-def _schedule_p_lines(words: list) -> dict:
-    """{line: {"code", "a", "b", "c", "d"}} for every Part III line on Side 3
-    or 4. Each figure from the first line to the last carryover line must
-    land in one line's cells; one that lands in none is never ignored."""
+def _schedule_p_headings(words: list) -> tuple[list, list, float]:
+    """The page's rows, its heading rows with their columns, and the margin
+    the line numbers print in."""
     rows = _word_rows(words)
     headings = [(row, columns) for row in rows if (columns := _schedule_p_columns(row))]
     if not headings:
         raise _Unreadable("the column headings are missing")
-    grid = (min(columns[0][0] for _, columns in headings), max(columns[-1][1] for _, columns in headings))
-    numbers = _margin_numbers(words, _SP_LINES, grid[0])
-    if not set(_SP_SECTIONS) & set(numbers):
-        raise _Unreadable("no carryover line is where Side 3 or 4 prints one")
-    found, placed, last = {}, set[int](), 0.0
+    return rows, headings, min(columns[0][0] for _, columns in headings)
+
+
+def _schedule_p_cells(words: list, page: tuple, number: dict, line: str) -> tuple[list, dict, float]:
+    """One line's heading row and the band of figures under it, to the next
+    row starting in the margin, with its cells (a)-(d) and where it stops."""
+    rows, headings, margin = page
+    following = next((row[0]["top"] for row in rows
+                      if row[0]["top"] > number["bottom"] and row[0]["x0"] < margin), float("inf"))
+    own = [(row, columns) for row, columns in headings if number["top"] < row[0]["top"] < following]
+    if not own:
+        raise _Unreadable(f"line {line} has no column headings")
+    heading, columns = min(own, key=lambda item: item[0][0]["top"])
+    if any(_VALUE.fullmatch(w["text"]) for w in heading):
+        raise _Unreadable(f"line {line} prints a figure among its column headings")
+    bottom = max(w["bottom"] for w in heading)
+    stop = next((row[0]["top"] for row in rows if row[0]["top"] > bottom and row[0]["x0"] < margin), float("inf"))
+    band = [w for w in words if w["top"] >= bottom - 1 and w["bottom"] <= stop + 1]
+    if any(not columns[0][0] <= _mid(w, "x0", "x1") < columns[-1][1] for w in band):
+        raise _Unreadable(f"line {line} prints a figure outside its columns")
+    cells = {key: _cell([w for w in band if left <= _mid(w, "x0", "x1") < right])
+             for key, (left, right) in zip("abcd", columns)}
+    return heading + band, cells, stop
+
+
+def _schedule_p_lines(words: list, side: int) -> dict:
+    """{line: {"code", "a", "b", "c", "d"}} for each carryover line on Side 3
+    or 4. Down to the last line, every figure is a line number, a credit code,
+    a line a description cites ("line 3") or in a box of its line's; any other
+    is a question, never ignored."""
+    page = _schedule_p_headings(words)
+    numbers = _margin_numbers(words, _SP_SIDES[side], page[2])
+    if set(numbers) != _SP_SIDES[side]:
+        raise _Unreadable(f"a line number on Side {side} is missing")
+    found, placed, end = {}, set[int](), 0.0
     for line, number in sorted(numbers.items(), key=lambda item: item[1]["top"]):
         # The number's row holds the code, entered or printed, and the name.
         label = sorted((w for w in words if _overlaps(w, number)), key=lambda w: w["x0"])
-        text = " ".join(w["text"] for w in label if w["x0"] > number["x0"])
-        code = re.match(r"Code:?\s*(\d{3})\b", text)
-        following = next((row[0]["top"] for row in rows
-                          if row[0]["top"] > number["bottom"] and row[0]["x0"] < grid[0]), float("inf"))
-        own = [(row, columns) for row, columns in headings if number["top"] < row[0]["top"] < following]
-        if not own:
-            raise _Unreadable(f"line {line} has no column headings")
-        heading, columns = min(own, key=lambda item: item[0][0]["top"])
-        bottom = max(w["bottom"] for w in heading)
-        stop = next((row[0]["top"] for row in rows if row[0]["top"] > bottom and row[0]["x0"] < grid[0]),
-                    float("inf"))
-        band = [w for w in words if w["top"] >= bottom - 1 and w["bottom"] <= stop + 1]
-        if any(not columns[0][0] <= _mid(w, "x0", "x1") < columns[-1][1] for w in band):
-            raise _Unreadable(f"line {line} prints a figure outside its columns")
-        placed.update(id(w) for w in label + heading + band)
-        cells = {key: _cell([w for w in band if left <= _mid(w, "x0", "x1") < right])
-                 for key, (left, right) in zip("abcd", columns)}
-        if line in _SP_SECTIONS:
-            last = max(last, stop)
-            if any(value is not None for value in cells.values()):
-                if code is None or _SP_PRINTED.get(line, code[1]) != code[1]:
-                    raise _Unreadable(f"line {line} has figures without its credit code")
-                found[line] = {"code": code[1], **cells}
-    first = min(number["top"] for number in numbers.values())
-    if any(id(w) not in placed and _VALUE.fullmatch(w["text"]) and grid[0] <= _mid(w, "x0", "x1") < grid[1]
-           and first <= w["top"] < last for w in words):
+        code = re.match(r"Code:?\s*(\d{3})\b", " ".join(w["text"] for w in label if w["x0"] > number["x0"]))
+        # A description cites other lines by number: "line 3".
+        cited = {id(after[0]) for w in label if w["text"] == "line" and (after := _right_of(label, w))}
+        stray = [w for w in label if w is not number and id(w) not in cited and _VALUE.fullmatch(w["text"])]
+        if stray and not (code and len(stray) == 1 and stray[0]["text"] == code[1]):
+            raise _Unreadable(f"line {line} prints a figure beside its name")
+        accounted, cells, stop = _schedule_p_cells(words, page, number, line)
+        if any(cells[key] is not None for key in "abcd" if key not in _SP_BOXES.get(line, "abcd")):
+            raise _Unreadable(f"line {line} prints a figure in a column it has no box in")
+        placed.update(id(w) for w in label + accounted)
+        end = max(end, stop)
+        if line in _SP_SECTIONS and any(value is not None for value in cells.values()):
+            if code is None or _SP_PRINTED.get(line, code[1]) != code[1]:
+                raise _Unreadable(f"line {line} has figures without its credit code")
+            found[line] = {"code": code[1], **cells}
+    if any(id(w) not in placed and _VALUE.fullmatch(w["text"]) and w["top"] < end for w in words):
         raise _Unreadable("a figure sits in no line's columns")
     return found
 
 
+def _check_side_2(words: list) -> None:
+    """Side 2's line 4 carries code 162 forward only above the business
+    credit limit, and is not read: a carryover there is a question."""
+    page = _schedule_p_headings(words)
+    line_4 = [row[0] for row in page[0] if row[0]["text"] == "4" and row[0]["x1"] <= page[2]
+              and re.match(r"Code:?\s*162\b", " ".join(w["text"] for w in row[1:]))]
+    if len(line_4) != 1:
+        raise _Unreadable("line 4 is not where Side 2 prints it")
+    if _schedule_p_cells(words, page, line_4[0], "4")[1]["d"]:
+        raise _Unreadable("line 4 carries code 162 forward on Side 2, which is not read")
+
+
 def _ca_credits(schedule_pages: list, words: dict, source_digest: str) -> list:
     """Each credit code's carryforward, kept apart from every other code.
-    `schedule_pages` are (page, side); every carryover line is on Side 3 or 4."""
+    `schedule_pages` are (page, side); every carryover line read is on Side 3
+    or 4, and Side 2, where printed, must carry nothing from line 4."""
     sides = sorted(side for _, side in schedule_pages if side in (3, 4))
     if sides != [3, 4]:
         raise _Unreadable("Schedule P needs Sides 3 and 4, once each")
     lines: dict[str, dict] = {}
     for page, side in schedule_pages:
-        if side not in (3, 4):
+        if side not in (2, 3, 4):
             continue
         if page not in words:
             raise _Unreadable("Schedule P needs its word positions")
-        for line, record in _schedule_p_lines(words[page]).items():
+        if side == 2:
+            _check_side_2(words[page])
+            continue
+        for line, record in _schedule_p_lines(words[page], side).items():
             lines[line] = {**record, "page": page + 1}
     by_code: dict[str, list] = {}
     for line in sorted(lines, key=int):
@@ -669,12 +705,16 @@ _STATUS_LABELS = (("Single", ("Single",)), ("MFJ", ("Married", "filing", "jointl
 
 
 def _marked_status(words: list) -> str | None:
-    heading = [w for w in words if _phrase(words, w, ("Filing", "Status"))]
+    heading = _phrases(words, ("Filing", "Status"))
     if len(heading) != 1:
         return None
     marked = set()
     for status, phrase in _STATUS_LABELS:
-        for label in (w for w in words if -3 <= w["top"] - heading[0]["top"] <= 30 and _phrase(words, w, phrase)):
+        # Only the labels beside the heading are its boxes.
+        labels = [w for w in _phrases(words, phrase) if -3 <= w["top"] - heading[0]["top"] <= 30]
+        if len(labels) > 1:
+            raise _Unreadable("a filing status label is printed twice")
+        for label in labels:
             box = [w for w in _left_of(words, label) if label["x0"] - 20 <= _mid(w, "x0", "x1") and _is_mark(w)]
             if box:
                 marked.add(status)
