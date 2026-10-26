@@ -177,10 +177,14 @@ def redact(text) -> str:
 # protected only amounts of $1,000 or more; below that line the masker erased
 # the box amount. Under a label the ambiguity is gone.
 #
-# A label is SSN, ITIN, "social security number", or a POSSESSIVE followed by
-# TIN / "identification number" / "identifying number" — "RECIPIENT'S TIN" on
-# every 1099, "Winner's TIN" on a W-2G, "Shareholder's identifying number" on a
-# K-1. The possessor is not enumerated on the taxpayer side, where a missed
+# A label is SSN, ITIN, "social security number", "identifying number", or a
+# POSSESSIVE (or "your") followed by TIN / "[taxpayer] identification number" /
+# "identifying number" — "RECIPIENT'S TIN" on every 1099, "Winner's TIN" on a
+# W-2G, "Shareholder's identifying number" on a K-1, "Your taxpayer
+# identification number" on Forms 8995 and 8995-A, "Identifying number" alone
+# on Forms 8801 and 1116. A business's number is "Taxpayer identification
+# number" with no possessive (Form 8995-A's column (d)), so the bare spelling
+# is not a label. The possessor is not enumerated on the taxpayer side, where a missed
 # form family is an SSN in the transcript; it is enumerated on the PAYER side
 # (payer, employer, filer, issuer, lender, trustee, creditor, corporation,
 # partnership, estate, trust), where the number is an EIN and a miss masks an
@@ -218,19 +222,51 @@ _ID_LABEL = (
     r"(?<![A-Za-z])(?:(?:SSN|ITIN)s?(?![A-Za-z])"
     r"|social security[^\S\n]+(?:numbers?|nos?\.?|#)(?![A-Za-z])"
     r"|individual taxpayer identification(?: number)?"
-    rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
-    r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
+    r"|identifying[^\S\n]+number(?![A-Za-z])"
+    rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])(?:your|[A-Za-z]+['\u2019]?s)[^\S\n]+"
+    r"(?:TIN(?![A-Za-z])|(?:taxpayer[^\S\n]+)?identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
 # from a web table carries U+00A0 where the page had a space.
 _ID_VALUE_RE = re.compile(
     r"(?<![0-9])[0-9]{3}[^\S\n]*[0-9]{2}[^\S\n]*([0-9]{4})(?![0-9])")
+# A comb field, nine boxes of one digit each, is how the official fillable
+# forms print an SSN, and a flattened one extracts as nine digits apart. Like
+# the whitespace spelling it is masked only under a label: Form 1040 prints
+# the refund routing number in a comb field too.
+_ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}")
+_ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
 # A label line that already carries its value — in any spelling, or already
 # masked — is a same-line layout, and the line under it is something else.
 _ID_LABEL_ENDS_LINE = re.compile(
-    rf"{_ID_LABEL}(?:(?!{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}"
+    rf"{_ID_LABEL}(?:(?!{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-[0-9]{{4}})[^\n])*$", re.IGNORECASE)
+# Schedule B (Form 1116) wraps its label onto a second row; the number is on
+# the row after that.
+_LABEL_CONTINUES = re.compile(r"[^\S\n]*on page 1 of your tax return[^\S\n]*", re.IGNORECASE)
+
+
+def _mask_spaced(text: str) -> str:
+    """Mask each nine of a run of spaced digits, counted from the right. One
+    row of comb fields is one run (Form 1040's four dependents); a shorter
+    remainder on the left is a box number, never a whole SSN."""
+    def nines(match: re.Match) -> str:
+        digits = re.findall(r"[0-9]", match[0])
+        lead = len(digits) % 9
+        return " ".join(digits[:lead] + [f"XXX-XX-{''.join(digits[i + 5:i + 9])}"
+                                         for i in range(lead, len(digits), 9)])
+    return _ID_SPACED.sub(nines, text)
+
+
+def _mask_spaced_after_labels(text: str) -> str:
+    """The same-line layout for the comb spelling: every run after the label,
+    which a single-value pattern cannot reach past the first dependent."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if label := _ID_LABEL_RE.search(line):
+            lines[i] = line[:label.end()] + _mask_spaced(line[label.end():])
+    return "\n".join(lines)
 
 
 def _mask_under_labels(text: str) -> str:
@@ -240,8 +276,9 @@ def _mask_under_labels(text: str) -> str:
     value the same-line pass has just rewritten still counts as present."""
     lines = text.split("\n")
     for i in range(1, len(lines)):
-        if _ID_LABEL_ENDS_LINE.search(lines[i - 1]):
-            lines[i] = _ID_VALUE_RE.sub(r"XXX-XX-\1", lines[i])
+        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(lines[i - 1]) else i - 1
+        if _ID_LABEL_ENDS_LINE.search(lines[above]):
+            lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", lines[i]))
     return "\n".join(lines)
 
 
@@ -267,6 +304,7 @@ def mask_ssn(value):
         return value
     out = _mask_under_labels(value)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
+    out = _mask_spaced_after_labels(out)
     return _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
 
 
@@ -333,8 +371,8 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
-    masked = _ID_VALUE_RE.sub(r"XXX-XX-\1",
-                              _ID_DELIMITED.sub(r"XXX-XX-\1", text))
+    masked = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1",
+                                           _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
     return masked if masked != text else cell
 
 

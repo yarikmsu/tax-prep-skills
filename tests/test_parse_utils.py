@@ -642,6 +642,70 @@ class TestMaskSsn:
                       "SOCIAL SECURITY NUMBERS"):
             assert mask_ssn(f"{label} {_ssn('')}") == f"{label} {MASKED}"
 
+    def test_a_comb_field_spelling_is_masked_under_its_label(self):
+        """The official fillable forms print an SSN in a comb field, nine
+        boxes of one digit each. Flattened, pdfplumber extracts the digits
+        apart, a spelling no other pattern matched: Form 1040's name row put
+        the whole number in the transcript. Its label row also carries the
+        name labels; the row below holds the name and the nine digits."""
+        comb = " ".join("00000" + LAST4)
+        page = ("Your first name and middle initial Last name Your social security number\n"
+                f"JANE Q DOE {comb}\nHome address")
+        assert mask_ssn(page) == page.replace(comb, MASKED)
+
+    def test_every_comb_run_after_a_same_line_label_is_masked(self):
+        """Form 1040 prints up to four dependents' SSNs on the row that
+        starts "(3) SSN", and their comb fields extract as ONE run of spaced
+        digits. Masking only the first nine left the other dependents'."""
+        other = " ".join("00000" + "1111")
+        row = f"than four (3) SSN {' '.join('00000' + LAST4)} {other}"
+        assert mask_ssn(row) == f"than four (3) SSN {MASKED} XXX-XX-1111"
+
+    def test_a_comb_run_keeps_only_a_leading_remainder_too_short_for_an_ssn(self):
+        """A run is split into nines from the right, so a box number printed
+        before the comb stays and never shifts the masked last four."""
+        comb = " ".join("00000" + LAST4)
+        assert mask_ssn(f"SSN 4 {comb}") == f"SSN 4 {MASKED}"
+
+    def test_a_comb_run_without_a_label_survives(self):
+        """Form 1040 prints the refund routing number in a comb field too,
+        and a row of line numbers is nine single digits apart."""
+        for row in (f"b Routing number {' '.join(ROUTING)} c Type: Checking",
+                    "1 2 3 4 5 6 7 8 9"):
+            assert mask_ssn(row) == row
+
+    def test_a_label_line_carrying_a_comb_value_leaves_the_next_line_alone(self):
+        comb = " ".join("00000" + LAST4)
+        assert mask_ssn(f"SSN {comb}\nRouting {ROUTING}") == f"SSN {MASKED}\nRouting {ROUTING}"
+
+    @pytest.mark.parametrize("label", [
+        "Name(s) shown on return Your taxpayer identification number",
+        "Name(s) shown on return Identifying number",
+        "Your first name and middle initial Last name Your identifying number",
+        "Name Identifying number as shown on page 1 of your tax return",
+    ])
+    def test_the_attachment_forms_labels_govern_the_row_below(self, label):
+        """Forms 8995 and 8995-A with its schedules say "Your taxpayer
+        identification number", Form 8801 "Identifying number", Form 1116
+        "Identifying number as shown on page 1 of your tax return". None was
+        a label, so an SSN typed there without hyphens reached the transcript."""
+        for value in (_ssn(""), _ssn(" "), " ".join(_ssn(""))):
+            page = f"{label}\nJANE Q DOE {value}"
+            assert mask_ssn(page) == f"{label}\nJANE Q DOE {MASKED}"
+
+    def test_a_label_wrapped_onto_a_second_row_governs_the_row_after_it(self):
+        """Schedule B (Form 1116) prints "Identifying number as shown" over
+        "on page 1 of your tax return", and the number on the row below both."""
+        page = f"Name Identifying number as shown\non page 1 of your tax return\nJANE Q DOE {_ssn('')}"
+        assert mask_ssn(page) == page.replace(_ssn(""), MASKED)
+
+    def test_a_business_tin_column_is_not_the_taxpayers_label(self):
+        """Form 8995-A Part I's column "(d) Taxpayer identification number"
+        holds each business's EIN; without a possessive it governs nothing."""
+        for row in (f"(d) Taxpayer identification number {ROUTING}",
+                    f"specified service aggregation identification number patron\n{ROUTING}"):
+            assert mask_ssn(row) == row
+
     def test_a_labeled_bare_run_must_be_exactly_nine_digits(self):
         """A ten-digit account number under an SSN label is not an SSN, and
         truncating it to a masked last-four would hide the mismatch."""
@@ -737,6 +801,10 @@ class TestATableCarriesItsLabelInAnotherCell:
         assert out[0] == ["Prior balance", ROUTING]
         assert out[2] == ["Ann", MASKED]
 
+    def test_a_comb_cell_under_a_label_is_masked(self):
+        rows = [["SSN", "Wages"], [" ".join("00000" + LAST4), "50,000.00"]]
+        assert mask_table(rows)[1] == [MASKED, "50,000.00"]
+
     def test_a_row_that_is_not_a_sequence_is_still_masked(self):
         assert mask_table([f"Employee SSN {_ssn('-')}", None]) == \
             [f"Employee SSN {MASKED}", None]
@@ -784,6 +852,28 @@ class TestEveryExtractionRouteMasks:
     """Each route is compared against the UNMASKED library read of the same
     file, so the assertion is "the route applies `mask_ssn` and nothing else
     changed", not merely "the SSN is gone"."""
+
+    def test_pdf_text_masks_a_flattened_comb_field(self, tmp_path):
+        """Drawn the way a flattened Form 1040 prints it: the label row, then
+        each digit centred in its own box of the comb field (Form 1040 page 1,
+        field f1_16: 107 points across nine boxes)."""
+        from reportlab.pdfgen import canvas
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = tmp_path / "f1040.pdf"
+        page = canvas.Canvas(str(pdf))
+        page.setFont("Helvetica", 7)
+        page.drawString(36, 700, "Your first name and middle initial")
+        page.drawString(472, 700, "Your social security number")
+        page.setFont("Helvetica", 10)
+        page.drawString(40, 686, "JANE Q DOE")
+        for index, digit in enumerate("00000" + LAST4):
+            page.drawCentredString(469 + 107 / 9 * (index + 0.5), 686, digit)
+        page.save()
+        raw_text, _ = _raw_pdf(pdf)
+        comb = " ".join("00000" + LAST4)
+        assert comb in raw_text[0], "fixture does not extract the comb spelling"
+        out = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+        assert comb not in out[0] and f"JANE Q DOE {MASKED}" in out[0]
 
     def test_pdf_text(self, tmp_path):
         from agents.lib.parse_utils import extract_pdf_text
