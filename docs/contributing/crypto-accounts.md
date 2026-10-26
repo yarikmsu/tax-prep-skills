@@ -260,6 +260,9 @@ figures. These are audit amounts, separate from Form 8949 column (d): a correct,
 higher disposal price stays in column (d), and code E still uses the form's
 gross proceeds there. A form spanning several lot slices is allocated once;
 the broker allocations never reprice those slices. No-form rows carry null.
+Form-backed rows require a ledgered `capital_proceeds` category, even when the
+broker reports zero. Without it the category sum would never run. A no-form
+sale needs no broker-proceeds entry.
 
 Active form-backed rows without `broker_proceeds` must be rebuilt from the
 reviewed import and source forms. Never infer a missing figure by subtracting

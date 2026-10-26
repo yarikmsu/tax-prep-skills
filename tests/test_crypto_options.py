@@ -10,7 +10,7 @@ import pytest
 
 from agents.lib import crypto_importer as C
 from agents.lib import tie_out
-from tests.test_crypto_reporting import BASE, event, form, only, reporting, resolved, rows
+from tests.test_crypto_reporting import BASE, _broker_ledger, event, form, only, reporting, resolved, rows
 
 
 def option_review(tx, treatment, *, included=False, premium=10):
@@ -266,7 +266,10 @@ def merged(source):
 
 
 def check(source, result):
-    return tie_out.evaluate([], result, [], option_exercise_answer=True,
+    forms = source['broker_reporting'].get('forms', [])
+    ledger = _broker_ledger(sum(float(f['proceeds']) for f in forms)) if forms else []
+    documents = ['documents/1099DA.pdf'] if forms else []
+    return tie_out.evaluate(ledger, result, documents, option_exercise_answer=True,
                             specific_identification_answer=False, crypto_source=source)
 
 
