@@ -1195,6 +1195,26 @@ def _digital_asset_rows(result: dict) -> "list[tuple[str, dict]]":
     return rows
 
 
+def _form_backed_sales(result: dict) -> bool:
+    """Whether any Schedule D row a broker form backs is in use: a 1099-B row
+    outside Box C/F with a figure, or a digital row carrying its broker figure
+    (an explicit zero included). These are the rows the capital_proceeds tie
+    reads, and that tie runs only for a ledgered category."""
+    section = result.get("schedule_d")
+    for part_key in ("part_i_short_term", "part_ii_long_term"):
+        part = section.get(part_key) if isinstance(section, dict) else None
+        for key, row in part.items() if isinstance(part, dict) else ():
+            if (not isinstance(row, dict) or "box_c" in key or "box_f" in key
+                    or key in _NO_BROKER_FORM_DIGITAL_ROWS):
+                continue
+            if key.endswith(_DIGITAL_ASSET_ROW_SUFFIX):
+                if row.get("broker_proceeds") is not None:
+                    return True
+            elif any(row.get(field) not in (None, 0) for field in ("proceeds", "cost", "adjustment", "gain")):
+                return True
+    return False
+
+
 def _crypto_option_checks(result, source, answer, profile=None):
     """An acknowledgement is not evidence that option premiums were priced.
 
@@ -2832,11 +2852,9 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     # The sum loop only visits ledgered categories. A form-backed sale with
     # no capital_proceeds entry otherwise passes without any source tie at all,
     # even when its broker reports zero proceeds and the sale makes a loss.
-    if ('capital_proceeds' not in sums and any(
-            name not in _NO_BROKER_FORM_DIGITAL_ROWS and row.get('broker_proceeds') is not None
-            for name, row in digital_rows)):
-        missing_targets.append('Form-backed digital rows require ledgered capital_proceeds, '
-                               'including a reported zero')
+    if 'capital_proceeds' not in sums and _form_backed_sales(result):
+        missing_targets.append('Form-backed Schedule D rows (1099-B, or a digital row with broker_proceeds) '
+                               'require ledgered capital_proceeds, including a reported zero')
     missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):
         missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "

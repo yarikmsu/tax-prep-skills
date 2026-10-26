@@ -990,7 +990,7 @@ def test_tie_out_refuses_a_basis_mode_nothing_can_complete():
 
 
 def _employer_ledger(adjustment):
-    # Consolidated broker worksheet: RSU proceeds20,000 plus digital proceeds600.
+    # Consolidated broker worksheet: RSU proceeds 20,000 plus digital proceeds 600.
     return tie_out.load_ledger({'records': [dict(
         doc_id='supp', file='documents/supplemental.pdf', form_type='supplemental', payer='Broker',
         person='primary', key_boxes={'employer_stock_basis_adjustment': adjustment,
@@ -2445,7 +2445,7 @@ def test_an_aggregate_box_on_any_other_form_still_refuses(key, value):
 
 def test_an_aggregate_import_ties_out_by_box():
     built = resolved(run(aggregate_reporting(), USDC))
-    # USDC annual form:200.10 +199.95 +100.02 =500.07 from500 units.
+    # USDC annual form: 200.10 + 199.95 + 100.02 = 500.07 from 500 units.
     report = tie_out.evaluate(_broker_ledger(500.07), _merged(built), ['documents/1099DA.pdf'],
                               option_exercise_answer=False, specific_identification_answer=False)
     assert not report.failed, report

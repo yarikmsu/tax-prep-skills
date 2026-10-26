@@ -825,6 +825,35 @@ def test_capital_proceeds_verifiable_when_schedule_d_detail_present():
     assert report.unverifiable == ()
 
 
+@pytest.mark.parametrize("row", [
+    {"proceeds": 50000.0, "cost": 42000.0, "gain": 8000.0},
+    {"proceeds": 0, "cost": 4000.0, "gain": -4000.0}])
+def test_1099b_rows_need_a_ledgered_capital_proceeds_category(row):
+    """A 1099-B ledgered without its proceeds leaves the sum loop nothing to
+    compare, so the Box A row passed with no tie at all."""
+    recs = _ledger(_record(doc_id="b", file="documents/1099B.pdf",
+                           form_type="1099-B", payer="Broker",
+                           key_boxes={"federal_withholding_1099": 0.0}))
+    result = {"form_1040": {"line_25b_1099_withholding": 0.0},
+              "schedule_d": {"part_i_short_term": {"line_1a_1099b_box_a": row}}}
+    report = T.evaluate(recs, result, ["documents/1099B.pdf"])
+    assert report.failed
+    assert any("ledgered capital_proceeds" in t for t in report.missing_result_targets)
+
+
+def test_box_c_and_f_rows_need_no_ledgered_capital_proceeds():
+    recs = _ledger(_record())
+    result = _result()
+    result["schedule_d"] = {
+        "part_i_short_term": {
+            "line_1a_1099b_box_a": {"proceeds": 0, "cost": 0, "gain": 0},
+            "line_1c_1099b_box_c": {"proceeds": 10000.0, "cost": 6000.0, "gain": 4000.0}},
+        "part_ii_long_term": {
+            "line_10_1099b_box_f": {"proceeds": 7000.0, "cost": 2000.0, "gain": 5000.0}}}
+    report = T.evaluate(recs, result, ["documents/W2_Acme.pdf"])
+    assert not report.failed, report.missing_result_targets
+
+
 def test_lt_only_return_with_zero_template_st_rows_warns_not_fails():
     """Codex P2 round 1: the template ships zero-valued Part I rows — a
     long-term-only broker must not be compared against \\$0 short-term
@@ -971,10 +1000,12 @@ def test_dropped_capital_gain_distribution_fails():
 def test_employer_stock_adjustment_ties_when_applied():
     """J1: supplemental statement ledgers a +$50K basis correction; the
     Schedule D row carries adjustment −50000 (reduces gain) → the negated sum
-    ties, gate passes."""
+    ties, gate passes. The consolidated statement also ledgers its 1099-B
+    proceeds, which every Box A row needs."""
     recs = _ledger(_record(doc_id="s", file="documents/supp.pdf",
                            form_type="brokerage_statement", payer="Broker",
-                           key_boxes={"employer_stock_basis_adjustment": 50000.0}))
+                           key_boxes={"employer_stock_basis_adjustment": 50000.0,
+                                      "capital_proceeds": 60000.0}))
     result = {"schedule_d": {"part_i_short_term": {
         "line_1a_1099b_box_a": {"proceeds": 60000.0, "cost": 0.0,
                                 "adjustment": -50000.0, "adjustment_code": "B",
@@ -990,10 +1021,11 @@ def test_employer_stock_adjustment_ignores_non_employer_code_b_rows():
     """Codex P2 (PR #47): code B is NOT unique to employer stock — a non-
     employer 1099-B basis correction (also code B) on another lot must not
     corrupt the reconciliation. The scan filters on the `employer_stock`
-    provenance marker, not the code."""
+    provenance marker, not the code. Proceeds 60,000 + 9,000 = 69,000."""
     recs = _ledger(_record(doc_id="s", file="documents/supp.pdf",
                            form_type="brokerage_statement", payer="Broker",
-                           key_boxes={"employer_stock_basis_adjustment": 50000.0}))
+                           key_boxes={"employer_stock_basis_adjustment": 50000.0,
+                                      "capital_proceeds": 69000.0}))
     result = {"schedule_d": {"part_i_short_term": {
         "line_1a_1099b_box_a": {"proceeds": 60000.0, "cost": 0.0,
                                 "adjustment": -50000.0, "adjustment_code": "B",
