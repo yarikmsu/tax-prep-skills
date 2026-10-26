@@ -517,13 +517,13 @@ def validate_reviewed(result: dict, profile: dict) -> dict:
 def verify_source(workspace: Path, result: dict) -> None:
     """Find the reviewed PDF by its digest. The seed stores no path: a file
     name can hold a name or an SSN in any spelling, and none is needed."""
-    from agents.lib.workspace import resolve_under_workspace
+    from agents.lib.workspace import WorkspaceError, resolve_under_workspace
     seed = result["prior_return_import"]
-    allowed = resolve_under_workspace("documents/prior_return", workspace)
     try:
+        allowed = resolve_under_workspace("documents/prior_return", workspace)
         candidates = sorted(allowed.iterdir()) if allowed.is_dir() else []
-    except OSError:
-        candidates = []
+    except (OSError, ValueError, WorkspaceError):
+        candidates = []  # a linked or unlistable directory names a path; refuse plainly
     for candidate in candidates:
         if candidate.suffix.lower() != ".pdf":
             continue
@@ -572,21 +572,20 @@ def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
     """A page whose masked SSN differs from the assigned person's is someone
     else's worksheet: last year's spouse, or the other spouse's copy."""
     printed = seed.get("worksheets", {}).get("ira_basis_owners", {})
-    roles_by_ssn: dict[str, set] = {}
     for key, owner in owners.items():
-        if key in printed and owner in {"primary", "spouse"}:
-            roles_by_ssn.setdefault(printed[key], set()).add(owner)
-    for key, owner in owners.items():
-        person = current.get(owner) if owner in {"primary", "spouse"} else None
+        if key not in printed or owner not in {"primary", "spouse"}:
+            continue  # a copy follows its original; an unprinted page is the reviewer's
+        person = current.get(owner)
         last4 = person.get("ssn_last4") if isinstance(person, dict) else None
         # The profile may hold "1234" or "XXX-XX-1234"; compare the digits.
+        # A printed owner is checked, never assumed: without the assigned
+        # person's digits nothing stops the other spouse's basis landing here.
         digits = re.search(r"(\d{4})$", last4) if isinstance(last4, str) else None
-        if key in printed and digits and printed[key] != f"XXX-XX-{digits[1]}":
+        if not digits:
+            raise ImportError("A Form 8606 page prints its owner's SSN; record the assigned person's "
+                              "ssn_last4 in the profile to confirm it")
+        if printed[key] != f"XXX-XX-{digits[1]}":
             raise ImportError("A Form 8606 page prints a different SSN than the person it is assigned to")
-        # Two people sharing four digits is possible, but only both profile
-        # entries can show it; otherwise it is one person's two worksheets.
-        if key in printed and len(roles_by_ssn.get(printed[key], ())) > 1 and not digits:
-            raise ImportError("Two Form 8606 pages print one SSN; record both people's ssn_last4 to assign them apart")
 
 
 def confirm_import(workspace: Path, year: int, decisions: dict) -> None:

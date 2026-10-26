@@ -84,8 +84,9 @@ Write an owner-only local JSON review under `summaries/` with exactly:
   (`XXX-XX-1234`) and confirmation holds the assignment to it: a copy prints
   its original's SSN, one SSN on two pages is one owner, and a page assigned
   to a person whose profile `ssn_last4` differs is someone else's worksheet.
-  Two different pages printing one SSN are one person's unless both profile
-  entries record that same `ssn_last4`.
+  A page that prints an SSN cannot be confirmed until this year's profile
+  records the assigned person's `ssn_last4`; spouses sharing four digits each
+  record theirs.
   The report says which pages printed no readable SSN: nothing checks those
   assignments, so confirm them from the name on the page.
 - `questions`: every unresolved id mapped to `not_applicable` or `manual_required`.

@@ -677,6 +677,8 @@ def test_printed_owners_decide_copy_or_spouse(workspace, monkeypatch, second, ow
     doc[12] = with_owner(doc[4], second)
     doc[4] = with_owner(doc[4], "XXX-XX-0001")
     monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ",
+               "primary": {"ssn_last4": "0001"}, "spouse": {"ssn_last4": "0002"}})
     _, review = pending(workspace)
     review["filing_status"] = "MFJ"
     review["ira_owners"]["ira_basis_page_13"] = owner
@@ -722,7 +724,7 @@ def test_one_ssn_on_two_worksheets_is_one_person_unless_the_profile_shows_two(wo
     _, review = pending(workspace)
     review["filing_status"] = "MFJ"
     review["ira_owners"]["ira_basis_page_13"] = "spouse"
-    with pytest.raises(P.ImportError, match="one SSN|different SSN"):
+    with pytest.raises(P.ImportError, match="assigned person's ssn_last4|different SSN"):
         P.confirm_import(workspace, 2025, review)
 
 
@@ -767,3 +769,44 @@ def test_a_software_mask_is_read_as_the_owner_and_the_report_says_when_none_was(
     parsed = seed(doc)
     assert parsed["worksheets"]["ira_basis_owners"] == {IRA: "XXX-XX-0003"}
     assert "prints owner XXX-XX-0003" in P.review_report({"prior_return_import": parsed})
+
+
+@pytest.mark.parametrize("recorded", [{}, {"primary": {"ssn_last4": "0001"}}])
+def test_a_printed_owner_needs_the_assigned_persons_last_four(workspace, monkeypatch, recorded):
+    # The page prints the primary's SSN; without the spouse's digits nothing
+    # would stop it carrying the primary's basis to the spouse.
+    doc = pages()
+    doc[4] = with_owner(doc[4], "XXX-XX-0001")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ", **recorded})
+    _, review = pending(workspace)
+    review["filing_status"] = "MFJ"
+    review["ira_owners"][IRA] = "spouse"
+    with pytest.raises(P.ImportError, match="assigned person's ssn_last4"):
+        P.confirm_import(workspace, 2025, review)
+
+
+def test_a_copy_of_a_shared_last_four_page_still_confirms(workspace, monkeypatch):
+    doc = pages()
+    spouse_page = with_owner(doc[4].replace("13 1,000", "13 10,000").replace("14 9,000", "14 0"), "XXX-XX-0001")
+    doc[4] = with_owner(doc[4], "XXX-XX-0001")
+    doc[12], doc[13] = spouse_page, doc[4]
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ",
+               "primary": {"ssn_last4": "0001"}, "spouse": {"ssn_last4": "0001"}})
+    archive, review = pending(workspace)
+    review["filing_status"] = "MFJ"
+    review["ira_owners"].update({"ira_basis_page_13": "spouse", "ira_basis_page_14": P.DUPLICATE + IRA})
+    P.confirm_import(workspace, 2025, review)
+    assert diff(archive, "MFJ")["prior_year.ira_basis_by_taxpayer"] == {"primary": 9000, "spouse": 0}
+
+
+def test_a_linked_import_directory_is_refused_without_naming_it(workspace, tmp_path):
+    archive, review = pending(workspace)
+    P.confirm_import(workspace, 2025, review)
+    outside = tmp_path.parent / (tmp_path.name + "-Pat Sample")
+    (workspace / "documents/prior_return").rename(outside)
+    (workspace / "documents/prior_return").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RolloverError) as refused:
+        load_prior(archive, 2025, allow_imported=True)
+    assert "Pat" not in str(refused.value) and "Pat" not in str(refused.value.__cause__)
