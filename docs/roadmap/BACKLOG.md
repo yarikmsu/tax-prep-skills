@@ -184,13 +184,20 @@ Trigger and range behavior is documented in
   `/tax-scenario` price no CA tax for TY2026 and print "State/local tax not
   modeled". The degrade under-states, as AGENTS.md §4 allows, but a 2026
   conversion has to be made by December 31, so a CA filer deciding one now sees
-  no state cost. The planner reads CA's brackets, standard deduction and
-  exemption credits from the cache, and the 2026 Form 540-ES worksheet prices
-  tax from the 2025 table, so it cannot stand in. This waits on FTB's TY2026
-  indexed amounts, which FTB announced for TY2025 in its
-  [October 2025 Tax News](https://www.ftb.ca.gov/about-ftb/newsroom/tax-news/2025/10.html)
-  (the October 2026 issue returned 404 on 2026-10-24), and then on re-reading
-  the planner's CA contracts against them. Found by the same review.
+  no state cost. **Live review 2026-10-25:** FTB's
+  [current Tax News page, October 2026](https://www.ftb.ca.gov/about-ftb/newsroom/tax-news/#article1)
+  publishes the TY2026 brackets, standard deductions and personal/dependent
+  exemption credit amounts, although the dated October URL still returns 404.
+  That release says the complete tax rates and exemption amounts arrive in late
+  December. `planning._ca` also reads `state.tax_table` (ceiling and published
+  rows), `state.amt_screening`, `state.exemption_phaseout` and
+  `state.itemized_phaseout`; the release does not supply those planner inputs.
+  The TY2026 Form 540 booklet, tax-table PDF and Schedule CA/P instructions
+  still return 404. The 2026 Form 540-ES worksheet directs the prior-year table
+  and exemption credits, so it cannot fill the gaps. Keep the reviewed-year
+  gate closed until the missing covered-year inputs and the planner's CA
+  contracts can be reviewed; do not derive them from the announced inflation
+  percentage or substitute TY2025 values. Found by the same review.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
@@ -258,7 +265,7 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
 | **Y8** | The 2027 §6621 quarters, published one quarter at a time; the IRS's 2026 yearly average exchange rates, in January; and the TY2026 state tables, NY's included. |
 | **AA48** | The IRS publishing the TY2026 Form 8949 instructions. The entry dates the last check, and the season-open runbook's Form 8949 step repeats it. |
 | **AA83** | FTB publishing the 2026 Form 540 booklet and the year's Schedule CA and FTB 5805 instructions. The booklet's year-pinned URL returned 404 on 2026-10-24. |
-| **AA84** | FTB publishing the TY2026 indexed amounts. Its October 2026 Tax News returned 404 on 2026-10-24. |
+| **AA84** | The remaining TY2026 planner inputs and contract review: tax-table ceiling/rows, AMT screening, exemption phaseout and itemized phaseout. The 2026-10-25 live review found brackets, standard deductions and exemption credit amounts on FTB's current Tax News page; the entry records the missing inputs. |
 | **AA79** | The TY2026 IT-201 and IT-196 instructions (NY) and D-401 (NC), which print the household credit tables, the §615 limitation, the subtraction caps, the IT-201 tax table and NC's Schedule S lines and conformity date; the 2026 IT-2105 and NC estimator worksheet alone were live on 2026-10-25. |
 | **AA80** | FTB publishing the 2026 Form 540NR booklet, whose renter's credit qualification record and line 61 the review reads. Its year-pinned URL returned 404 on 2026-10-24. |
 
