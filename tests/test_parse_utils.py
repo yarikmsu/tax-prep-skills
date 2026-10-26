@@ -661,11 +661,24 @@ class TestMaskSsn:
         row = f"than four (3) SSN {' '.join('00000' + LAST4)} {other}"
         assert mask_ssn(row) == f"than four (3) SSN {MASKED} XXX-XX-1111"
 
-    def test_a_comb_run_keeps_only_a_leading_remainder_too_short_for_an_ssn(self):
-        """A run is split into nines from the right, so a box number printed
-        before the comb stays and never shifts the masked last four."""
-        comb = " ".join("00000" + LAST4)
-        assert mask_ssn(f"SSN 4 {comb}") == f"SSN 4 {MASKED}"
+    def test_a_run_that_is_not_whole_nines_keeps_no_digit(self):
+        """A comb holding eight digits beside a full one, or a box number
+        beside a comb, has no boundary to trust: splitting from either end
+        printed eight digits of the other dependent's number."""
+        comb, short = " ".join("00000" + LAST4), " ".join("0000" + "1111")
+        assert mask_ssn(f"SSN 4 {comb}") == "SSN XXX-XX-XXXX"
+        assert mask_ssn(f"than four (3) SSN {comb} {short}") == "than four (3) SSN XXX-XX-XXXX"
+        assert mask_ssn(f"SSN {comb} 1") == "SSN XXX-XX-XXXX"
+
+    def test_a_comb_digit_is_one_digit(self):
+        """A run of single digits ends at a longer number, which no comb
+        box prints."""
+        assert mask_ssn("SSN 0 0 0 0 0 6 7 8 912") == "SSN 0 0 0 0 0 6 7 8 912"
+
+    def test_a_same_line_label_governs_only_what_follows_it(self):
+        routing, comb = " ".join(ROUTING), " ".join("00000" + LAST4)
+        row = f"Routing {routing} Spouse's SSN {comb}"
+        assert mask_ssn(row) == f"Routing {routing} Spouse's SSN {MASKED}"
 
     def test_a_comb_run_without_a_label_survives(self):
         """Form 1040 prints the refund routing number in a comb field too,
@@ -673,6 +686,22 @@ class TestMaskSsn:
         for row in (f"b Routing number {' '.join(ROUTING)} c Type: Checking",
                     "1 2 3 4 5 6 7 8 9"):
             assert mask_ssn(row) == row
+
+    def test_the_last_label_on_a_line_decides_whether_it_carries_its_value(self):
+        """The taxpayer's number beside its label, the spouse's label last on
+        the line and the spouse's number on the row below."""
+        page = f"Your SSN {_ssn('-')} Spouse's SSN\nJOHN R DOE {_ssn('')}"
+        assert mask_ssn(page) == f"Your SSN {MASKED} Spouse's SSN\nJOHN R DOE {MASKED}"
+
+    def test_a_long_line_of_labels_is_masked_in_linear_time(self):
+        """Only the line's last label is tested for a value after it. A
+        pattern tempered past every label took time quadratic in the line, and
+        the parse budget is checked only between pages."""
+        import time
+        line = ("SSN " * 10_000)[:39_988] + _ssn("-")
+        started = time.perf_counter()
+        assert mask_ssn(line + "\nX").endswith(f"{MASKED}\nX")
+        assert time.perf_counter() - started < 2
 
     def test_a_label_line_carrying_a_comb_value_leaves_the_next_line_alone(self):
         comb = " ".join("00000" + LAST4)
@@ -693,11 +722,27 @@ class TestMaskSsn:
             page = f"{label}\nJANE Q DOE {value}"
             assert mask_ssn(page) == f"{label}\nJANE Q DOE {MASKED}"
 
-    def test_a_label_wrapped_onto_a_second_row_governs_the_row_after_it(self):
-        """Schedule B (Form 1116) prints "Identifying number as shown" over
-        "on page 1 of your tax return", and the number on the row below both."""
-        page = f"Name Identifying number as shown\non page 1 of your tax return\nJANE Q DOE {_ssn('')}"
-        assert mask_ssn(page) == page.replace(_ssn(""), MASKED)
+    @pytest.mark.parametrize("label, continued", [
+        ("Name Identifying number as shown", "on page 1 of your tax return"),
+        ("Your first name and middle initial Last name Your identifying number", "(see instructions)"),
+    ])
+    def test_a_label_wrapped_onto_a_second_row_governs_the_row_after_it(self, label, continued):
+        """Schedule B (Form 1116) and Form 1040-NR print the number on the row
+        under the label's continuation."""
+        for value in (_ssn(""), " ".join(_ssn(""))):
+            page = f"{label}\n{continued}\nJANE Q DOE {value}"
+            assert mask_ssn(page) == page.replace(value, MASKED)
+
+    @pytest.mark.parametrize("text", [
+        f"Identifying number or other designation\nXYZ FUND ORD SHS {ROUTING}",
+        f"Name: ACME FAMILY LP Identifying number: {ROUTING}",
+        " ".join(("enter the last four digits of your TIN\n1a Proceeds 850", "00", "2026")),
+        f"Business taxpayer identification number\n{ROUTING}",
+    ])
+    def test_an_identifying_number_that_is_not_the_taxpayers_survives(self, text):
+        """Form 8938 names a foreign security's identifier, Form 8283 a
+        partnership's EIN; "your TIN" in prose sits over an amount."""
+        assert mask_ssn(text) == text
 
     def test_a_business_tin_column_is_not_the_taxpayers_label(self):
         """Form 8995-A Part I's column "(d) Taxpayer identification number"
@@ -804,6 +849,10 @@ class TestATableCarriesItsLabelInAnotherCell:
     def test_a_comb_cell_under_a_label_is_masked(self):
         rows = [["SSN", "Wages"], [" ".join("00000" + LAST4), "50,000.00"]]
         assert mask_table(rows)[1] == [MASKED, "50,000.00"]
+
+    def test_a_cusip_column_is_not_the_taxpayers_number(self):
+        rows = [["CUSIP or other identifying number", "Proceeds"], [ROUTING, "850 00"]]
+        assert mask_table(rows) == rows
 
     def test_a_row_that_is_not_a_sequence_is_still_masked(self):
         assert mask_table([f"Employee SSN {_ssn('-')}", None]) == \
@@ -1199,6 +1248,12 @@ class TestEveryStringTheModuleReturnsIsMasked:
         assert proc.returncode == 0, proc.stderr
         assert _ssn(sep) not in proc.stdout and _ssn(sep) not in proc.stderr
         assert "Rename the file" in proc.stderr
+
+    def test_a_comb_spelled_identifier_names_a_file_too(self):
+        """`names_an_identifier` stays wider than `mask_ssn`."""
+        from agents.lib.secure_fs import names_an_identifier
+        assert names_an_identifier(f"W2 {' '.join('00000' + LAST4)}.pdf")
+        assert not names_an_identifier("W2 1 2 3 4.pdf")
 
     def test_a_scanned_path_is_one_the_extractor_can_open(self, tmp_path):
         """`scan` hands the next step a path, not a display name."""

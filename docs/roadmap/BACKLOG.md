@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA87** — mask an identifier by its position on the page, so a rotated label cannot carry an SSN past its label. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
+| **1. California filers: ready now** | **AA87** — mask an identifier by the label box it sits in on the page: on Form 540 an SSN typed without hyphens is returned whole. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | **AA44** — the prior-return import's remaining readers: Form 8995-A Schedule C, Form 1116 Schedule B, Schedule P credit columns and page-1 proposals. Its first delivery shipped in #69; AA45 shipped in #71. | #70 built those readers on table grids the official forms do not have; the owner decides between reading them by position, descoping and closing it. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -201,16 +201,21 @@ Trigger and range behavior is documented in
   percentage or substitute TY2025 values. Found by the same review.
 
 - **AA87 (P1, M): Mask an identifier by its position on the PDF page.**
-  `mask_ssn` reads extracted text, so a label governs the row printed after
-  it. pdfplumber's line order breaks that on a page carrying rotated text:
-  on a flattened TY2025 Form 1116 the vertical "Country" column label moves
-  the name-and-number row to the middle of Part I, away from "Identifying
-  number as shown on page 1 of your tax return", and an SSN typed there
-  without hyphens is returned whole. The hyphen, dot and slash spellings are
-  masked anywhere and are not affected. Decide each identifier-shaped run by
-  the label it sits under on the page (word boxes), or from an ordering with
-  the rotated characters set aside, and test it against every official form
-  the import and `/tax-verify` read. Found while fixing AA86.
+  `mask_ssn` reads extracted text, where a label governs only the row printed
+  right after it. A hyphenated, dotted or slashed SSN is masked anywhere; one
+  typed bare or with spaces is masked only under a label. On flattened official
+  forms filled with synthetic values, something else lands between the label
+  and its value, and the number comes back whole:
+  - CA Form 540 and 540NR, which every current user files: a stray margin glyph
+    on page 1, and rotated sidebar text before the header SSN on every other page.
+  - Form 1116 page 1: a rotated column label reorders the lines.
+  - W-2 Copy 1 and Copy C (the form-code row, a legend, VOID), 1099-INT Copy B
+    and Copy 2, W-2G Copies B and C, 1040-V and the 1040-ES vouchers.
+  - Form 2441's wrapped labels, Schedule H, and Form 1040-NR's dependents.
+  - The W-9's comb, which prints en dashes between its groups.
+  Decide each identifier-shaped run by the label box it sits in on the page
+  (each word's box on the page), not by row order, and test it against every official form `/tax-parse`,
+  `/tax-verify` and the import read. Found by AA86's review.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
