@@ -23,6 +23,11 @@ class RolloverError(Exception):
     """Raised when /tax-rollover cannot safely proceed."""
 
 
+class ImportedSeedError(RolloverError):
+    """The archive is a prior-return import seed, which holds carryforwards
+    for rollover and nothing a complete-return comparison could use."""
+
+
 # --- FIELD_MAP -------------------------------------------------------------
 # Stable carryforward/identity keys → JSON paths in source and target files.
 # Schema renames in newer toolkit versions don't break older archived returns
@@ -253,14 +258,15 @@ def load_prior(archive_dir: Path, year: int, *, allow_imported: bool = False) ->
             f"TY{year}. Refusing to roll inconsistent data."
         )
     if result.get("meta", {}).get("source") == "imported_prior_return" or "prior_return_import" in result:
+        if not allow_imported:
+            raise ImportedSeedError(
+                "An imported seed is not a complete computed return; use it only for reviewed rollover")
         from agents.lib.prior_return import ImportError, validate_reviewed, verify_source
         try:
             validate_reviewed(result, profile)
             verify_source(archive_dir.parent.parent, result)
         except (ImportError, ValueError, TypeError, KeyError) as exc:
             raise RolloverError("Imported prior return is pending review or has changed; confirm it before rollover") from exc
-        if not allow_imported:
-            raise RolloverError("An imported seed is not a complete computed return; use it only for reviewed rollover")
     return PriorReturn(year=year, result=result, profile=profile)
 
 

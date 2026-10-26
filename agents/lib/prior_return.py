@@ -26,6 +26,8 @@ SCHEMA = "prior-return-import/v1"
 # Form lines, not tax rates. Every additional covered year needs its own review.
 REVIEWED_YEARS = {2025}
 STATUSES = {"Single", "MFJ", "MFS", "HOH", "QSS"}
+# An `ira_owners` value marking a Form 8606 page as a second copy of another.
+DUPLICATE = "duplicate_of:"
 BOUNDARY = ("Parse boundary NOT enforced — parsed in the main session under prompt-level "
             "rules, because this agent cannot give a sub-task a closed tool set.")
 SOURCES = {
@@ -36,6 +38,8 @@ SOURCES = {
     "8995": "https://www.irs.gov/pub/irs-prior/f8995--2025.pdf",
     "540": "https://www.ftb.ca.gov/forms/2025/2025-540.pdf",
     "3510": "https://www.ftb.ca.gov/forms/2025/2025-3510.pdf",
+    # Worksheet 4-1. The 2025 edition prints it for the 2024-to-2025 carryover;
+    # the TY2025 return's figures go through the same lines.
     "capital_worksheet": "https://www.irs.gov/pub/irs-prior/p550--2025.pdf",
 }
 # Only the lines needed by the seed and their printed arithmetic dependencies.
@@ -77,57 +81,95 @@ def _amount(token: str) -> float:
     return round(-value if negative else value, 2)
 
 
+# Every official page repeats its form and year in a running header or footer
+# ("Form 8606 (2025) Page 2", "Cat. No. 11338H Schedule D (Form 1040) 2025").
+# The title block cannot identify a page: pdfplumber reads Form 1040's rotated
+# "Form" label as "mroF", and instruction lines name other forms throughout
+# ("1040-NR, line 7a", "2025 Schedule P (540), Part III").
+_RUNNING_HEADERS = (
+    (r"(?:^|\s)Form (\d{4}(?:-[A-Z]{1,2})?) \((20\d{2}|Rev\. [^)]+)\)(?: Page \d+)?(?: Created \S+)?$", None),
+    (r"(?:^|\s)Schedule D \(Form 1040\) (20\d{2})(?: Page \d+)?(?: Created \S+)?$", "D"),
+    (r"(?:^|\s)Form (540(?:NR)?) (20\d{2}) Side \d\b", None),
+    (r"^Side \d Form (540(?:NR)?) (20\d{2})\b", None),
+    (r"(?:^|\s)FTB 3510 (20\d{2})$", "3510"),
+)
+# Form 1040-SR prints Form 1040's line numbers, labels and identities.
+_SAME_LINES = {"1040-SR": "1040"}
+_OUT_OF_SCOPE_FORMS = {"1040-NR", "1040-X", "540NR"}
+_OUT_OF_SCOPE_TITLES = re.compile(r"U\.S\. Nonresident Alien Income Tax Return|Amended U\.S\. Individual Income "
+                                  r"Tax Return|Nonresident or Part-Year Resident Income Tax Return", re.I)
+# Forms printing a cents column after the amount box ("97 .00", "39 00").
+_CENTS_COLUMN = {"540", "3510"}
+
+
+def _running_headers(text: str) -> list[tuple[str, str]]:
+    found = []
+    for pattern, name in _RUNNING_HEADERS:
+        for match in re.finditer(pattern, text, re.M):
+            form = name or match[1]
+            found.append((_SAME_LINES.get(form, form), match.groups()[-1]))
+    return found
+
+
+def _out_of_scope(text: str) -> bool:
+    """A nonresident, part-year or amended return, by its own header or title.
+    A checkbox label saying AMENDED is normal; only an affirmative mark counts."""
+    return (any(form in _OUT_OF_SCOPE_FORMS for form, _ in _running_headers(text))
+            or bool(_OUT_OF_SCOPE_TITLES.search(text))
+            or bool(re.search(r"(?:\[X\]|\u2612|\bX)\s*(?:AMENDED|1040-X)", text, re.I))
+            or bool(re.search(r"(?m)^(?=.*\bAMENDED return\b).*(?:^|\s)(?:X|\u2612|\[X\])(?:\s|$)", text)))
+
+
 def _form(text: str) -> tuple[str, int] | None:
-    """Match a header/footer, never a reference to another form in a line."""
-    patterns = (
-        ("D", r"^SCHEDULE D\s*\n?\s*\(Form 1040\)[^\n]*"),
-        ("540", r"(?:^(?:(?:333\s+)?\d+\s+)?(?:Side \d+\s+)?Form 540\b[^\n]*|^California Resident Income Tax Return)"),
-        ("3510", r"^(?:\d+\s+)?FTB 3510\b[^\n]*"),
-        *((f, rf"^Form {f}(?![-\w])[^\n]*") for f in ("1040", "8606", "8801", "8995")),
-    )
-    for name, pattern in patterns:
-        matches = list(re.finditer(pattern, text, re.M | re.I))
-        if not matches:
-            continue
-        # A year on the same header/footer, or the standalone year immediately
-        # after the title block. Prior-year references in body lines do not count.
-        years: set[int] = set()
-        for match in matches:
-            block = text[match.start():match.end()]
-            years.update(int(y) for y in re.findall(r"\b20\d{2}\b", block))
-        if not years:
-            top = text[:900]
-            years.update(int(y) for y in re.findall(r"(?m)^\s*(20\d{2})\s*$", top))
-        if len(years) != 1:
-            raise ImportError("Official page needs one unambiguous covered tax year")
-        return name, years.pop()
-    return None
+    """The page's form and year from its running header or footer; None for a
+    page of any form this reader does not map."""
+    headers = {(form, year) for form, year in _running_headers(text) if form in LINES}
+    if not headers:
+        return None
+    if len({form for form, _ in headers}) != 1 or len({year for _, year in headers}) != 1:
+        raise ImportError("Official page needs one form and one unambiguous covered tax year")
+    form, year = headers.pop()
+    if not year.isdigit():
+        raise ImportError("Official page needs one form and one unambiguous covered tax year")
+    return form, int(year)
+
+
+def _labelled_amount(row: str, form: str) -> tuple[str, str] | None:
+    """The line label and amount printed in a row's right-hand box.
+
+    On the official layouts a box label follows a dot leader or bullet
+    (". . . 34", "• 98"), and a filled amount follows the label. A bullet
+    whose font has no Unicode map extracts as "(cid:127)". Wrapped
+    descriptions put the box on a continuation row, and sidebars print text or
+    figures before the line number ("Refund 34", "$15,750 14"), so the row's
+    start identifies nothing. Prose ending in a line number ("Don't complete
+    lines 21") has no leader. Schedule D line 21 and Form 8995's loss lines
+    pre-print the parentheses: "21 ( 3,000 )" is a loss.
+    """
+    row = row.rstrip()
+    if form in _CENTS_COLUMN:
+        row = re.sub(r"\s+\.?\s?00$", "", row)
+    match = re.search(rf"(?:^|[.\u2022]|\(cid:\d+\))\s*(\d{{1,3}}[a-z]?)\s+"
+                      rf"(?:\(\s*({_MAGNITUDE})\s*\)|({_NUMBER}))$", row)
+    if not match:
+        return None
+    return match[1], f"({match[2]})" if match[2] else match[3]
 
 
 def locate_lines(text: str, form: str, page: int, source_digest: str) -> dict:
-    """Read explicit printed line numbers with a terminal amount.
+    """Read each mapped line's amount from its labelled box.
 
-    Handles both `14 description ... 14 100` and `14 100`. Multi-column,
-    wrapped, blank and detached amounts are unresolved, never positional
-    guesses. Conflicting copies refuse even when one of them would be useful.
+    A blank box, a detached amount or an unreadable figure stays unresolved,
+    never a positional guess. Conflicting copies refuse even when one of them
+    would be useful.
     """
     text = mask_ssn(text)
     found: dict[str, dict] = {}
     for row in text.splitlines():
-        start = re.match(r"^\s*(\d{1,3}[a-z]?)\s+(.+?)\s*$", row)
-        if not start or start[1] not in LINES[form]:
+        labelled = _labelled_amount(row, form)
+        if labelled is None or labelled[0] not in LINES[form]:
             continue
-        line, rest = start[1], start[2]
-        match = re.fullmatch(_NUMBER, rest)
-        if match:
-            token = rest
-        else:
-            # Repeated right-hand line number distinguishes the amount from
-            # constants printed in the line's instructions.
-            match = re.search(rf"\s{re.escape(line)}\s+({_NUMBER})\s*$", rest)
-            if not match:
-                continue
-            token = match[1]
+        line, token = labelled
         value = _amount(token)
         if line in found and found[line]["value"] != value:
             raise ImportError("Conflicting values for one official form line")
@@ -170,6 +212,19 @@ def _checks(form: str, lines: dict) -> None:
         _check(lines, "39", ("32", "38"), lambda a, b: a - b)
 
 
+def _with_blanks(lines: dict, output: str, inputs: tuple[str, ...], compute, blank: set) -> list | None:
+    """The records proving `output`, or None. An input the form leaves blank
+    when it is zero ("If you didn't..., enter the amount from line 3 on line
+    14") counts as zero only where the printed identity still holds: an
+    unreadable nonzero amount then breaks the identity and stays a question."""
+    if output not in lines or any(n not in lines and n not in blank for n in inputs):
+        return None
+    values = [lines[n]["value"] if n in lines else 0.0 for n in inputs]
+    if abs(lines[output]["value"] - round(compute(*values), 2)) > 0.01:
+        return None
+    return [lines[n] for n in (*inputs, output) if n in lines]
+
+
 def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
     """Pure masked-text extraction; the caller never persists extracted text."""
     if type(year) is not int or year not in REVIEWED_YEARS:
@@ -182,11 +237,8 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         if type(page) is not int or page < 0 or not isinstance(raw, str):
             raise ImportError("Invalid extracted page")
         text = mask_ssn(raw)
-        # A checkbox label saying AMENDED is normal; only an affirmative mark
-        # is disallowed. No text in this input can select a command or path.
-        if re.search(r"(?:\[X\]|☒|\bX)\s*(?:AMENDED|1040-X)", text, re.I):
-            raise ImportError("Amended prior returns are outside import scope")
-        if re.search(r"(?mi)^\s*(?:Form\s+)?(?:540NR|1040-NR|1040-X)\b", text):
+        # No text in this input can select a command or path.
+        if _out_of_scope(text):
             raise ImportError("Nonresident, part-year and amended returns are outside import scope")
         header = _form(text)
         if header is None:
@@ -196,6 +248,8 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
             raise ImportError("Official form page belongs to a different tax year")
         lines = locate_lines(text, form, page + 1, source_digest)
         if form == "8606":
+            if re.search(r"(?m)(?:^|\s)Form 8606 \(20\d{2}\) Page [2-9]$", text):
+                continue  # Parts II and III: no line 14, and no second owner
             _checks(form, lines)
             # The two spouses can have identical line values. Page identity is
             # retained; the review must assign each worksheet to its owner.
@@ -220,20 +274,28 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
             raise ImportError("A closing carryforward/payment cannot be negative or non-finite")
         fields[key] = {"value": round(value, 2), "provenance": [r["provenance"] for r in records]}
 
-    def line_field(key, form, line, dependencies):
+    def line_field(key, form, line, total, parts):
+        """`line` is one of `parts`, which add up to `total`. A blank part is
+        a zero only where that sum still holds."""
         lines = forms.get(form, {})
-        if not all(n in lines for n in (line, *dependencies)):
+        records = _with_blanks(lines, total, parts, lambda *v: sum(v), set(parts))
+        if records is None:
             question(key, "Missing form line or its arithmetic dependencies; inspect the PDF/worksheet")
             return
-        add(key, lines[line]["value"], [lines[n] for n in (line, *dependencies)])
+        add(key, lines[line]["value"] if line in lines else 0.0, records)
 
-    line_field("estimated_payments_applied", "1040", "36", ("34", "35a"))
+    line_field("estimated_payments_applied", "1040", "36", "34", ("35a", "36"))
     if "540" in forms:
-        line_field("ca_estimated_payments_applied", "540", "98", ("97", "99"))
+        line_field("ca_estimated_payments_applied", "540", "98", "97", ("98", "99"))
     else:
         question("california", "Confirm no California resident return, or enter its separate opening balances manually")
     d, f = forms.get("D", {}), forms["1040"]
-    if all(n in d for n in ("7", "15", "16", "21")) and all(n in f for n in ("7a", "11b", "14", "15")):
+    if all(n in d for n in ("7", "15", "16")) and d["16"]["value"] >= 0 and "21" not in d:
+        # A net gain or zero skips line 21 and leaves nothing to carry.
+        records = [d[n] for n in ("7", "15", "16")]
+        add("capital_loss_carryforward_short_term", 0.0, records)
+        add("capital_loss_carryforward_long_term", 0.0, records)
+    elif all(n in d for n in ("7", "15", "16", "21")) and all(n in f for n in ("7a", "11b", "14", "15")):
         net, reported = d["16"]["value"], d["21"]["value"]
         # Schedule D line 21 prints a loss; do not abs() a contradictory gain.
         if net < 0 and (reported > 0 or reported < net or f["7a"]["value"] != reported):
@@ -256,27 +318,37 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         question("capital_loss", "Schedule D/1040 worksheet inputs absent; confirm no carryover or resolve the split manually")
     for page, lines in ira:
         key = f"ira_basis_page_{page}"
-        if all(n in lines for n in ("1", "2", "3", "13", "14")):
-            add(key, lines["14"]["value"], [lines[n] for n in ("1", "2", "3", "13", "14")])
+        # Part I leaves lines 4-13 blank when nothing was distributed or
+        # converted, and line 1 or 2 blank when it is zero.
+        total = _with_blanks(lines, "3", ("1", "2"), lambda a, b: a + b, {"1", "2"})
+        basis = _with_blanks(lines, "14", ("3", "13"), lambda a, b: a - b, {"13"})
+        if total is not None and basis is not None:
+            add(key, lines["14"]["value"], [lines[n] for n in ("1", "2", "3", "13", "14") if n in lines])
+            # Kept so the review can tell a second copy of one worksheet from
+            # two owners whose figures happen to match.
+            worksheets.setdefault("ira_basis_pages", {})[key] = {n: lines[n]["value"] for n in sorted(lines)}
         else:
             question(key, "Individual Form 8606 line 14 or its cross-check is unreadable; resolve that owner's basis manually")
     if not ira:
         question("ira_basis", "No individual Form 8606 located; absence of this year's form does not establish zero historical basis")
-    line_field("amt_credit_carryforward", "8801", "26", ("21", "25"))
+    line_field("amt_credit_carryforward", "8801", "26", "21", ("25", "26"))
     # Form 8801's closing balance does not include a NEW current-year deferral
     # credit. It is never sufficient by itself for the aggregate rollover field.
     question("current_year_amt", "Reconcile current-year Form 6251 deferral AMT in addition to Form 8801's unused credit")
     lines = forms.get("8995", {})
-    if all(n in lines for n in ("2", "3", "16")):
-        add("qbi_loss_carryforward", abs(lines["16"]["value"]), [lines[n] for n in ("2", "3", "16")])
+    # Line 3 or 7 is blank when there was no prior-year loss to carry in.
+    qbi = _with_blanks(lines, "16", ("2", "3"), lambda a, b: min(a + b, 0), {"3"})
+    if qbi is not None:
+        add("qbi_loss_carryforward", abs(lines["16"]["value"]), qbi)
     else:
         question("qbi_loss", "Read Form 8995 lines 16/17 or Form 8995-A Schedule C; missing forms are not zero")
-    if all(n in lines for n in ("6", "7", "17")):
-        add("reit_ptp_loss_carryforward", abs(lines["17"]["value"]), [lines[n] for n in ("6", "7", "17")])
+    reit = _with_blanks(lines, "17", ("6", "7"), lambda a, b: min(a + b, 0), {"7"})
+    if reit is not None:
+        add("reit_ptp_loss_carryforward", abs(lines["17"]["value"]), reit)
     else:
         question("reit_ptp_loss", "Resolve the separate REIT/PTP loss carryforward; never combine it with business QBI losses")
     if "540" in forms or "3510" in forms:
-        line_field("ca_amt_credit_carryforward", "3510", "39", ("32", "38"))
+        line_field("ca_amt_credit_carryforward", "3510", "39", "32", ("38", "39"))
         question("ca_current_year_amt", "Reconcile current-year Schedule P deferral AMT and all separate credit carryovers")
     for key, reason in {
         "foreign_tax_credit": "Read Form 1116 Schedule B by basket and vintage; no paid-minus-allowed reconstruction",
@@ -332,6 +404,10 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
     allowed = resolve_under_workspace("documents/prior_return", workspace)
     if not path.is_relative_to(allowed):
         raise ImportError("Prior return PDF must be inside documents/prior_return")
+    relative = str(path.relative_to(workspace.resolve()))
+    # The seed keeps this path to re-hash the PDF; a full SSN is never stored.
+    if mask_ssn(relative) != relative or re.search(r"(?<!\d)\d{9}(?!\d)", relative):
+        raise ImportError("Rename the prior return PDF so its path holds no taxpayer identification number")
     year = current_year - 1
     archive = workspace / "archive" / str(year)
     if archive.exists():
@@ -341,7 +417,7 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
     seed = extract_seed(pages, year, before)
     if hashlib.sha256(path.read_bytes()).hexdigest() != before:
         raise ImportError("Source PDF changed during import")
-    seed["source"] = str(path.relative_to(workspace.resolve()))
+    seed["source"] = relative
     result = {"meta": {"tax_year": year, "source": "imported_prior_return", "imported_review": "pending"},
               "prior_return_import": seed}
     profile = {"tax_year": year}
@@ -362,6 +438,14 @@ def review_report(result: dict) -> str:
     for key, field in seed["fields"].items():
         refs = "; ".join(f"page {p['page']}, {p['form']} line {p['line']}" for p in field["provenance"])
         lines.append(f"| {key} | {field['value']:.2f} | {refs} |")
+    pages = seed["worksheets"].get("ira_basis_pages", {})
+    keys = sorted(pages)
+    for index, key in enumerate(keys):
+        for other in keys[index + 1:]:
+            if pages[key] == pages[other]:
+                lines += ["", f"{key} and {other} print identical Form 8606 figures. If one is a second copy "
+                          f"of the same worksheet, map it to `{DUPLICATE}<the other id>`; two owners with equal "
+                          "figures are each assigned their own owner."]
     lines += ["", "## Derived worksheets", "", json.dumps(seed["worksheets"], indent=2), "",
               "## Unresolved questions", ""]
     lines += [f"- {key}: {reason}" for key, reason in seed["unresolved"].items()]
@@ -410,6 +494,26 @@ def verify_source(workspace: Path, result: dict) -> None:
         raise ImportError("Source PDF changed or left the import directory; re-import and review it")
 
 
+def _check_ira_owners(seed: dict, owners, filing_status: str) -> None:
+    """Each Form 8606 page names its owner, or is a second copy of a page that
+    does. A copy must print every figure its original does: two spouses whose
+    figures match are two owners, never one owner twice."""
+    ira_keys = {key for key in seed["fields"] if key.startswith("ira_basis_page_")}
+    pages = seed.get("worksheets", {}).get("ira_basis_pages", {})
+    if not isinstance(owners, dict) or set(owners) != ira_keys or not all(isinstance(v, str) for v in owners.values()):
+        raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
+    named = {key: owner for key, owner in owners.items() if not owner.startswith(DUPLICATE)}
+    for key, owner in owners.items():
+        original = owner[len(DUPLICATE):] if owner.startswith(DUPLICATE) else None
+        if original is not None and (original not in named or pages.get(key) != pages.get(original)
+                                     or pages.get(key) is None):
+            raise ImportError("A duplicate Form 8606 copy must match a named page figure for figure")
+    if (any(v not in {"primary", "spouse"} for v in named.values())
+            or len(set(named.values())) != len(named)
+            or ("spouse" in named.values() and filing_status != "MFJ")):
+        raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
+
+
 def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     """Confirm exact figures, ownership and unanswered questions; log only ids."""
     from agents.lib.workspace import resolve_under_workspace
@@ -442,18 +546,12 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
         allowable = -min(-net, cap) if net < 0 else 0
         if reported != allowable:
             raise ImportError("Schedule D line 21 does not match its allowable loss for the confirmed filing status")
-    owners = decisions["ira_owners"]
-    ira_keys = {key for key in seed["fields"] if key.startswith("ira_basis_page_")}
-    if (not isinstance(owners, dict) or set(owners) != ira_keys
-            or any(v not in {"primary", "spouse"} for v in owners.values())
-            or len(set(owners.values())) != len(owners)
-            or ("spouse" in owners.values() and decisions["filing_status"] != "MFJ")):
-        raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
+    _check_ira_owners(seed, decisions["ira_owners"], decisions["filing_status"])
     verify_source(workspace, result)
     profile["filing_status"] = decisions["filing_status"]
     seed["review"] = {"seed_sha256": digest(seed), "profile_sha256": digest(profile),
                       "confirmed_fields": decisions["confirmed_fields"], "questions": questions,
-                      "ira_owners": owners}
+                      "ira_owners": decisions["ira_owners"]}
     result["meta"]["imported_review"] = "confirmed"
     result["meta"]["imported_review_sha256"] = digest(seed["review"])
     answers = workspace / "answers.md"
@@ -484,7 +582,9 @@ def imported_changes(prior, current) -> list:
     out, basis, manual = [], {}, [k for k, v in seed["review"]["questions"].items() if v == "manual_required"]
     for key, field in seed["fields"].items():
         if key.startswith("ira_basis_page_"):
-            basis[seed["review"]["ira_owners"][key]] = field["value"]
+            owner = seed["review"]["ira_owners"][key]
+            if not owner.startswith(DUPLICATE):
+                basis[owner] = field["value"]
             continue
         if key == "reit_ptp_loss_carryforward":
             if field["value"]:

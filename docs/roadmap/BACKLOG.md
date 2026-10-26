@@ -211,9 +211,12 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   Design #59 approved 2026-10-25: any text-bearing official-form PDF, reviewed
   derived capital carryovers and California included. The first implementation
   adds checked TY2025 line readers, pending seeds, digest-bound review, rollover
-  and manual-resolution gates. Remaining automated readers: Form 8995-A
-  Schedule C, Form 1116 Schedule B baskets/vintages, Schedule P credit columns,
-  and page-1 identity/dependent proposals; these remain explicit manual questions.
+  and manual-resolution gates. The readers are tested on the blank official
+  forms' own extracted text with synthetic amounts; no software-produced return
+  PDF has been read yet, so check the first real import's report line by line.
+  Remaining automated readers: Form 8995-A Schedule C, Form 1116 Schedule B
+  baskets/vintages, Schedule P credit columns, and page-1 identity/dependent
+  proposals; these remain explicit manual questions.
   Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
 
 - **AA45 (P3, L): Model multi-year Roth conversion plans.**

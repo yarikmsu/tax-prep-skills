@@ -1,8 +1,8 @@
 # First-time prior-return import
 
 Use only after the skill's engine preflight and current-year setup. The initial
-official-line reader is reviewed for an original TY2025 Form 1040 and California
-resident Form 540, rolling to TY2026. Any software's text-bearing PDF containing
+official-line reader is reviewed for an original TY2025 Form 1040 (or 1040-SR,
+which prints the same lines) and California resident Form 540, rolling to TY2026. Any software's text-bearing PDF containing
 the official pages is eligible. Proprietary exports, OCR, amended returns,
 part-year/nonresident returns and older years require manual intake.
 
@@ -26,7 +26,8 @@ and `documents/prior_return/` must already be owner-only using `secure_fs`.
 
 ## Create and inspect the pending seed
 
-Place the PDF under `documents/prior_return/`. Run:
+Place the PDF under `documents/prior_return/`, named without an SSN or ITIN: the
+seed keeps its path to re-check the file, so the import refuses one. Run:
 
 ```bash
 sh agents/lib/run.sh -m agents.lib.prior_return import-pdf \
@@ -40,17 +41,24 @@ The first command refuses an existing archive. It writes only
 The report command writes `summaries/prior_return_{prior_year}.md`; read that
 local workpaper, never echo it into a log or paste it into a hosted service.
 
-The report lists each amount's file digest, page, form and line and the derived
-capital-loss worksheet. The line reader accepts explicit printed line numbers;
-detached, wrapped and multi-column amounts that it cannot identify remain
-unresolved. A wrong year, conflicting copies or a failed printed arithmetic
-identity refuses the import. Missing pages, blank boxes and missing worksheets
-are never assumed to establish zero.
+The report gives the seed digest, each amount's page, form and line, and the
+derived capital-loss worksheet. Each page is identified by its official running
+header or footer (`Form 8606 (2025) Page 2`, `Schedule D (Form 1040) 2025`),
+never by its title block or by forms its instructions name. An amount is read
+from its line's right-hand box: the label after a dot leader or bullet, then the
+amount, including Schedule D's and Form 8995's pre-printed parentheses and FTB's
+cents column. A detached or unreadable amount remains unresolved. A wrong year,
+a page headed as two forms, conflicting copies or a failed printed arithmetic
+identity refuses the import. A blank box counts as zero only where the form
+leaves it blank for zero and its printed sum still holds (Form 8606 lines 4-13
+with nothing distributed, Schedule D line 21 in a gain year, an overpayment
+refunded in full). Missing pages and worksheets never establish zero.
 
-The capital-loss worksheet follows the covered-year
-[Publication 550](https://www.irs.gov/pub/irs-prior/p550--2025.pdf), chapter 4:
-preserve short/long character and use taxable income BEFORE Form 1040 line 15's
-zero floor. The TY2025 cross-check reads lines 11a/11b and 12e/13a/13b/14.
+The capital-loss worksheet is
+[Publication 550](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
+Worksheet 4-1. That edition prints it for the 2024-to-2025 carryover; the TY2025
+return's figures go through the same lines: preserve short/long character and use
+taxable income BEFORE Form 1040 line 15's zero floor. The TY2025 cross-check reads lines 11a/11b and 12e/13a/13b/14.
 Each individual Form 8606 line 14 needs its own owner; never combine spouses.
 
 ## Confirm each proposed figure
@@ -66,7 +74,10 @@ Write an owner-only local JSON review under `summaries/` with exactly:
 - `seed_sha256`: the report's seed digest.
 - `confirmed_fields`: the exact list of individually confirmed field ids.
 - `filing_status`: `Single`, `MFJ`, `MFS`, `HOH` or `QSS`, confirmed against page 1.
-- `ira_owners`: each `ira_basis_page_N` id mapped to `primary` or `spouse`.
+- `ira_owners`: each `ira_basis_page_N` id mapped to `primary` or `spouse`, or
+  to `duplicate_of:ira_basis_page_M` when the PDF holds a second copy of that
+  page. The report flags pages printing identical figures; a copy must match its
+  original figure for figure, and spouses with equal figures are two owners.
 - `questions`: every unresolved id mapped to `not_applicable` or `manual_required`.
 
 `not_applicable` means the filer affirmatively established no such item; a
@@ -81,7 +92,8 @@ sh agents/lib/run.sh -m agents.lib.prior_return confirm \
 ```
 
 Confirmation binds the seed, decisions, profile and source PDF. Any later edit
-invalidates the review. A partial seed is refused as a projection/YoY baseline.
+invalidates the review. A seed is never a complete-return baseline: YoY refuses
+it, and `/tax-project` and `/tax-withholding` run as for a filer with no archive.
 Continue with the normal rollover diff/category approval. Every imported amount
 is an `ask`, including explicit zeros and any allocation after a status change.
 California opening payments reset `estimated_payments.ca_verified`.

@@ -1293,6 +1293,9 @@ commands run through `sh agents/lib/run.sh -m agents.lib.prior_return`.
 A pending seed cannot roll; confirmed fields retain file/page/form/line
 provenance and require allocation review. Unreadable/missing worksheets stay
 unresolved and block computation through `prior_year.import_unresolved`.
-The seed is not a complete return baseline for projections or YoY comparisons.
+The seed is not a complete return baseline: YoY refuses it, and projections run
+as for a filer with no archive. Pages are identified by their official running
+headers and amounts by their right-hand line boxes; the tests read the blank
+TY2025 forms' own text with synthetic amounts.
 The skill's [import reference](../../.agents/skills/tax-rollover/references/prior-return-import.md)
 states the initial covered-year/reader scope and manual follow-ups.
