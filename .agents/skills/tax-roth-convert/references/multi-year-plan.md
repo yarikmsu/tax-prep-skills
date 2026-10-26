@@ -28,14 +28,16 @@ defaults are accepted.
 - `basis_source`: `opening_profile` for a filing-year plan;
   `closing_form_8606` for the following year; or `reviewed_worksheet` when the
   filer supplies an independently reviewed worksheet. Resolve conflicts with
-  known individual balances before proceeding. From `closing_form_8606`, the
-  starting balance must equal that worksheet's line 6 plus line 4 (the closed
+  known individual balances before proceeding. A following-year plan cannot
+  start below the owner's closing Form 8606 line 6 plus line 4 (the closed
   year's contributions made January to April, which line 14's basis already
-  counts). A filing-year plan is refused when the return already records the
-  owner's contributions, distributions or conversions (or, without the owner's
-  own Form 8606 record, any household ones): plan from the following year.
-  Where the return records the owner's Dec 31 value, the filing year's balance
-  and growth must reproduce it.
+  counts), whichever basis source it uses; later deposits only add to it. A
+  filing-year plan is refused when the return already records the owner's
+  contributions, distributions or conversions (on a legacy return without
+  individual records, any household ones or any Form 1040 line 4a): plan from
+  the following year. Where the return records the owner's Dec 31 value, the
+  filing year grows at the return it realized, and the forecast rate applies
+  from the next year.
 - `basis_confirmed`, `regular_worksheet_confirmed`,
   `no_other_ira_flows_confirmed`: all true. Confirm no new IRA contributions,
   other distributions, rollovers, inherited IRA treatment or tax withholding
@@ -46,7 +48,7 @@ Every annual object requires ALL of these fields:
 | Fields | Meaning |
 |---|---|
 | `year`, `filing_status` | Consecutive year; `Single`, `MFJ`, `MFS`, `HOH` or `QSS`. |
-| `wages`, `other_ordinary_income`, `self_employment_net` | Annual income before the conversion. Other ordinary income excludes separately entered qualified dividends, net long-term gains, Social Security and SE net income. It includes pensions, taxable interest, nonqualified dividends and ordinary short-term gains. The filing year copies the return, Schedule 1 losses included; a forecast year cannot be negative: enter a capital loss in `capital_gains`, where the $3,000 limit applies, and an ordinary loss in `adjustments`. |
+| `wages`, `other_ordinary_income`, `self_employment_net` | Annual income before the conversion. Other ordinary income excludes separately entered qualified dividends, net long-term gains, Social Security and SE net income. It includes pensions, taxable interest, nonqualified dividends and ordinary short-term gains. The filing year copies the return, Schedule 1 losses included; a forecast year cannot be negative: enter a capital loss in `capital_gains`, where the §1211 capital-loss limit applies, and an ordinary loss in `adjustments`. |
 | `qualified_dividends`, `capital_gains` | Preferential dividends and net long-term gain/loss, including separately reviewed carryforward effects. No automatic capital-loss/QBI carryover between plan years. |
 | `adjustments` | Fixed non-SE above-AGI deductions. The engine calculates deductible half of SE tax. Business-attributable health/retirement adjustments and changing deduction phaseouts need separate modeling. |
 | `deduction`, `additional_standard_deduction` | `standard` reads this year's selected law; enter any age/blind addition explicitly for that year. Otherwise give the complete deduction amount and an additional amount of zero. |
@@ -100,7 +102,8 @@ the user's choice. Offer held law first, without silently selecting it:
   surcharges. Rates, CTC parameters, statutory NIIT/Additional Medicare gates
   and other law remain held. Medicare boundaries follow 42 USC 1395r(i): the
   unmarried amounts are indexed and rounded to $1,000, the $500,000 top only
-  from 2028 (indexed from 2027, and never below it); joint amounts are twice the unmarried ones and
+  from 2028 (indexed from 2027, and from a base before 2028 never below it);
+  joint amounts are twice the unmarried ones and
   the top 150%; cohabiting MFS uses the unmarried threshold and the top less
   it. CA inputs are held, not automatically indexed.
 

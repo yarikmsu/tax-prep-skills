@@ -208,7 +208,9 @@ def validate_plan(raw: dict, return_year: int) -> dict:
         elif ss is not None:
             raise PlanError("Zero benefits require null Social Security inputs")
         possible_nii = max(row["other_ordinary_income"], 0) + row["qualified_dividends"] + max(row["capital_gains"], 0)
-        if row["net_investment_income"] > possible_nii:
+        # The filing year's figure is the return's own, checked at the anchor;
+        # a Schedule 1 loss can net its other ordinary income below its interest.
+        if row["year"] != return_year and row["net_investment_income"] > possible_nii:
             raise PlanError("Net investment income cannot exceed the entered non-wage investment-income candidates")
         _law_ref(row["law"], row["year"])
         if row["year"] == return_year and row["law"] != {"mode": "fetched"}:
@@ -264,7 +266,8 @@ def _indexed_irmaa(tiers: dict, base: int, target: int, rate: float) -> dict:
     lower = [_thousand(_scale(tier["magi_threshold"], factor)) for tier in single[:4]]
     top = _number(single[4]["magi_threshold"], "IRMAA top threshold")
     if target >= 2028:
-        # Increased by the CPI rise "(if any)": never below the 2027 amount.
+        # Increased by the CPI rise "(if any)": never below the 2027 amount
+        # (a later base's own top is indexed, so only its deflation shows).
         indexed = _thousand(_scale(top, (1 + rate) ** (target - max(base, 2027))))
         top = max(top, indexed) if base <= 2027 else indexed
     bounds = {"single": [*lower, top], "mfj": [*(2 * amount for amount in lower), 1.5 * top],
@@ -422,25 +425,59 @@ def _anchor_checks(row: dict, result: dict, profile: dict, law: dict) -> None:
         raise PlanError("Filing-year state assumptions differ from the return's reviewed inputs")
 
 
+def _owner_closing(result: dict, owner: str) -> dict | None:
+    """The owner's closing Form 8606: their own record, or on a legacy
+    non-joint return the flat lines, which can only be the filer's. The
+    template's zero scaffold is not a record."""
+    form = result.get("form_8606") or {}
+    by_taxpayer = form.get("by_taxpayer") or {}
+    if by_taxpayer:
+        record = by_taxpayer.get(owner)
+        return record if isinstance(record, dict) else None
+    status = _canonical_status((result.get("meta") or {}).get("filing_status"), "Roth plan")
+    return form if status != "MFJ" and owner == "primary" and form.get("line_6_year_end_value") else None
+
+
+def filing_year_growth(plan: dict, result: dict, profile: dict) -> float | None:
+    """The filing year's realized growth, where its return records the
+    owner's Dec 31 value with no conversion: one plan-wide forecast rate
+    cannot also carry a year that already happened, and in a down year
+    forcing it to would under-state every later balance."""
+    closing = _owner_closing(result, plan["ira"]["owner"])
+    balance = plan["ira"]["traditional_balance"]
+    if closing is None or "line_6_year_end_value" not in closing or not balance:
+        return None
+    from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
+    validate_individual_8606(result, profile)
+    return round(_number(closing["line_6_year_end_value"], "Form 8606 line 6") / balance - 1, 10)
+
+
 def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> None:
     ira = plan["ira"]
     if (profile.get("prior_year") or {}).get("import_unresolved"):
         raise PlanError("Resolve imported carryovers before planning from the return")
     form_8606 = result.get("form_8606") or {}
-    closing = (form_8606.get("by_taxpayer") or {}).get(ira["owner"])
+    by_taxpayer = form_8606.get("by_taxpayer") or {}
+    closing = _owner_closing(result, ira["owner"])
     if plan["start_year"] == return_year:
         # The plan's worksheet starts from the opening basis and knows no
         # other flow, so it would price the conversion as if these never were.
-        # Without the owner's own record, the household lines decide.
-        recorded = closing if isinstance(closing, dict) else form_8606
-        unattributed = not isinstance(closing, dict) and (result.get("form_1040") or {}).get("line_4a_ira_distributions")
+        # A legacy return's household lines and Form 1040 line 4a cannot be
+        # attributed, so they decide; individual records name their owner.
+        recorded = (closing or {}) if by_taxpayer else form_8606
+        unattributed = not by_taxpayer and (result.get("form_1040") or {}).get("line_4a_ira_distributions")
         if unattributed or any(recorded.get(key) for key in (
                 "line_1_nondeductible_current", "line_7_distributions", "line_8_converted")):
             raise PlanError("The computed return already records this owner's IRA contributions, distributions "
                             "or conversions; plan from the following year")
-        if isinstance(closing, dict) and "line_6_year_end_value" in closing and abs(
-                round(ira["traditional_balance"] * (1 + ira["growth_rate"]), 2) - closing["line_6_year_end_value"]) > 1:
-            raise PlanError("Filing-year balance and growth must reproduce the return's Form 8606 Dec 31 value (line 6)")
+    elif closing is not None and "line_6_year_end_value" in closing:
+        # Line 14's basis counts line 4, the closed year's contributions made
+        # January to April: they are in the account when the year starts.
+        # Later deposits only add, which prices more of a conversion.
+        floor = round(closing["line_6_year_end_value"] + (closing.get("line_4_following_year_contributions") or 0), 2)
+        if ira["traditional_balance"] < floor:
+            raise PlanError("Plan balance is below the owner's closing Form 8606 Dec 31 value (line 6) "
+                            "plus its January-April contributions (line 4)")
     if (profile.get("flags") or {}).get("subject_to_rmd_" + ira["owner"]) is True and ira["traditional_balance"]:
         raise PlanError("The selected owner is already subject to RMDs; stop before the RMD period")
     if ira["basis_source"] == "reviewed_worksheet":
@@ -467,12 +504,6 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
         if not isinstance(section, dict):
             raise PlanError("No verified closing individual Form 8606 for the plan owner")
         value = section["basis_remaining"]
-        # Line 14's basis includes line 4, the closed year's contributions made
-        # from January to April; they are in the account when the year starts.
-        if "line_6_year_end_value" in section and ira["traditional_balance"] != round(
-                section["line_6_year_end_value"] + (section.get("line_4_following_year_contributions") or 0), 2):
-            raise PlanError("Plan balance differs from the owner's closing Form 8606 Dec 31 value (line 6) "
-                            "plus its January-April contributions (line 4)")
     if ira["basis"] != value:
         raise PlanError("Plan basis differs from the selected owner's recorded basis source")
 
@@ -524,6 +555,7 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
     if (result.get("meta") or {}).get("source") == "imported_prior_return":
         raise PlanError("An imported seed is not a computed-return planning baseline")
     _basis_check(plan, result, profile, return_year)
+    realized = filing_year_growth(plan, result, profile) if plan["start_year"] == return_year else None
     balance, roth, basis = (float(plan["ira"][key]) for key in ("traditional_balance", "roth_balance", "basis"))
     rows = []
     for assumptions in plan["years"]:
@@ -550,6 +582,9 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
         notes = []
         priced: dict[float, dict] = {}
         growth = plan["ira"]["growth_rate"]
+        if anchored and realized is not None:
+            growth = realized
+            notes.append("Filing-year growth is the realized return its Form 8606 line 6 records")
 
         def year_end(amount):
             """Form 8606 line 6, the Dec 31 value: what the conversion leaves,

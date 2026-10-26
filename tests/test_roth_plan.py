@@ -795,6 +795,24 @@ def test_cli_refuses_a_law_that_changed_during_its_freshness_check(tmp_path, mon
     assert not (root / "scenarios/roth_plan_reviewed.json").exists()
 
 
+@pytest.mark.parametrize("source", ["closing_form_8606", "reviewed_worksheet"])
+def test_a_next_year_plan_cannot_start_below_the_closing_record(source):
+    prof = profile()
+    prof["prior_year"]["ira_basis_by_taxpayer"]["primary"] = 0
+    r = result()
+    r["form_8606"] = closing_8606(10000, contribution=7000, after_year_end=7000, prof=prof)
+    r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
+    p = plan()
+    p["start_year"], p["years"] = 2026, [annual(2026, conversion=7000)]
+    p["ira"].update(basis_source=source, basis=7000, traditional_balance=10000)
+    with pytest.raises(P.PlanError, match="below"):
+        build(p, r=r, prof=prof)
+    # A deposit after the year closed only adds, pricing more of the conversion.
+    p["ira"]["traditional_balance"] = 20000
+    # Line 9 = 13,000 + 7,000; 7,000 x 7,000 / 20,000 = 2,450 nontaxable.
+    assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 4550
+
+
 def test_a_next_year_plan_starts_with_january_to_april_contributions():
     # Backdoor: 7,000 nondeductible for 2025 deposited in February 2026 is in
     # line 14's basis and in the account, though not in line 6 (10,000).
@@ -813,6 +831,27 @@ def test_a_next_year_plan_starts_with_january_to_april_contributions():
     assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 5882.35
 
 
+def test_the_spouses_own_distribution_does_not_block_the_primarys_plan():
+    r = result()
+    r["meta"]["filing_status"] = "MFJ"
+    prof = profile()
+    prof["filing_status"] = "MFJ"
+    # The household total repeats the spouse's own record.
+    r["form_8606"] = {"by_taxpayer": {"spouse": {"line_7_distributions": 5000}}, "line_7_distributions": 5000}
+    r["form_1040"]["line_4a_ira_distributions"] = 5000
+    p = plan()
+    p["years"] = p["years"][:1]
+    p["years"][0]["filing_status"] = "MFJ"
+    P._basis_check(p, r, prof, 2025)
+
+
+def test_the_filing_year_keeps_its_interest_beside_a_schedule_1_loss():
+    p = plan()
+    p["years"] = p["years"][:1]
+    p["years"][0].update(other_ordinary_income=-5000, net_investment_income=1000)
+    P.validate_plan(p, 2025)
+
+
 @pytest.mark.parametrize("layout", ["flat", "line_4a"])
 def test_the_filing_year_reads_household_lines_without_an_owner_record(layout):
     r = result()
@@ -824,15 +863,55 @@ def test_the_filing_year_reads_household_lines_without_an_owner_record(layout):
         build(r=r)
 
 
-def test_the_filing_year_must_reproduce_the_returns_dec_31_value():
+def recorded_dec_31(value):
     r = result()
-    r["form_8606"] = closing_8606(120000)
+    r["form_8606"] = closing_8606(value)
     r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
-    with pytest.raises(P.PlanError, match="Dec 31 value"):
-        build(r=r)
+    return r
+
+
+def test_the_filing_year_grows_at_the_return_it_realized():
     p = plan()
-    p["ira"]["traditional_balance"] = 120000
-    assert build(p, r=r)["years"][0]["ira_start"] == 120000
+    p["years"] = p["years"][:1]
+    p["years"][0]["conversion"] = 20000
+    row = build(p, r=recorded_dec_31(120000))["years"][0]
+    # 100,000 grew to 120,000: 20%. Line 6 = 80,000 x 1.2 = 96,000; line 9 =
+    # 116,000; 20,000 x 20,000 / 116,000 = 3,448.28 nontaxable.
+    assert (row["taxable_conversion"], row["ira_next_year"]) == (16551.72, 96000)
+    assert row["growth_rate"] == 0.2 and any("realized" in note for note in row["notes"])
+
+
+def test_a_tampered_filing_year_record_is_not_a_dec_31_value():
+    r = recorded_dec_31(120000)
+    r["form_8606"]["by_taxpayer"]["primary"]["basis_remaining"] = 25000
+    with pytest.raises(ValueError):
+        build(r=r)
+
+
+def test_a_down_year_is_not_forecast_at_its_own_loss():
+    p = plan()
+    p["ira"]["growth_rate"] = .06
+    p["years"] = [annual(2025), annual(2026), annual(2027)]
+    for row in p["years"]:
+        row["conversion"] = 10000
+    years = build(p, r=recorded_dec_31(80000))["years"]
+    # 2025 realized -20%: line 6 = 90,000 x 0.8 = 72,000, line 9 = 82,000,
+    # 10,000 x 20,000 / 82,000 = 2,439.02 nontaxable. Then the 6% forecast:
+    # 62,000 x 1.06 = 65,720, 10,000 x 17,560.98 / 75,720 = 2,319.20; and
+    # 55,720 x 1.06 = 59,063.20, 10,000 x 15,241.78 / 69,063.20 = 2,206.93.
+    assert [y["taxable_conversion"] for y in years] == [7560.98, 7680.80, 7793.07]
+    assert [y["ira_next_year"] for y in years] == [72000, 65720, 59063.20]
+
+
+def test_a_legacy_single_filer_form_8606_records_the_dec_31_value():
+    prof = profile()
+    prof["prior_year"] = {"ira_basis": 20000}
+    r = result()
+    r["form_8606"] = {"by_taxpayer": {}, "line_6_year_end_value": 120000}
+    p = plan()
+    p["years"] = p["years"][:1]
+    p["years"][0]["conversion"] = 20000
+    assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 16551.72
 
 
 def test_a_falling_index_never_lowers_the_top_below_its_2027_amount():
