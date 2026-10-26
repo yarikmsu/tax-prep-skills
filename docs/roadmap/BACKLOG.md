@@ -214,6 +214,8 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   and manual-resolution gates. The readers are tested on the blank official
   forms' own extracted text with synthetic amounts; no software-produced return
   PDF has been read yet, so check the first real import's report line by line.
+  A simulated flattened-field PDF put Form 540 Side 4's line 98-99 amounts on
+  separate rows, so they stay questions; reading by position is the fix.
   Remaining automated readers: Form 8995-A Schedule C, Form 1116 Schedule B
   baskets/vintages, Schedule P credit columns, and page-1 identity/dependent
   proposals; these remain explicit manual questions.

@@ -89,6 +89,8 @@ def test_sidebar_and_wrapped_rows_are_read_by_their_right_hand_label():
     ("97 Overpaid tax ........ 97 .00", "540", None),
     ("97 Overpaid tax ........ 97 700 . 00", "540", ("97", "700")),
     ("c Check if (see instructions) . . . . . 1 Rollover 2 QCD 3", "1040", None),
+    # A flattened amount can extract with its characters apart.
+    ("• The loss on line 16; or . . . . . . . 21 ( 3 , 0 0 0 )", "D", ("21", "(3,000)")),
 ])
 def test_only_a_labelled_box_holds_an_amount(row, form, expected):
     assert P._labelled_amount(row, form) == expected
@@ -139,13 +141,23 @@ def test_capital_loss_offsets_opposite_character_before_carry():
     assert parsed["fields"]["capital_loss_carryforward_long_term"]["value"] == 2000
 
 
-def test_a_gain_year_skips_line_21_and_carries_nothing():
+def gain_year():
     doc = pages()
+    doc[0] = doc[0].replace("7a (3,000)", "7a 2,000")
     doc[2] = doc[2].replace("7 (5,000)", "7 9,000")
     doc[3] = doc[3].replace("16 (12,000)", "16 2,000").replace("21 ( 3,000 )", "21 ( )")
-    parsed = P.extract_seed(doc, 2025, SHA)
+    return doc
+
+
+def test_a_gain_year_skips_line_21_and_carries_nothing():
+    parsed = P.extract_seed(gain_year(), 2025, SHA)
     assert parsed["fields"]["capital_loss_carryforward_short_term"]["value"] == 0
     assert parsed["fields"]["capital_loss_carryforward_long_term"]["value"] == 0
+    # Signs lost from Schedule D while the 1040 still prints the loss.
+    doc = gain_year()
+    doc[0] = doc[0].replace("7a 2,000", "7a (3,000)")
+    with pytest.raises(P.ImportError, match="gain contradicts"):
+        P.extract_seed(doc, 2025, SHA)
 
 
 @pytest.mark.parametrize("schedule_d,form_1040,message", [
@@ -251,8 +263,11 @@ def test_unsupported_return_scope_refuses(form):
         P.extract_seed({**{k + 1: v for k, v in pages().items()}, 0: alternate(form)[0]}, 2025, SHA)
 
 
-@pytest.mark.parametrize("mark", ["[X] AMENDED",
-                                  "X Check here if this is an AMENDED return. Fiscal year filers only:"])
+AMENDED_ROW = "Check here if this is an AMENDED return. Fiscal year filers only: Enter month of year end:"
+
+
+@pytest.mark.parametrize("mark", ["[X] AMENDED", "X " + AMENDED_ROW, "4 " + AMENDED_ROW, "n " + AMENDED_ROW,
+                                  "(cid:52) " + AMENDED_ROW])
 def test_a_marked_amended_return_refuses(mark):
     doc = pages()
     doc[9] = mark + "\n" + doc[9]
@@ -264,6 +279,10 @@ def test_form_1040_sr_reads_as_form_1040():
     doc = pages()
     doc[0], doc[1] = alternate("1040-SR")[0], alternate("1040-SR")[1]
     assert values(P.extract_seed(doc, 2025, SHA)) == EXPECTED
+
+
+def test_an_unmarked_amended_box_is_not_out_of_scope():
+    assert not P._out_of_scope(AMENDED_ROW + " month________ year 2026.")
 
 
 def test_instruction_text_naming_other_returns_is_not_out_of_scope():
@@ -437,7 +456,8 @@ def test_a_source_changed_during_extraction_refuses(workspace, monkeypatch):
     assert not (workspace / "archive").exists()
 
 
-@pytest.mark.parametrize("name", ["Pat 000-00-0000 2025.pdf", "return 000000000.pdf"])
+@pytest.mark.parametrize("name", ["Pat 000-00-0000 2025.pdf", "return 000000000.pdf", "prior 000 00 0000.pdf",
+                                  "prior_000_00_0000.pdf", "ret_2025000000000.pdf"])
 def test_a_source_path_holding_an_identification_number_refuses(workspace, name):
     source = workspace / "documents/prior_return" / name
     source.write_bytes(b"%PDF synthetic")
@@ -618,3 +638,49 @@ def test_confirmed_mfs_status_requires_its_own_capital_loss_limit(workspace):
     review["filing_status"] = "MFS"
     with pytest.raises(P.ImportError, match="allowable loss"):
         P.confirm_import(workspace, 2025, review)
+
+
+def with_owner(text, masked, header=None):
+    """A filled 8606 prints its owner's (masked) SSN on its name row; some
+    software repeats the primary filer's SSN in a header on every page."""
+    text = text.replace("Home address (number and street", f"PAT SAMPLE {masked}\nHome address (number and street", 1)
+    return f"{header}\n{text}" if header else text
+
+
+def test_the_8606_owner_comes_from_its_own_name_row():
+    doc = pages()
+    doc[4] = with_owner(doc[4], "XXX-XX-0001", header="SAMPLE RETURN XXX-XX-0009")
+    assert seed(doc)["worksheets"]["ira_basis_owners"] == {IRA: "XXX-XX-0001"}
+    assert "PAT" not in json.dumps(seed(doc))
+
+
+@pytest.mark.parametrize("second,owner,message", [
+    # A second copy of one worksheet cannot be given to the spouse.
+    ("XXX-XX-0001", "spouse", "one owner's SSN"),
+    # Equal figures printed for two people are two owners, never a copy.
+    ("XXX-XX-0002", P.DUPLICATE + IRA, "duplicate Form 8606"),
+])
+def test_printed_owners_decide_copy_or_spouse(workspace, monkeypatch, second, owner, message):
+    doc = pages()
+    doc[12] = with_owner(doc[4], second)
+    doc[4] = with_owner(doc[4], "XXX-XX-0001")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    _, review = pending(workspace)
+    review["filing_status"] = "MFJ"
+    review["ira_owners"]["ira_basis_page_13"] = owner
+    with pytest.raises(P.ImportError, match=message):
+        P.confirm_import(workspace, 2025, review)
+
+
+def test_a_page_assigned_to_a_person_with_another_ssn_refuses(workspace, monkeypatch):
+    doc = pages()
+    doc[4] = with_owner(doc[4], "XXX-XX-0002")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json",
+               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": "0001"}})
+    _, review = pending(workspace)
+    with pytest.raises(P.ImportError, match="different SSN"):
+        P.confirm_import(workspace, 2025, review)
+    write_json(workspace / "taxpayer_profile.json",
+               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": "0002"}})
+    P.confirm_import(workspace, 2025, review)

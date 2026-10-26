@@ -78,6 +78,10 @@ Write an owner-only local JSON review under `summaries/` with exactly:
   to `duplicate_of:ira_basis_page_M` when the PDF holds a second copy of that
   page. The report flags pages printing identical figures; a copy must match its
   original figure for figure, and spouses with equal figures are two owners.
+  Where a page prints its owner's SSN on its name row, the seed keeps it masked
+  (`XXX-XX-1234`) and confirmation holds the assignment to it: a copy prints
+  its original's SSN, one SSN on two pages is one owner, and a page assigned
+  to a person whose profile `ssn_last4` differs is someone else's worksheet.
 - `questions`: every unresolved id mapped to `not_applicable` or `manual_required`.
 
 `not_applicable` means the filer affirmatively established no such item; a

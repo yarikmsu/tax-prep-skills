@@ -117,7 +117,10 @@ def _out_of_scope(text: str) -> bool:
     return (any(form in _OUT_OF_SCOPE_FORMS for form, _ in _running_headers(text))
             or bool(_OUT_OF_SCOPE_TITLES.search(text))
             or bool(re.search(r"(?:\[X\]|\u2612|\bX)\s*(?:AMENDED|1040-X)", text, re.I))
-            or bool(re.search(r"(?m)^(?=.*\bAMENDED return\b).*(?:^|\s)(?:X|\u2612|\[X\])(?:\s|$)", text)))
+            or bool(re.search(r"(?m)^(?=.*\bAMENDED return\b).*(?:^|\s)(?:X|\u2612|\[X\])(?:\s|$)", text))
+            # Form 540's row starts with its label; a ticked box puts a glyph
+            # before it, which a flattened checkbox extracts as "4", "n" or a cid.
+            or bool(re.search(r"(?m)^\s*(?:\S{1,3}|\(cid:\d+\))\s+Check here if this is an AMENDED return", text)))
 
 
 def _form(text: str) -> tuple[str, int] | None:
@@ -149,6 +152,9 @@ def _labelled_amount(row: str, form: str) -> tuple[str, str] | None:
     row = row.rstrip()
     if form in _CENTS_COLUMN:
         row = re.sub(r"\s+\.?\s?00$", "", row)
+    # A pre-printed "( )" is padded with spaces, and a flattened amount
+    # inside it can extract with its characters apart: "( 3 , 0 0 0 )".
+    row = re.sub(r"\(\s*(\d[\d ,.]*?)\s*\)$", lambda m: "(" + m[1].replace(" ", "") + ")", row)
     match = re.search(rf"(?:^|[.\u2022]|\(cid:\d+\))\s*(\d{{1,3}}[a-z]?)\s+"
                       rf"(?:\(\s*({_MAGNITUDE})\s*\)|({_NUMBER}))$", row)
     if not match:
@@ -212,6 +218,19 @@ def _checks(form: str, lines: dict) -> None:
         _check(lines, "39", ("32", "38"), lambda a, b: a - b)
 
 
+def _form_8606_owner(text: str) -> str | None:
+    """The masked SSN Form 8606 prints for its own owner, from the rows
+    between its name label and its address label. Software headers that
+    repeat the primary filer's SSN on every page sit outside them."""
+    rows = text.splitlines()
+    start = next((i for i, row in enumerate(rows) if row.startswith("Name. If married, file a separate form")), None)
+    end = next((i for i, row in enumerate(rows) if row.startswith("Home address")), None)
+    if start is None or end is None or end <= start:
+        return None
+    found = set(re.findall(r"XXX-XX-\d{4}", "\n".join(rows[start:end + 1])))
+    return found.pop() if len(found) == 1 else None
+
+
 def _with_blanks(lines: dict, output: str, inputs: tuple[str, ...], compute, blank: set) -> list | None:
     """The records proving `output`, or None. An input the form leaves blank
     when it is zero ("If you didn't..., enter the amount from line 3 on line
@@ -233,6 +252,7 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         raise ImportError("Source needs a SHA-256 digest")
     forms: dict[str, dict] = {}
     ira = []
+    ira_owner_ssn: dict[int, str] = {}
     for page, raw in pages.items():
         if type(page) is not int or page < 0 or not isinstance(raw, str):
             raise ImportError("Invalid extracted page")
@@ -251,6 +271,9 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
             if re.search(r"(?m)(?:^|\s)Form 8606 \(20\d{2}\) Page [2-9]$", text):
                 continue  # Parts II and III: no line 14, and no second owner
             _checks(form, lines)
+            owner = _form_8606_owner(text)
+            if owner:
+                ira_owner_ssn[page + 1] = owner
             # The two spouses can have identical line values. Page identity is
             # retained; the review must assign each worksheet to its owner.
             ira.append((page + 1, lines))
@@ -291,7 +314,10 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         question("california", "Confirm no California resident return, or enter its separate opening balances manually")
     d, f = forms.get("D", {}), forms["1040"]
     if all(n in d for n in ("7", "15", "16")) and d["16"]["value"] >= 0 and "21" not in d:
-        # A net gain or zero skips line 21 and leaves nothing to carry.
+        # A net gain or zero skips line 21 and leaves nothing to carry; the
+        # 1040 carries the gain itself on line 7a.
+        if "7a" in f and f["7a"]["value"] != d["16"]["value"]:
+            raise ImportError("Schedule D gain contradicts the filed Form 1040")
         records = [d[n] for n in ("7", "15", "16")]
         add("capital_loss_carryforward_short_term", 0.0, records)
         add("capital_loss_carryforward_long_term", 0.0, records)
@@ -327,6 +353,9 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
             # Kept so the review can tell a second copy of one worksheet from
             # two owners whose figures happen to match.
             worksheets.setdefault("ira_basis_pages", {})[key] = {n: lines[n]["value"] for n in sorted(lines)}
+            owner = ira_owner_ssn.get(page)
+            if owner:
+                worksheets.setdefault("ira_basis_owners", {})[key] = owner
         else:
             question(key, "Individual Form 8606 line 14 or its cross-check is unreadable; resolve that owner's basis manually")
     if not ira:
@@ -405,8 +434,9 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
     if not path.is_relative_to(allowed):
         raise ImportError("Prior return PDF must be inside documents/prior_return")
     relative = str(path.relative_to(workspace.resolve()))
-    # The seed keeps this path to re-hash the PDF; a full SSN is never stored.
-    if mask_ssn(relative) != relative or re.search(r"(?<!\d)\d{9}(?!\d)", relative):
+    # The seed keeps this path to re-hash the PDF; a full SSN is never stored,
+    # whatever separates its groups.
+    if mask_ssn(relative) != relative or re.search(r"\d{9,}|(?<!\d)\d{3}[ _.\-/]\d{2}[ _.\-/]\d{4}(?!\d)", relative):
         raise ImportError("Rename the prior return PDF so its path holds no taxpayer identification number")
     year = current_year - 1
     archive = workspace / "archive" / str(year)
@@ -502,16 +532,33 @@ def _check_ira_owners(seed: dict, owners, filing_status: str) -> None:
     pages = seed.get("worksheets", {}).get("ira_basis_pages", {})
     if not isinstance(owners, dict) or set(owners) != ira_keys or not all(isinstance(v, str) for v in owners.values()):
         raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
+    printed = seed.get("worksheets", {}).get("ira_basis_owners", {})
     named = {key: owner for key, owner in owners.items() if not owner.startswith(DUPLICATE)}
     for key, owner in owners.items():
         original = owner[len(DUPLICATE):] if owner.startswith(DUPLICATE) else None
         if original is not None and (original not in named or pages.get(key) != pages.get(original)
-                                     or pages.get(key) is None):
+                                     or pages.get(key) is None
+                                     or None not in (printed.get(key), printed.get(original))
+                                     and printed[key] != printed[original]):
             raise ImportError("A duplicate Form 8606 copy must match a named page figure for figure")
+    known = [printed[key] for key in named if key in printed]
+    if len(known) != len(set(known)):
+        raise ImportError("Two Form 8606 pages print one owner's SSN; mark the second a duplicate_of the first")
     if (any(v not in {"primary", "spouse"} for v in named.values())
             or len(set(named.values())) != len(named)
             or ("spouse" in named.values() and filing_status != "MFJ")):
         raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
+
+
+def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
+    """A page whose masked SSN differs from the assigned person's is someone
+    else's worksheet: last year's spouse, or the other spouse's copy."""
+    printed = seed.get("worksheets", {}).get("ira_basis_owners", {})
+    for key, owner in owners.items():
+        person = current.get(owner) if owner in {"primary", "spouse"} else None
+        last4 = person.get("ssn_last4") if isinstance(person, dict) else None
+        if key in printed and isinstance(last4, str) and printed[key] != f"XXX-XX-{last4}":
+            raise ImportError("A Form 8606 page prints a different SSN than the person it is assigned to")
 
 
 def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
@@ -547,6 +594,7 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
         if reported != allowable:
             raise ImportError("Schedule D line 21 does not match its allowable loss for the confirmed filing status")
     _check_ira_owners(seed, decisions["ira_owners"], decisions["filing_status"])
+    _check_owner_identity(seed, decisions["ira_owners"], _read(workspace / "taxpayer_profile.json"))
     verify_source(workspace, result)
     profile["filing_status"] = decisions["filing_status"]
     seed["review"] = {"seed_sha256": digest(seed), "profile_sha256": digest(profile),
