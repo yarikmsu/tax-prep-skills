@@ -314,27 +314,90 @@ def _mask_under_labels(text: str) -> str:
     return "\n".join(lines)
 
 
-def identifier_spans(row: str) -> tuple[list, list]:
-    """Where one row of page text prints an identifier label and where an
-    identifier-shaped run: `[(start, end, carries)]` and `[(start, end)]`,
-    `carries` saying whether a value already follows that label on its row.
-    A reader that knows where the row sits on the page decides which label
-    governs which run; `mask_runs` masks them."""
-    labels = [(m.start(), m.end(), bool(_ID_ANY_VALUE.search(row, m.end()))) for m in _ID_LABEL_RE.finditer(row)]
+# An identifier already spelled so `mask_ssn` handles it without a label, or
+# one that is no SSN: hyphenated or masked, or an EIN. A positional reader
+# needs them only to know a label's value is there.
+_ID_SPELLED = re.compile(
+    rf"{_ID_DELIMITED.pattern}|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)"
+    r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
+
+
+def identifier_spans(row: str) -> tuple[list, list, list]:
+    """Where one row of page text prints an identifier label, an
+    identifier-shaped run still to mask, and an identifier spelled another
+    way (`_ID_SPELLED`): `[(start, end, carries)]`, `[(start, end)]` and
+    `[(start, end)]`, `carries` saying whether a value follows the label on
+    its row. A reader that knows where the row sits on the page decides which
+    label governs which run; `mask_runs` masks them. Linear in the row."""
+    last = max((m.start() for m in _ID_ANY_VALUE.finditer(row)), default=-1)
+    labels = [(m.start(), m.end(), last >= m.end()) for m in _ID_LABEL_RE.finditer(row)]
     values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
-    return labels, values
+    return labels, values, [(m.start(), m.end()) for m in _ID_SPELLED.finditer(row)]
+
+
+_DIGIT_GROUPS = re.compile(r"[0-9]+(?:[^\S\n]+[0-9]+)*")
+
+
+def _run_spans(text: str, runs) -> list:
+    """Where the digits of `runs` print in `text`, however they are spaced:
+    `(start, end, digits)`, each starting and ending on a group of digits'
+    edge, the longest run first at each place. One pass over the text."""
+    wanted = {re.sub(r"[^0-9]", "", raw) for raw in runs}
+    lengths = sorted({len(digits) for digits in wanted}, reverse=True)
+    found = []
+    for sequence in _DIGIT_GROUPS.finditer(text):
+        groups = [(sequence.start() + m.start(), sequence.start() + m.end())
+                  for m in re.finditer(r"[0-9]+", sequence[0])]
+        digits = "".join(text[a:b] for a, b in groups)
+        edges = [0]
+        for a, b in groups:
+            edges.append(edges[-1] + b - a)
+        group_at = {edge: k for k, edge in enumerate(edges)}
+        k = 0
+        while k < len(groups):
+            start = edges[k]
+            stop = next((group for length in lengths if (group := group_at.get(start + length)) is not None
+                         and digits[start:start + length] in wanted), None)
+            if stop is None:
+                k += 1
+                continue
+            found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
+            k = stop
+    return found
 
 
 def mask_runs(text: str, runs) -> str:
-    """Mask each of `runs`, identifier-shaped text a layout reader found
-    beside or under an identifier label, wherever its digits occur in `text`
-    however they are spaced, in the spelling `mask_ssn` writes."""
+    """Mask each of `runs`, identifier-shaped text a layout reader found in
+    an identifier label's box, wherever its digits occur in `text` however
+    they are spaced, in the spelling `mask_ssn` writes."""
+    spelling: dict[str, str] = {}
     for raw in sorted(runs, key=len, reverse=True):
-        digits = re.sub(r"[^0-9]", "", raw)
-        masked = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw))
-        pattern = re.compile(r"(?<![0-9])" + r"[^\S\n]*".join(digits) + r"(?![0-9])")
-        text = pattern.sub(lambda _: masked, text)
-    return text
+        spelling.setdefault(re.sub(r"[^0-9]", "", raw), _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw)))
+    out, last = [], 0
+    for start, end, digits in _run_spans(text, runs):
+        out += [text[last:start], spelling[digits]]
+        last = end
+    return "".join(out) + text[last:]
+
+
+def mask_row_runs(cells: list, runs) -> list:
+    """`mask_runs` across one table row, whose cells can split a run: Form
+    1040's comb boxes come out of a table as "000 | 00 | 1234". Each digit is
+    masked in place, a whole nine keeping its last four, so every cell keeps
+    its own text around them."""
+    texts = [cell if isinstance(cell, str) else "" for cell in cells]
+    chars = list(" ".join(texts))
+    for start, end, _ in _run_spans("".join(chars), runs):
+        positions = [i for i in range(start, end) if chars[i] in "0123456789"]
+        whole = len(positions) % 9 == 0
+        for n, i in enumerate(positions):
+            if not (whole and n % 9 >= 5):
+                chars[i] = "X"
+    out, offset = [], 0
+    for cell, text in zip(cells, texts):
+        out.append("".join(chars[offset:offset + len(text)]) if isinstance(cell, str) else cell)
+        offset += len(text) + 1
+    return out
 
 
 def mask_ssn(value):
@@ -346,7 +409,9 @@ def mask_ssn(value):
     AFTER reading it, by which point the full number sits in the session
     transcript: the "intermediate file" AGENTS.md §1 forbids. Scope is
     identifiers only; employer names, addresses, EINs, routing and account
-    numbers and every box amount pass through unchanged. A non-string (a
+    numbers and every box amount pass through unchanged, here and in a PDF
+    route's positional pass (`mask_runs`), which masks only what a page prints
+    in an identifier label's box. A non-string (a
     `None` table cell, a numeric workbook cell) is returned as-is: an SSN
     typed as a number has neither delimiter nor label, and coercing every cell
     to text to look for one would change what the worker reads. A cell whose
