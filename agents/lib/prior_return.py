@@ -615,8 +615,8 @@ def _schedule_p_cells(words: list, page: tuple, number: dict, line: str) -> tupl
 def _schedule_p_lines(words: list, side: int) -> dict:
     """{line: {"code", "a", "b", "c", "d"}} for each carryover line on Side 3
     or 4. Down to the last line, every figure is a line number, a credit code,
-    a line a description cites ("line 3") or in a box of its line's; any other
-    is a question, never ignored."""
+    part of a credit name, a line a description cites ("line 3") or in a box
+    of its line's; any other is a question, never ignored."""
     page = _schedule_p_headings(words)
     numbers = _margin_numbers(words, _SP_SIDES[side], page[2])
     if set(numbers) != _SP_SIDES[side]:
@@ -630,11 +630,12 @@ def _schedule_p_lines(words: list, side: int) -> dict:
         # A description cites other lines by number ("line 3"), and a credit
         # name typed after "Name:" can hold one ("Program 3.0") up to column
         # (d). A column (b) figure drawn up into the name leaves an amount not
-        # carried, which blocks; one from (a) or (d) lands outside it.
+        # carried, which blocks, and (c) is not carried; one from (a) or (d)
+        # lands outside it. A line whose only figures are in its name is asked.
         text = {id(after[0]) for w in label if w["text"] == "line" and (after := _right_of(label, w))}
         named = next((w for w in label if w["text"] == "Name:"), None)
-        if named:
-            text |= {id(w) for w in label if w["x0"] >= named["x1"] and _mid(w, "x0", "x1") < columns[3][0]}
+        name = [w for w in label if named and w["x0"] >= named["x1"] and _mid(w, "x0", "x1") < columns[3][0]]
+        text |= {id(w) for w in name}
         stray = [w for w in label if w is not number and id(w) not in text and _VALUE.fullmatch(w["text"])]
         if stray and not (code and len(stray) == 1 and stray[0]["text"] == code[1]):
             raise _Unreadable(f"line {line} prints a figure beside its name")
@@ -642,7 +643,10 @@ def _schedule_p_lines(words: list, side: int) -> dict:
             raise _Unreadable(f"line {line} prints a figure in a column it has no box in")
         placed.update(id(w) for w in label + accounted)
         end = max(end, stop)
-        if line in _SP_SECTIONS and any(value is not None for value in cells.values()):
+        if all(value is None for value in cells.values()):
+            if any(_VALUE.fullmatch(w["text"]) for w in name):
+                raise _Unreadable(f"line {line} has a figure in its credit name and none in its columns")
+        elif line in _SP_SECTIONS:
             if code is None or _SP_PRINTED.get(line, code[1]) != code[1]:
                 raise _Unreadable(f"line {line} has figures without its credit code")
             found[line] = {"code": code[1], **cells}

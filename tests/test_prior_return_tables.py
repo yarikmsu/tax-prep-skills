@@ -402,6 +402,16 @@ def test_a_figure_drawn_up_beside_the_credit_name_is_a_question(text, x):
     assert "line 6 prints a figure beside its name" in parsed["unresolved"]["ca_credit_carryovers"]
 
 
+def test_a_line_whose_figures_all_sit_in_its_credit_name_is_a_question():
+    """Nothing in the columns and every figure in the name: the line would
+    drop out, and a credit chained from an earlier section would carry that
+    section's figure instead."""
+    edits = [move("P540_side3", text, dx=dx, dy=-36, x=x, top=134)
+             for text, x, dx in (("1,500", 155, 60), ("1,000", 285, 0), ("4,000", 415, 0), ("500", 552, -200))]
+    parsed = seed("P540_side3", "P540_side4", edit=both(*edits))
+    assert "line 6 has a figure in its credit name" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
 def test_a_used_figure_drawn_up_into_the_credit_name_blocks_as_not_carried():
     parsed = seed("P540_side3", "P540_side4", edit=move("P540_side3", "1,000", dy=-36, x=285, top=134))
     line_6 = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "234")
