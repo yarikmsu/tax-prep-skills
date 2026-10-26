@@ -201,16 +201,17 @@ Trigger and range behavior is documented in
   percentage or substitute TY2025 values. Found by the same review.
 
 - **AA87 (P1, M): Mask an identifier by its position on the PDF page.**
-  `mask_ssn` reads extracted text, where a label governs only the row printed
-  right after it. A hyphenated, dotted or slashed SSN is masked anywhere; one
-  typed bare or with spaces is masked only under a label. On flattened official
+  `mask_ssn` reads extracted text, where a label governs its own row and the
+  row printed right after it (or after a known continuation row). A
+  hyphenated, dotted or slashed SSN is masked anywhere; one typed bare or with
+  spaces is masked only under a label. On flattened official
   forms filled with synthetic values, something else lands between the label
   and its value, and the number comes back whole:
   - CA Form 540 and 540NR, which every current user files: a stray margin glyph
     on page 1, and rotated sidebar text before the header SSN on every other page.
   - Form 1116 page 1: a rotated column label reorders the lines.
-  - W-2 Copy 1 and Copy C (the form-code row, a legend, VOID), 1099-INT Copy B
-    and Copy 2, W-2G Copies B and C, 1040-V and the 1040-ES vouchers.
+  - Several W-2, W-2G and 1099-INT copies (a form-code row, a legend or VOID
+    between label and value), 1040-V and the 1040-ES vouchers.
   - Form 2441's wrapped labels, Schedule H, and Form 1040-NR's dependents.
   - The W-9's comb, which prints en dashes between its groups.
   Decide each identifier-shaped run by the label box it sits in on the page

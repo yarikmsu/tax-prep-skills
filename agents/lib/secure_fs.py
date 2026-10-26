@@ -182,9 +182,9 @@ def redact(text) -> str:
 # every 1099, "Winner's TIN" on a W-2G, "Shareholder's identifying number" on a
 # K-1. Three spellings the attachment forms print in their header are labels
 # exactly as printed: "Your taxpayer identification number" (Forms 8995 and
-# 8995-A) and "Your identifying number", and "Identifying number" ending the
-# row (Form 8801) or followed by "as shown" (Form 1116). Mid-sentence it is
-# not: Form 8938's "Identifying number or other designation" is a security's,
+# 8995-A) and "Your identifying number" ending their row, and "Identifying
+# number" ending the row (Form 8801) or followed by "as shown" (Form 1116).
+# Mid-sentence they are not: Form 8938's "Identifying number or other designation" is a security's,
 # Form 8283's "Identifying number:" a partnership's, a CUSIP's heading "other
 # identifying number". "your TIN" in prose is no label either, and Form
 # 8995-A's column "(d) Taxpayer identification number" holds each business's
@@ -226,8 +226,10 @@ _ID_LABEL = (
     r"(?<![A-Za-z])(?:(?:SSN|ITIN)s?(?![A-Za-z])"
     r"|social security[^\S\n]+(?:numbers?|nos?\.?|#)(?![A-Za-z])"
     r"|individual taxpayer identification(?: number)?"
-    r"|(?<!other )identifying[^\S\n]+number(?=[^\S\n]*(?:$|as shown))"
-    r"|your[^\S\n]+(?:taxpayer[^\S\n]+identification|identifying)[^\S\n]+number"
+    # Never after "other" (a CUSIP heading) or a possessive, which the
+    # possessive alternative below decides, payer side excluded.
+    r"|(?<!other\s)(?<!other\s\s)(?<!['\u2019]s\s)identifying[^\S\n]+number(?=[^\S\n]*(?:$|as shown))"
+    r"|your[^\S\n]+(?:taxpayer[^\S\n]+identification|identifying)[^\S\n]+number(?=[^\S\n]*$)"
     rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
     r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
@@ -244,18 +246,22 @@ _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
 _ID_ANY_VALUE = re.compile(
     rf"{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
-    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-[0-9]{{4}}")
+    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)", re.IGNORECASE)
 
 
-def _label_ends(line: str) -> bool:
+def _label_ends(text: str, start: int | None = None, end: int | None = None) -> bool:
     """A label line that already carries its value — in any spelling, or
-    already masked — is a same-line layout, and the line under it is
-    something else. Only the LAST label decides: one scan, where a pattern
-    tempered past every label took time quadratic in a long line of them."""
+    already masked, in either case — is a same-line layout, and the line
+    under it is something else. The line is `text[start:end]`, by default its
+    last line (a table cell can hold two); the text around it stays visible
+    to the labels' lookbehinds. Only its LAST label decides: one scan, where
+    a pattern tempered past every label took time quadratic in a long line."""
+    end = len(text) if end is None else end
+    start = text.rfind("\n", 0, end) + 1 if start is None else start
     last = None
-    for last in _ID_LABEL_RE.finditer(line):
+    for last in _ID_LABEL_RE.finditer(text, start, end):
         pass
-    return last is not None and not _ID_ANY_VALUE.search(line, last.end())
+    return last is not None and not _ID_ANY_VALUE.search(text, last.end(), end)
 
 
 # A label wrapped onto a second row hands it to the row after: Schedule B
@@ -292,11 +298,15 @@ def _mask_under_labels(text: str) -> str:
     an identifier label with no value after it — the label-above-value box of
     a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
     value the same-line pass has just rewritten still counts as present."""
-    lines = text.split("\n")
-    for i in range(1, len(lines)):
-        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(lines[i - 1]) else i - 1
-        if _label_ends(lines[above]):
-            lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", lines[i]))
+    raw = text.split("\n")
+    lines = list(raw)
+    starts = [0]
+    for line in raw:
+        starts.append(starts[-1] + len(line) + 1)
+    for i in range(1, len(raw)):
+        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
+        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
+            lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw[i]))
     return "\n".join(lines)
 
 

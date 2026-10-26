@@ -693,6 +693,33 @@ class TestMaskSsn:
         page = f"Your SSN {_ssn('-')} Spouse's SSN\nJOHN R DOE {_ssn('')}"
         assert mask_ssn(page) == f"Your SSN {MASKED} Spouse's SSN\nJOHN R DOE {MASKED}"
 
+    @pytest.mark.parametrize("value", ["xxx-xx-6789", "XXX-XX-6789", "***-**-6789", "XXX-XX-XXXX"])
+    def test_a_masked_value_in_any_case_is_the_labels_value(self, value):
+        """A statement that prints its TIN pre-masked, in lower case, or this
+        masker's own output for a run with no boundary: either way the line
+        below is something else, here an amount."""
+        row = " ".join(("1 Wages 850", "00", "2026"))
+        assert mask_ssn(f"Employee's SSN {value}\n{row}") == f"Employee's SSN {value}\n{row}"
+
+    def test_a_masked_comb_still_counts_as_the_labels_value(self):
+        row = " ".join(("1a Proceeds 850", "00", "2026"))
+        page = f"Spouse's SSN\nYour SSN {' '.join('00000' + LAST4)} 4\n{row}"
+        assert mask_ssn(page) == f"Spouse's SSN\nYour SSN XXX-XX-XXXX\n{row}"
+
+    def test_a_comb_run_starts_on_a_single_digit(self):
+        """The 0 of a 10 is not a comb box: the run after it is eight digits."""
+        assert mask_ssn("SSN 10 0 0 0 6 7 8 9 1") == "SSN 10 0 0 0 6 7 8 9 1"
+
+    def test_your_spellings_are_labels_only_ending_their_row(self):
+        """"Your identifying number" heads Form 1040-NR's box; in a sentence
+        it sits over whatever the page prints next."""
+        row = " ".join(("1a Proceeds 850", "00", "2026"))
+        for prose in ("Enter your taxpayer identification number on each page",
+                      "you must provide your identifying number."):
+            assert mask_ssn(f"{prose}\n{row}") == f"{prose}\n{row}"
+        assert mask_ssn(f"Your taxpayer identification number\n{_ssn('')}") == \
+            f"Your taxpayer identification number\n{MASKED}"
+
     def test_a_long_line_of_labels_is_masked_in_linear_time(self):
         """Only the line's last label is tested for a value after it. A
         pattern tempered past every label took time quadratic in the line, and
@@ -738,6 +765,10 @@ class TestMaskSsn:
         f"Name: ACME FAMILY LP Identifying number: {ROUTING}",
         " ".join(("enter the last four digits of your TIN\n1a Proceeds 850", "00", "2026")),
         f"Business taxpayer identification number\n{ROUTING}",
+        f"Partnership's identifying number\n{ROUTING}",
+        f"CUSIP or other\u00a0identifying number\n{ROUTING}",
+        f"CUSIP or other  identifying number\n{ROUTING}",
+        f"CUSIP or other\nidentifying number\n{ROUTING} XYZ FUND",
     ])
     def test_an_identifying_number_that_is_not_the_taxpayers_survives(self, text):
         """Form 8938 names a foreign security's identifier, Form 8283 a
@@ -833,9 +864,9 @@ class TestATableCarriesItsLabelInAnotherCell:
         assert out[2] == [None, 1234.56]
 
     def test_a_cell_that_carries_its_own_value_governs_nothing_after_it(self):
-        """The tempered rule the text layout uses: a label that already has
-        its value beside it is the same-line layout, and what follows is
-        something else."""
+        """The rule the text layout uses: a label that already has its value
+        beside it is the same-line layout, and what follows is something
+        else."""
         out = mask_table([[f"SSN {_ssn('-')}"], [ROUTING], [_ssn("")]])
         assert out == [[f"SSN {MASKED}"], [ROUTING], [_ssn("")]]
 
@@ -851,7 +882,13 @@ class TestATableCarriesItsLabelInAnotherCell:
         assert mask_table(rows)[1] == [MASKED, "50,000.00"]
 
     def test_a_cusip_column_is_not_the_taxpayers_number(self):
-        rows = [["CUSIP or other identifying number", "Proceeds"], [ROUTING, "850 00"]]
+        for heading in ("CUSIP or other identifying number", "CUSIP or other\nidentifying number"):
+            rows = [[heading, "Proceeds"], [ROUTING, "850 00"]]
+            assert mask_table(rows) == rows
+
+    def test_a_label_on_an_earlier_line_of_a_cell_governs_nothing(self):
+        """Only a cell's last line can end in its label, as in page text."""
+        rows = [["Employee SSN\nWages", "Other"], [ROUTING, " ".join(("850", "00", "2026"))]]
         assert mask_table(rows) == rows
 
     def test_a_row_that_is_not_a_sequence_is_still_masked(self):
