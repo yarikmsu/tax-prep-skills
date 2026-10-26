@@ -45,8 +45,9 @@ Written 2026-09-20, replacing eight roadmap files totalling 3,626 lines.
 | `2026-07-12`, `2026-07-17`, `2026-07-20` reviews | Epics I-O, all shipped; `docs/changelog/epic-{I,J,K,L,M,N,O}.md`. |
 
 The historical design directory was retired after the 2026-10-03 review.
-Unimplemented extensions are AA44 and AA45 below. Maintained state contracts and
-the template moved to `docs/contributing/state-module-{ny,nc,wa,template}.md`,
+AA44's remaining readers, below, are the last unimplemented extension.
+Maintained state contracts and the template moved to
+`docs/contributing/state-module-{ny,nc,wa,template}.md`,
 indexed in AGENTS.md §9. Origins below and historical changelog citations link
 to the [pre-migration Git snapshot](https://github.com/yarikmsu/tax-prep-skills/tree/017d2dd45ead/docs/superpowers).
 Old plans remain available there, including their contemporary roadmap
@@ -64,7 +65,7 @@ reaches; the plan's order is who those filers are.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
-AA44 and AA45 below now carry the rest of that scope (AA42, AA43 and AA46 have shipped) instead of relying on historical plans.
+AA44 below now carries the rest of that scope (AA42, AA43, AA45 and AA46 have shipped) instead of relying on historical plans.
 The suite's size is stated nowhere: since AA8 the
 MEASURED COSTS block in `.claude/hooks/skill-invariants.sh` counts only the
 seven modules that hook selects, and a count restated here would be the mirror
@@ -87,7 +88,7 @@ Trigger and range behavior is documented in
 |---|---|---|
 | **1. California filers: ready now** | Nothing: AA47, the last item here, shipped in #66. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
-| **3. California filers: larger extensions** | AA44 and AA45 — prior-return import and multi-year Roth planning. | Larger product extensions. The owner approved designs #59 and #58 on 2026-10-25, accepting their recommended choices. Implement them one at a time; leave PRs unmerged for review. |
+| **3. California filers: larger extensions** | **AA44** — the prior-return import's remaining readers: Form 8995-A Schedule C, Form 1116 Schedule B, Schedule P credit columns and page-1 proposals. Its first delivery shipped in #69; AA45 shipped in #71. | #70 built those readers on table grids the official forms do not have; the owner decides between reading them by position, descoping and closing it. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
@@ -216,30 +217,20 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   stay unresolved instead of being reconstructed from summary lines. Proprietary
   software formats require a separate supported-format decision.
   Design #59 approved 2026-10-25: any text-bearing official-form PDF, reviewed
-  derived capital carryovers and California included. The first implementation
-  adds checked TY2025 line readers, pending seeds, digest-bound review, rollover
-  and manual-resolution gates. The readers are tested on the blank official
-  forms' own extracted text with synthetic amounts; no software-produced return
-  PDF has been read yet, so check the first real import's report line by line.
+  derived capital carryovers and California included. The first delivery,
+  #69, adds checked TY2025 line readers, pending seeds, digest-bound review,
+  rollover and manual-resolution gates. The readers are tested on the blank
+  official forms' own extracted text with synthetic amounts; no
+  software-produced return PDF has been read yet, so check the first real
+  import's report line by line.
   A simulated flattened-field PDF put Form 540 Side 4's line 98-99 amounts on
   separate rows, so they stay questions; reading by position is the fix.
   Remaining automated readers: Form 8995-A Schedule C, Form 1116 Schedule B
   baskets/vintages, Schedule P credit columns, and page-1 identity/dependent
-  proposals; these remain explicit manual questions.
+  proposals; these remain explicit manual questions. #70 builds them on table
+  grids the official forms lack (pdfplumber finds no table on Schedule P) and
+  waits on the owner's decision.
   Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
-
-- **AA45 (P3, L): Model multi-year Roth conversion plans.**
-  The ladder currently sweeps one tax year. Add explicit annual income/balance
-  assumptions and basis carry between years, preserve each year's computation
-  inputs, and distinguish fetched covered-year law from hypothetical future-law
-  assumptions. Show tax, Medicare premiums and distribution effects separately;
-  a future-year forecast must not masquerade as a filing computation.
-  Design #58 approved 2026-10-25: ten-year cap, both held/indexed hypothetical
-  law options and bracket/IRMAA fill targets. Implementation in review follows
-  AA44: explicit annual validation, keystone forecasts, individual basis/balance
-  carry, premium-year costs, safe fill targets and secured plan artifacts. CA
-  years still require AA84's separate review; no future-year gate is lifted.
-  Origin: [2026-05-26-roth-conversion-ladder-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-26-roth-conversion-ladder-design.md) §Out of scope.
 
 
 ### Y — distribution and product
@@ -520,7 +511,8 @@ merge.
 | AA63 | #62 | Advisory only: no local return is computed, and a flat head tax is recorded nowhere. |
 | AA50 | #63 | FIFO matching still prices every lot slice in exact fractions, the import's remaining cost. |
 | AA47 | #44, #45, #46, #47, #60, #64, #66 | A first-sale NFT form (box 11c) and a date moved into a later year still refuse, and the collectible 28% rate stays unmodeled. |
-| AA49 | #51 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
+| AA49 | #51, #67 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
+| AA45 | #71 | A filing-year plan whose return records the owner's IRA flows or Dec 31 value refuses; future CA years wait on AA84; refundable credits are not repriced. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | old #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
