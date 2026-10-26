@@ -17,7 +17,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib.parse_utils import extract_pdf_text, _validate_file_path  # noqa: E402
+from agents.lib.parse_utils import (  # noqa: E402
+    _validate_file_path, _word_rows, extract_pdf_text, extract_pdf_words,
+)
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_paths, first_non_finite, mask_ssn, secure_path,
 )
@@ -41,6 +43,10 @@ SOURCES = {
     # Worksheet 4-1. The 2025 edition prints it for the 2024-to-2025 carryover;
     # the TY2025 return's figures go through the same lines.
     "capital_worksheet": "https://www.irs.gov/pub/irs-prior/p550--2025.pdf",
+    "8995-A": "https://www.irs.gov/pub/irs-prior/f8995a--2025.pdf",
+    "8995C": "https://www.irs.gov/pub/irs-pdf/f8995ac.pdf",
+    "1116B": "https://www.irs.gov/pub/irs-pdf/f1116sb.pdf",
+    "P540": "https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf",
 }
 # Only the lines needed by the seed and their printed arithmetic dependencies.
 LINES = {
@@ -52,7 +58,16 @@ LINES = {
     "8995": {"2", "3", "6", "7", "16", "17"},
     "540": {"97", "98", "99"},
     "3510": {"32", "38", "39"},
+    # Located for the year they bind or read by position, not by line label.
+    "8995-A": set(),
+    "8995C": {"2", "3", "4", "5", "6"},
+    "1116B": set(),
+    "P540": set(),
 }
+# Revision forms print a revision instead of a tax year: Schedule C (Form
+# 8995-A) is bound to its covered-year Form 8995-A, Schedule B (Form 1116) to
+# its own calendar-year entry. Only the reviewed revision is read.
+_REVISIONS = {"8995C": "Rev. 12-2022", "1116B": "Rev. 12-2022"}
 _MAGNITUDE = r"\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?"
 _NUMBER = rf"(?:-0-|-?{_MAGNITUDE}|\({_MAGNITUDE}\))"
 _VALUE = re.compile(r"^" + _NUMBER + r"$")
@@ -92,6 +107,10 @@ _RUNNING_HEADERS = (
     (r"(?:^|\s)Form (540(?:NR)?) (20\d{2}) Side \d\b", None),
     (r"^Side \d Form (540(?:NR)?) (20\d{2})\b", None),
     (r"(?:^|\s)FTB 3510 (20\d{2})$", "3510"),
+    (r"(?:^|\s)Schedule C \(Form 8995-A\) \((Rev\. [^)]+)\)$", "8995C"),
+    (r"(?:^|\s)Schedule B \(Form 1116\) \((Rev\. [^)]+)\)(?: Page \d+)?$", "1116B"),
+    (r"(?:^|\s)Schedule P \(540\) (20\d{2}) Side \d$", "P540"),
+    (r"^Side \d Schedule P \(540\) (20\d{2})\b", "P540"),
 )
 # Form 1040-SR prints Form 1040's line numbers, labels and identities.
 _SAME_LINES = {"1040-SR": "1040"}
@@ -124,15 +143,18 @@ def _out_of_scope(text: str) -> bool:
                               r"Check here if this is an AMENDED return", text)))
 
 
-def _form(text: str) -> tuple[str, int] | None:
+def _form(text: str) -> tuple[str, int | str] | None:
     """The page's form and year from its running header or footer; None for a
-    page of any form this reader does not map."""
+    page of any form this reader does not map. A revision form returns its
+    revision, which binds no year by itself."""
     headers = {(form, year) for form, year in _running_headers(text) if form in LINES}
     if not headers:
         return None
     if len({form for form, _ in headers}) != 1 or len({year for _, year in headers}) != 1:
         raise ImportError("Official page needs one form and one unambiguous covered tax year")
     form, year = headers.pop()
+    if form in _REVISIONS:
+        return form, year
     if not year.isdigit():
         raise ImportError("Official page needs one form and one unambiguous covered tax year")
     return form, int(year)
@@ -194,7 +216,7 @@ def _check(lines: dict, output: str, inputs: tuple[str, ...], compute) -> None:
 
 def _checks(form: str, lines: dict) -> None:
     signed = {"1040": {"7a", "9", "11a", "11b"}, "D": set(LINES["D"]),
-              "8995": set(LINES["8995"])}.get(form, set())
+              "8995": set(LINES["8995"]), "8995C": {"2", "3", "5", "6"}}.get(form, set())
     if any(record["value"] < 0 for key, record in lines.items() if key not in signed):
         raise ImportError("A nonnegative official form line contains a negative amount")
     if form == "1040":
@@ -217,6 +239,12 @@ def _checks(form: str, lines: dict) -> None:
         _check(lines, "99", ("97", "98"), lambda a, b: a - b)
     elif form == "3510":
         _check(lines, "39", ("32", "38"), lambda a, b: a - b)
+    elif form == "8995C":
+        # Lines 2, 3, 5 and 6 pre-print their parentheses: each is a loss.
+        if any(lines[n]["value"] > 0 for n in ("2", "3", "5", "6") if n in lines):
+            raise ImportError("Schedule C (Form 8995-A) prints a loss line as a gain")
+        _check(lines, "5", ("3", "4"), lambda loss, income: -min(-loss, income))
+        _check(lines, "6", ("3", "5"), lambda loss, netted: min(loss - netted, 0))
 
 
 def _form_8606_owner(text: str) -> str | None:
@@ -246,8 +274,436 @@ def _with_blanks(lines: dict, output: str, inputs: tuple[str, ...], compute, bla
     return [lines[n] for n in (*inputs, output) if n in lines]
 
 
-def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
-    """Pure masked-text extraction; the caller never persists extracted text."""
+# Carryover TABLES. A figure in a grid belongs to the line and column it is
+# printed under, which text order does not record: pdfplumber finds no table
+# on Schedule P (540), and Schedule B (Form 1116) has no cell for a line number
+# or a subtotal heading. These readers take word positions
+# (`parse_utils.extract_pdf_words`) and find each cell from the form's own
+# printed labels: columns under their headings, lines by the numbers in the
+# left margin. No coordinate is fixed; a figure outside every cell, or two in
+# one, leaves the table a question instead of a guess.
+
+
+class _Unreadable(Exception):
+    """A table whose cells cannot be located without guessing."""
+
+
+# Glyphs a form prints for an EMPTY box, and punctuation that is no mark.
+# Anything else in a box marks it: a flattened check extracts as "4", "8" or
+# a cid, software prints "X".
+_EMPTY_BOX = {"\u2610", "\u25a1", "o", "q", ".", ","}
+
+
+def _mid(word: dict, low: str, high: str) -> float:
+    return (word[low] + word[high]) / 2
+
+
+def _overlaps(a: dict, b: dict) -> bool:
+    return a["top"] < b["bottom"] and b["top"] < a["bottom"]
+
+
+def _is_mark(word: dict) -> bool:
+    return ((len(word["text"]) == 1 and word["text"] not in _EMPTY_BOX)
+            or bool(re.fullmatch(r"\(cid:\d+\)", word["text"])))
+
+
+def _right_of(words: list, word: dict) -> list:
+    """The words after `word` on its row, nearest first."""
+    return sorted((w for w in words if w is not word and _overlaps(w, word) and w["x0"] >= word["x1"] - 0.5),
+                  key=lambda w: w["x0"])
+
+
+def _left_of(words: list, word: dict) -> list:
+    return sorted((w for w in words if w is not word and _overlaps(w, word) and w["x1"] <= word["x0"] + 0.5),
+                  key=lambda w: -w["x1"])
+
+
+def _phrase(words: list, word: dict, phrase: tuple) -> bool:
+    """`word` begins `phrase` on its row."""
+    current = word
+    for text in phrase[1:]:
+        after = _right_of(words, current)
+        if not after or after[0]["text"] != text:
+            return False
+        current = after[0]
+    return word["text"] == phrase[0]
+
+
+def _bands(centers: list) -> list:
+    """Column bounds halfway between printed headings; an outer column is as
+    wide as its neighbour."""
+    if len(centers) < 2 or any(b <= a for a, b in zip(centers, centers[1:])):
+        raise _Unreadable("column headings are out of order")
+    edges = [centers[0] - (centers[1] - centers[0]) / 2]
+    edges += [(a + b) / 2 for a, b in zip(centers, centers[1:])]
+    edges.append(centers[-1] + (centers[-1] - centers[-2]) / 2)
+    return list(zip(edges, edges[1:]))
+
+
+def _cell(words: list) -> float | None:
+    """A cell's one figure. Blank is None here: whether it is zero is the
+    caller's question, answered by the form's arithmetic."""
+    tokens = [w["text"] for w in sorted(words, key=lambda w: w["x0"]) if w["text"] != "$"]
+    if not tokens:
+        return None
+    if len(tokens) != 1 or not _VALUE.fullmatch(tokens[0]):
+        raise _Unreadable("a cell holds text or more than one figure")
+    return _amount(tokens[0])
+
+
+def _margin_numbers(words: list, wanted: set, grid_left: float) -> dict:
+    """Line numbers in the left margin. The same numerals recur in the line
+    descriptions ("combine lines 1 and 2"); the margin's are right-aligned,
+    so they share the leftmost right edge."""
+    candidates = [w for w in words if w["text"] in wanted and w["x1"] <= grid_left]
+    if not candidates:
+        return {}
+    edge = min(w["x1"] for w in candidates)
+    found: dict[str, dict] = {}
+    for word in candidates:
+        if word["x1"] <= edge + 2:
+            if word["text"] in found:
+                raise _Unreadable("a line number is printed twice in the margin")
+            found[word["text"]] = word
+    return found
+
+
+# Schedule B (Form 1116): columns (i)-(vi) are the 10th to 5th preceding tax
+# years, (vii) their subtotal; page 2 carries it as (viii), then the 4th to 1st
+# preceding years, the current year (xiii) and the total (xiv).
+_SB_HEADINGS = (("(i)", "(ii)", "(iii)", "(iv)", "(v)", "(vi)", "(vii)"),
+                ("(viii)", "(ix)", "(x)", "(xi)", "(xii)", "(xiii)", "(xiv)"))
+_SB_COLUMNS = _SB_HEADINGS[0] + _SB_HEADINGS[1]
+_SB_LINES = ("3", "4", "5", "6", "7", "8")
+_SB_ORIGINS = dict(zip(_SB_HEADINGS[0][:6] + _SB_HEADINGS[1][1:6], range(10, -1, -1)))
+_SB_CATEGORIES = {"a": ("Reserved",), "b": ("Foreign", "branch"), "c": ("Passive",), "d": ("General",),
+                  "e": ("Section", "901(j)"), "f": ("Certain", "income"), "g": ("Lump-sum",)}
+# Sections 901(j) and treaty re-sourcing need their country; lump sums their worksheet.
+_SB_BASKETS = {"b": "foreign_branch", "c": "passive", "d": "general"}
+
+
+def _headings(words: list, labels: tuple) -> list:
+    """Each column heading once. The headings share a row; the same numerals
+    recur in a note under them ("add columns (i) through (vi)")."""
+    found = [w for w in words if w["text"] in labels]
+    if not found:
+        raise _Unreadable("the column headings are missing")
+    tops = sorted(w["top"] for w in found)
+    median = tops[len(tops) // 2]
+    heads: dict[str, dict] = {}
+    for word in found:
+        if abs(word["top"] - median) <= 5:
+            if word["text"] in heads:
+                raise _Unreadable("a column heading is printed twice")
+            heads[word["text"]] = word
+    if set(heads) != set(labels):
+        raise _Unreadable("a column heading is missing")
+    return [heads[label] for label in labels]
+
+
+def _line_bands(words: list, numbers: dict, grid_left: float) -> dict:
+    """A line's figures print beside its description, which wraps over
+    several rows. Each line's band runs to the next line's number; the last
+    ends with its description, at the next row starting in the margin."""
+    ordered = sorted(numbers.items(), key=lambda item: item[1]["top"])
+    bands = {line: (number["top"] - 2, following["top"] - 2)
+             for (line, number), (_, following) in zip(ordered, ordered[1:])}
+    line, number = ordered[-1]
+    labels = [w for w in words if w["x1"] <= grid_left]
+    after = _right_of(labels, number)
+    if not after:
+        raise _Unreadable("a line number has no description")
+    rows = _word_rows(words)
+    index = next(i for i, row in enumerate(rows) if any(w is number for w in row))
+    block = [w for w in rows[index] if w["x1"] <= grid_left]
+    for row in rows[index + 1:]:
+        if row[0]["x0"] < after[0]["x0"] - 1:
+            break
+        block += [w for w in row if w["x1"] <= grid_left]
+    bands[line] = (number["top"] - 2, max(w["bottom"] for w in block) + 3)
+    return bands
+
+
+def _schedule_b_grid(words: list, labels: tuple) -> dict:
+    """{(line, heading): figure or None} for lines 3-8 on one page. The bands
+    and columns partition the grid, so every word in it lands in one cell."""
+    columns = _bands([_mid(w, "x0", "x1") for w in _headings(words, labels)])
+    numbers = _margin_numbers(words, set(_SB_LINES), columns[0][0])
+    if set(numbers) != set(_SB_LINES):
+        raise _Unreadable("a line number is missing")
+    bands = _line_bands(words, numbers, columns[0][0])
+    return {(line, label): _cell([w for w in words if left <= _mid(w, "x0", "x1") < right
+                                  and bands[line][0] <= _mid(w, "top", "bottom") < bands[line][1]])
+            for line in _SB_LINES for label, (left, right) in zip(labels, columns)}
+
+
+def _schedule_b_category(words: list) -> str:
+    """The one category box marked, between its letter and its label."""
+    marked, seen = [], set()
+    for letter, phrase in _SB_CATEGORIES.items():
+        for anchor in (w for w in words if _phrase(words, w, phrase)):
+            before = _left_of(words, anchor)
+            if before and before[0]["text"] == letter:
+                box = None
+            elif len(before) > 1 and before[1]["text"] == letter:
+                box = before[0]
+            else:
+                continue
+            if letter in seen:
+                raise _Unreadable("a category label is printed twice")
+            seen.add(letter)
+            if box is not None and box["text"] not in _EMPTY_BOX:
+                if not _is_mark(box):
+                    raise _Unreadable("text where a category box is printed")
+                marked.append(letter)
+    if seen != set(_SB_CATEGORIES):
+        raise _Unreadable("the category boxes are not where the form prints them")
+    if len(marked) != 1:
+        raise _Unreadable("Schedule B needs exactly one category box marked")
+    return marked[0]
+
+
+def _schedule_b_year(words: list) -> int:
+    """The calendar year entered after its printed "20". A fiscal-year
+    schedule fills the dates after "beginning" and "ending" instead."""
+    calendar = [w for w in words if _phrase(words, w, ("calendar", "year"))]
+    if len(calendar) != 1:
+        raise _Unreadable("the calendar-year entry is missing")
+    row = _right_of(words, _right_of(words, calendar[0])[0])
+    entry = []
+    for word in row:
+        if word["text"] == ",":
+            break
+        entry.append(word["text"])
+    year = re.fullmatch(r"20(?:20)?(\d{2})", "".join(entry))
+    beginning = next((w for w in row if w["text"] == "beginning"), None)
+    dates = []
+    for word in _right_of(words, beginning) if beginning else []:
+        if word["text"] == ".":
+            break  # the entry ends; the OMB number shares its row
+        dates.append(word["text"])
+    if year is None or any(text not in {",", "20", "and", "ending"} for text in dates):
+        raise _Unreadable("Schedule B needs a filled calendar year, not a fiscal year")
+    return 2000 + int(year[1])
+
+
+def _schedule_b_checks(v: dict) -> None:
+    """Every printed subtotal, the line 8 combination and the shaded cells."""
+    def total(line, labels):
+        return round(sum(v[line, label] for label in labels), 2)
+    for line in _SB_LINES:
+        if (v[line, "(vii)"] != total(line, _SB_HEADINGS[0][:6]) or v[line, "(viii)"] != v[line, "(vii)"]
+                or v[line, "(xiv)"] != total(line, _SB_HEADINGS[1][:6])):
+            raise _Unreadable(f"line {line} fails its printed subtotals")
+    for label in _SB_COLUMNS:
+        if v["8", label] != round(sum(v[line, label] for line in _SB_LINES[:5]), 2):
+            raise _Unreadable(f"column {label} fails line 8, the combination of lines 3 through 7")
+        if any(v[line, label] > 0 for line in ("4", "5", "7")) or any(v[line, label] < 0 for line in ("3", "6", "8")):
+            raise _Unreadable(f"column {label} prints a used, expired or carried-back amount as positive")
+    # Only the 10th preceding year expires; only the current year generates
+    # or carries back, and it has nothing carried in or used.
+    subtotals = {"(vii)", "(viii)", "(xiv)"}
+    if (any(v["5", label] for label in _SB_COLUMNS if label not in subtotals | {"(i)"})
+            or any(v[line, label] for line in ("6", "7") for label in _SB_COLUMNS if label not in subtotals | {"(xiii)"})
+            or any(v[line, "(xiii)"] for line in ("3", "4")) or v["8", "(i)"]):
+        raise _Unreadable("a figure in a cell the form shades")
+
+
+def _ftc_baskets(schedule_pages: list, words: dict, year: int, source_digest: str) -> list:
+    """Each category's carryover by origin year, from its page 1 and the page
+    2 printed right after it. The pair must agree on its carried subtotal."""
+    out: dict[str, dict] = {}
+    index = 0
+    while index < len(schedule_pages):
+        page, second = schedule_pages[index]
+        following = schedule_pages[index + 1] if index + 1 < len(schedule_pages) else None
+        if second or following is None or not following[1] or following[0] != page + 1:
+            raise _Unreadable("each Schedule B page 1 needs its page 2 right after it")
+        if page not in words or page + 1 not in words:
+            raise _Unreadable("Schedule B needs its word positions")
+        category = _schedule_b_category(words[page])
+        if _schedule_b_year(words[page]) != year:
+            raise ImportError("Official form page belongs to a different tax year")
+        if category not in _SB_BASKETS:
+            raise _Unreadable(f"category {category} needs its country or worksheet evidence")
+        grid = {**_schedule_b_grid(words[page], _SB_HEADINGS[0]),
+                **_schedule_b_grid(words[page + 1], _SB_HEADINGS[1])}
+        values = {key: 0.0 if value is None else value for key, value in grid.items()}
+        _schedule_b_checks(values)
+        basket = _SB_BASKETS[category]
+        if basket in out:
+            raise _Unreadable("two Schedules B for one category")
+        out[basket] = {
+            "basket": basket,
+            "carryforward_by_origin_year": {str(year - offset): values["8", label]
+                                            for label, offset in _SB_ORIGINS.items() if offset < 10},
+            "reconciliation": {line: {label: values[line, label] for label in _SB_COLUMNS} for line in _SB_LINES},
+            "provenance": {"sha256": source_digest, "pages": [page + 1, page + 2], "form": "1116B"},
+        }
+        index += 2
+    return list(out.values())
+
+
+# Schedule P (540) Part III lines that carry a credit forward, by section, and
+# the codes the form prints itself. A solar credit's Section B2 carryover is
+# Section C's credit amount; its carryforward is Section C's column (d).
+_SP_SECTIONS = {"6": "A2", "7": "A2", "8": "A2", "9": "A2", "10": "A2", "16": "B2", "17": "B2",
+                "18": "B2", "19": "B2", "21": "B4", "23": "C", "24": "C"}
+_SP_PRINTED = {"10": "188", "21": "242", "23": "180", "24": "181"}
+_SP_HEADINGS = (("(a)",), ("(b)", "(b)*"), ("(c)",), ("(d)",))
+
+
+def _schedule_p_columns(row: list) -> list | None:
+    """Columns (a)-(d) from one heading row, centred on each heading phrase."""
+    found = [next((w for w in row if w["text"] in options), None) for options in _SP_HEADINGS]
+    heads = [head for head in found if head is not None]
+    if len(heads) != len(_SP_HEADINGS):
+        return None
+    ends = [h["x0"] for h in heads[1:]] + [max(w["x1"] for w in row) + 1]
+    return _bands([(head["x0"] + max(w["x1"] for w in row if head["x0"] <= w["x0"] < end)) / 2
+                   for head, end in zip(heads, ends)])
+
+
+def _schedule_p_lines(words: list) -> dict:
+    """{line: {"code", "a", "b", "c", "d"}} for each carryover line on one Side."""
+    rows = _word_rows(words)
+    headings = [(row, columns) for row in rows if (columns := _schedule_p_columns(row))]
+    if not headings:
+        return {}
+    grid_left = min(columns[0][0] for _, columns in headings)
+    numbers = _margin_numbers(words, set(_SP_SECTIONS), grid_left)
+    found = {}
+    for line, number in numbers.items():
+        code_label = next((w for w in _right_of(words, number) if w["text"] == "Code:"), None)
+        if code_label is None:
+            continue  # Parts I and II reuse these numbers for AMT lines
+        after = _right_of(words, code_label)
+        code = after[0]["text"] if after and re.fullmatch(r"\d{3}", after[0]["text"]) else None
+        # The line's own headings, above the next row that starts in the margin.
+        following = next((row[0]["top"] for row in rows
+                          if row[0]["top"] > number["bottom"] and row[0]["x0"] < grid_left), float("inf"))
+        later = [(row, columns) for row, columns in headings if number["top"] < row[0]["top"] < following]
+        if not later:
+            raise _Unreadable(f"line {line} has no column headings")
+        heading, columns = min(later, key=lambda item: item[0][0]["top"])
+        bottom = max(w["bottom"] for w in heading)
+        stop = next((row[0]["top"] for row in rows if row[0]["top"] > bottom and row[0]["x0"] < columns[0][0]),
+                    float("inf"))
+        band = [w for w in words if w["top"] >= bottom - 1 and w["bottom"] <= stop + 1]
+        if any(not columns[0][0] <= _mid(w, "x0", "x1") < columns[-1][1] for w in band):
+            raise _Unreadable(f"line {line} prints a figure outside its columns")
+        cells = {key: _cell([w for w in band if left <= _mid(w, "x0", "x1") < right])
+                 for key, (left, right) in zip("abcd", columns)}
+        if all(value is None for value in cells.values()):
+            continue
+        if code is None or _SP_PRINTED.get(line, code) != code:
+            raise _Unreadable(f"line {line} has figures without its credit code")
+        found[line] = {"code": code, **cells}
+    return found
+
+
+def _ca_credits(schedule_pages: list, words: dict, source_digest: str) -> list:
+    """Each credit code's carryforward, kept apart from every other code."""
+    lines: dict[str, dict] = {}
+    for page in schedule_pages:
+        if page not in words:
+            raise _Unreadable("Schedule P needs its word positions")
+        for line, record in _schedule_p_lines(words[page]).items():
+            if line in lines:
+                raise _Unreadable(f"Schedule P line {line} is printed twice")
+            lines[line] = {**record, "page": page + 1}
+    by_code: dict[str, list] = {}
+    for line in sorted(lines, key=int):
+        record = lines[line]
+        amount, used, carried = record["a"], record["b"] or 0.0, record["d"] or 0.0
+        # Column (d) is (a) less (b) and any credit elected refundable on FTB 3870.
+        if amount is None or min(amount, used, carried) < 0 or used > amount or carried > round(amount - used, 2):
+            raise _Unreadable(f"line {line} fails (d) at most (a) less (b)")
+        by_code.setdefault(record["code"], []).append({"line": line, "section": _SP_SECTIONS[line], "page": record["page"],
+                                                        "amount": amount, "used": used, "carryover": carried})
+    out = []
+    for code, rows in by_code.items():
+        if len({row["section"] for row in rows}) != len(rows):
+            raise _Unreadable(f"credit code {code} is entered twice in one section")
+        if any(prior["carryover"] != row["amount"] for prior, row in zip(rows, rows[1:])):
+            raise _Unreadable(f"credit code {code}'s carryover does not reach its next section")
+        last = rows[-1]
+        out.append({"code": code, "carryforward": last["carryover"],
+                    "not_carried": round(sum(row["amount"] - row["used"] - row["carryover"] for row in rows), 2),
+                    "lines": rows, "provenance": [{"sha256": source_digest, "page": row["page"], "form": "P540",
+                                                   "line": row["line"], "column": "d"} for row in rows]})
+    return out
+
+
+# Form 1040 page 1 filing-status boxes, each just left of its label.
+_STATUS_LABELS = (("Single", ("Single",)), ("MFJ", ("Married", "filing", "jointly")),
+                  ("MFS", ("Married", "filing", "separately")), ("HOH", ("Head", "of", "household")),
+                  ("QSS", ("Qualifying", "surviving", "spouse")))
+
+
+def _marked_status(words: list) -> str | None:
+    heading = [w for w in words if _phrase(words, w, ("Filing", "Status"))]
+    if len(heading) != 1:
+        return None
+    marked = set()
+    for status, phrase in _STATUS_LABELS:
+        for label in (w for w in words if -3 <= w["top"] - heading[0]["top"] <= 30 and _phrase(words, w, phrase)):
+            box = [w for w in _left_of(words, label) if label["x0"] - 20 <= _mid(w, "x0", "x1") and _is_mark(w)]
+            if box:
+                marked.add(status)
+    if len(marked) > 1:
+        raise _Unreadable("more than one filing status box is marked")
+    return marked.pop() if marked else None
+
+
+def _qbi_schedule_c(lines: dict) -> tuple[float, list] | None:
+    """Schedule C (Form 8995-A) line 6. Line 4 is blank without income, and
+    line 5 then nets nothing; a blank counts as zero only where lines 5 and 6
+    still follow from what was read."""
+    if "3" not in lines or "6" not in lines:
+        return None
+    loss, income = lines["3"]["value"], lines.get("4", {}).get("value", 0.0)
+    netted = lines.get("5", {}).get("value", 0.0)
+    if abs(netted + min(-loss, income)) > 0.01 or abs(lines["6"]["value"] - min(loss - netted, 0)) > 0.01:
+        return None
+    return -lines["6"]["value"], [lines[n] for n in ("3", "4", "5", "6") if n in lines]
+
+
+
+def _read_tables(schedule_b: list, schedule_p: list, first_pages: list, words: dict, year: int,
+                 source_digest: str) -> tuple[dict, dict | None, dict]:
+    """The carryover tables and the marked filing status, with a question for
+    each one found but not read."""
+    tables: dict[str, list] = {}
+    problems: dict[str, str] = {}
+    marked = None
+    try:
+        if schedule_b:
+            tables["ftc_baskets"] = _ftc_baskets(sorted(schedule_b), words, year, source_digest)
+    except _Unreadable as problem:
+        problems["ftc_schedule_b"] = f"Schedule B (Form 1116) not read: {problem}; enter each category and year manually"
+    try:
+        if schedule_p and (credits := _ca_credits(sorted(schedule_p), words, source_digest)):
+            tables["ca_credits"] = credits
+    except _Unreadable as problem:
+        problems["ca_credit_carryovers"] = f"Schedule P (540) not read: {problem}; enter each credit code manually"
+    try:
+        found = {page: status for page in first_pages if page in words and (status := _marked_status(words[page]))}
+        if len(set(found.values())) > 1:
+            raise _Unreadable("Form 1040 pages mark different filing statuses")
+        if found:
+            page, status = min(found.items())
+            marked = {"value": status, "provenance": {
+                "sha256": source_digest, "page": page + 1, "form": "1040", "line": "filing_status"}}
+    except _Unreadable as problem:
+        problems["filing_status_mark"] = f"Form 1040's filing status boxes not read: {problem}"
+    return tables, marked, problems
+
+
+def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: dict | None = None) -> dict:
+    """Pure masked-text extraction; the caller never persists extracted text.
+    `words` are the pages' word positions, which the carryover tables and the
+    filing-status boxes need; without them those stay questions."""
     if type(year) is not int or year not in REVIEWED_YEARS:
         raise ImportError("Prior-return form mappings have not been reviewed for this year")
     if not re.fullmatch(r"[a-f0-9]{64}", source_digest):
@@ -255,6 +711,10 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
     forms: dict[str, dict] = {}
     ira = []
     ira_owner_ssn: dict[int, str] = {}
+    schedule_b: list[tuple[int, bool]] = []
+    schedule_p: list[int] = []
+    unreviewed: set[str] = set()
+    first_pages: list[int] = []
     for page, raw in pages.items():
         if type(page) is not int or page < 0 or not isinstance(raw, str):
             raise ImportError("Invalid extracted page")
@@ -266,8 +726,19 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         if header is None:
             continue
         form, page_year = header
-        if page_year != year:
+        if form in _REVISIONS:
+            if page_year != _REVISIONS[form]:
+                unreviewed.add(form)
+                continue
+            if form == "1116B":
+                schedule_b.append((page, bool(re.search(r"(?m)\(Rev\. [^)]+\) Page 2$", text))))
+                continue
+        elif page_year != year:
             raise ImportError("Official form page belongs to a different tax year")
+        if form == "P540":
+            schedule_p.append(page)
+        if form == "1040" and "Filing Status" in text:
+            first_pages.append(page)
         lines = locate_lines(text, form, page + 1, source_digest)
         if form == "8606":
             if re.search(r"(?m)(?:^|\s)Form 8606 \(20\d{2}\) Page [2-9]$", text):
@@ -287,6 +758,10 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
             merged[line] = record
     if not forms.get("1040"):
         raise ImportError("No readable official Form 1040 lines; scanned PDFs need manual intake")
+    # Schedule C's revision binds no year; its parent Form 8995-A does.
+    orphan_schedule_c = "8995C" in forms and "8995-A" not in forms
+    if orphan_schedule_c:
+        del forms["8995C"]
     for form, lines in forms.items():
         _checks(form, lines)
     fields, unresolved, worksheets = {}, {}, {}
@@ -369,8 +844,15 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
     lines = forms.get("8995", {})
     # Line 3 or 7 is blank when there was no prior-year loss to carry in.
     qbi = _with_blanks(lines, "16", ("2", "3"), lambda a, b: min(a + b, 0), {"3"})
+    schedule_c = _qbi_schedule_c(forms.get("8995C", {}))
+    if qbi is not None and schedule_c is not None and abs(abs(lines["16"]["value"]) - schedule_c[0]) > 0.01:
+        raise ImportError("Form 8995 and Schedule C (Form 8995-A) disagree on the QBI loss carryforward")
     if qbi is not None:
         add("qbi_loss_carryforward", abs(lines["16"]["value"]), qbi)
+    elif schedule_c is not None:
+        add("qbi_loss_carryforward", *schedule_c)
+    elif orphan_schedule_c:
+        question("qbi_loss", "Schedule C (Form 8995-A) needs its covered-year Form 8995-A in the same PDF")
     else:
         question("qbi_loss", "Read Form 8995 lines 16/17 or Form 8995-A Schedule C; missing forms are not zero")
     reit = _with_blanks(lines, "17", ("6", "7"), lambda a, b: min(a + b, 0), {"7"})
@@ -381,6 +863,14 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
     if "540" in forms or "3510" in forms:
         line_field("ca_amt_credit_carryforward", "3510", "39", "32", ("38", "39"))
         question("ca_current_year_amt", "Reconcile current-year Schedule P deferral AMT and all separate credit carryovers")
+    tables, marked, problems = _read_tables(schedule_b, schedule_p, first_pages, words or {}, year, source_digest)
+    for key, reason in problems.items():
+        question(key, reason)
+    amt = next((c for c in tables.get("ca_credits", []) if c["code"] == "188"), None)
+    if amt and "ca_amt_credit_carryforward" in fields and amt["carryforward"] != fields["ca_amt_credit_carryforward"]["value"]:
+        raise ImportError("Schedule P and FTB 3510 disagree on the prior-year AMT credit carryover")
+    for form in sorted(unreviewed):
+        question(f"{form}_revision", f"Only {_REVISIONS[form]} of this schedule is reviewed; read it manually")
     for key, reason in {
         "foreign_tax_credit": "Read Form 1116 Schedule B by basket and vintage; no paid-minus-allowed reconstruction",
         "charitable_carryovers": "Obtain federal/CA charitable vintage worksheets, or confirm none",
@@ -390,9 +880,14 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str) -> dict:
         "return_scope": "Confirm an original full-year return; amended, part-year and nonresident imports are outside v1",
     }.items():
         question(key, reason)
-    return {"schema": SCHEMA, "tax_year": year, "source_sha256": source_digest,
+    seed = {"schema": SCHEMA, "tax_year": year, "source_sha256": source_digest,
             "parse_boundary": BOUNDARY, "fields": fields, "unresolved": unresolved,
             "worksheets": worksheets, "sources": copy.deepcopy(SOURCES)}
+    if tables:
+        seed["table_evidence"] = tables
+    if marked:
+        seed["marked_filing_status"] = marked
+    return seed
 
 
 def _read(path: Path) -> dict:
@@ -441,7 +936,8 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
         raise ImportError("Archive already exists; import never replaces an archived return")
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     pages = extract_pdf_text(str(path), workspace=str(workspace))
-    seed = extract_seed(pages, year, before)
+    words = extract_pdf_words(str(path), workspace=str(workspace))
+    seed = extract_seed(pages, year, before, words)
     if hashlib.sha256(path.read_bytes()).hexdigest() != before:
         raise ImportError("Source PDF changed during import")
     result = {"meta": {"tax_year": year, "source": "imported_prior_return", "imported_review": "pending"},
@@ -477,10 +973,47 @@ def review_report(result: dict) -> str:
                 lines += ["", f"{key} and {other} print identical Form 8606 figures. If one is a second copy "
                           f"of the same worksheet, map it to `{DUPLICATE}<the other id>`; two owners with equal "
                           "figures are each assigned their own owner."]
+    lines += _table_report(seed)
     lines += ["", "## Derived worksheets", "", json.dumps(seed["worksheets"], indent=2), "",
               "## Unresolved questions", ""]
     lines += [f"- {key}: {reason}" for key, reason in seed["unresolved"].items()]
     return "\n".join(lines) + "\n"
+
+
+def _table_report(seed: dict) -> list[str]:
+    evidence, lines = seed.get("table_evidence", {}), []
+    for basket in evidence.get("ftc_baskets", []):
+        first, second = basket["provenance"]["pages"]
+        lines += ["", f"## Schedule B (Form 1116), {basket['basket']} category, pages {first}-{second}", "",
+                  "| Origin year | Carryforward | Confirmation id |", "|---|---:|---|"]
+        lines += [f"| {year} | {value:.2f} | ftc_{basket['basket']}_{year} |"
+                  for year, value in basket["carryforward_by_origin_year"].items()]
+        lines += ["", "Lines 3-8 by column, as read:", "", json.dumps(basket["reconciliation"], indent=2)]
+    if evidence.get("ca_credits"):
+        lines += ["", "## Schedule P (540) credit carryovers", "",
+                  "| Code | Lines | Carryforward | Not carried | Confirmation id |", "|---|---|---:|---:|---|"]
+        lines += [f"| {c['code']} | {', '.join(row['line'] for row in c['lines'])} | {c['carryforward']:.2f} "
+                  f"| {c['not_carried']:.2f} | ca_credit_{c['code']} |" for c in evidence["ca_credits"]]
+        lines += ["", "Not carried is column (a) less (b) less (d): a credit elected refundable on FTB 3870, "
+                  "or a figure to check against the PDF."]
+    marked = seed.get("marked_filing_status")
+    if marked:
+        lines += ["", f"Form 1040 page {marked['provenance']['page']} marks filing status {marked['value']}; "
+                  "the confirmed status must match it."]
+    return lines
+
+
+def table_confirmation_ids(seed: dict) -> list[str]:
+    """One id per basket and origin year, zeros included, and per credit code."""
+    evidence = seed.get("table_evidence", {})
+    return sorted([f"ftc_{basket['basket']}_{year}" for basket in evidence.get("ftc_baskets", [])
+                   for year in basket["carryforward_by_origin_year"]]
+                  + [f"ca_credit_{credit['code']}" for credit in evidence.get("ca_credits", [])])
+
+
+def _confirms_every_table(confirmed, seed: dict) -> bool:
+    expected = table_confirmation_ids(seed)
+    return isinstance(confirmed, list) and len(confirmed) == len(expected) and set(confirmed) == set(expected)
 
 
 def validate_reviewed(result: dict, profile: dict) -> dict:
@@ -511,6 +1044,9 @@ def validate_reviewed(result: dict, profile: dict) -> dict:
         raise ImportError("Every unresolved import question requires a decision")
     if any(value not in {"not_applicable", "manual_required"} for value in review["questions"].values()):
         raise ImportError("Invalid unresolved import decision")
+    # A review confirmed before the table readers existed has no tables.
+    if not _confirms_every_table(review.get("confirmed_tables", []), seed):
+        raise ImportError("Every extracted carryover table requires individual confirmation")
     return seed
 
 
@@ -596,7 +1132,8 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     seed = result.get("prior_return_import", {})
     if result.get("meta", {}).get("imported_review") != "pending" or seed.get("tax_year") != year:
         raise ImportError("Only a pending import for this year can be confirmed")
-    if set(decisions) != {"seed_sha256", "confirmed_fields", "questions", "filing_status", "ira_owners"}:
+    if set(decisions) != {"seed_sha256", "confirmed_fields", "confirmed_tables", "questions", "filing_status",
+                          "ira_owners"}:
         raise ImportError("Review must match the documented confirmation schema")
     if decisions["seed_sha256"] != digest(seed):
         raise ImportError("Review was prepared for a different import")
@@ -610,6 +1147,11 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
         raise ImportError("Answer every unresolved question; manual_required remains blocking")
     if decisions["filing_status"] not in STATUSES:
         raise ImportError("Confirm the prior return's canonical filing status")
+    marked = seed.get("marked_filing_status")
+    if marked and decisions["filing_status"] != marked["value"]:
+        raise ImportError("The confirmed filing status contradicts the box marked on Form 1040")
+    if not _confirms_every_table(decisions["confirmed_tables"], seed):
+        raise ImportError("Confirm every basket, origin year and credit code exactly once")
     capital = seed.get("worksheets", {}).get("capital_loss")
     if capital:
         from agents.lib.rollover import _capital_loss_cap
@@ -626,7 +1168,7 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     profile["filing_status"] = decisions["filing_status"]
     seed["review"] = {"seed_sha256": digest(seed), "profile_sha256": digest(profile),
                       "confirmed_fields": decisions["confirmed_fields"], "questions": questions,
-                      "ira_owners": decisions["ira_owners"]}
+                      "ira_owners": decisions["ira_owners"], "confirmed_tables": decisions["confirmed_tables"]}
     result["meta"]["imported_review"] = "confirmed"
     result["meta"]["imported_review_sha256"] = digest(seed["review"])
     answers = workspace / "answers.md"
@@ -655,6 +1197,26 @@ def imported_changes(prior, current) -> list:
     if current.profile.get("tax_year", prior.year + 1) != prior.year + 1:
         raise ImportError("Current profile/result years disagree")
     out, basis, manual = [], {}, [k for k, v in seed["review"]["questions"].items() if v == "manual_required"]
+    # The tables open next year's worksheets as evidence, each category,
+    # vintage and credit code apart. Nothing here computes a credit from them,
+    # so a nonzero balance blocks until its worksheet is done by hand.
+    evidence = seed.get("table_evidence", {})
+    for key, rows, carried in (
+            ("ftc_baskets", [{"basket": b["basket"], "carryforward_by_origin_year": b["carryforward_by_origin_year"],
+                              "provenance": b["provenance"]} for b in evidence.get("ftc_baskets", [])],
+             lambda row: any(row["carryforward_by_origin_year"].values())),
+            ("ca_credits", [{"code": c["code"], "carryforward": c["carryforward"], "not_carried": c["not_carried"],
+                             "provenance": c["provenance"]} for c in evidence.get("ca_credits", [])],
+             # A column (d) below (a) less (b) is an FTB 3870 election or an
+             # unread figure; either way a person settles it.
+             lambda row: row["carryforward"] or row["not_carried"])):
+        if not rows:
+            continue
+        path = "prior_year.imported_" + key
+        out.append(Change("carryforwards", path, "taxpayer_profile.json", rows, _get_path(current.profile, path),
+                          "ask", "Reviewed official carryover table; keep each category, vintage and credit code apart"))
+        if any(carried(row) for row in rows):
+            manual.append("foreign_tax_credit" if key == "ftc_baskets" else "ca_credit_carryovers")
     for key, field in seed["fields"].items():
         if key.startswith("ira_basis_page_"):
             owner = seed["review"]["ira_owners"][key]

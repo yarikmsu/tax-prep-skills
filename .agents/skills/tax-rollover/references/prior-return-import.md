@@ -54,6 +54,34 @@ leaves it blank for zero and its printed sum still holds (Form 8606 lines 4-13
 with nothing distributed, Schedule D line 21 in a gain year, an overpayment
 refunded in full). Missing pages and worksheets never establish zero.
 
+Carryover TABLES are read by each word's position on the page, because a grid
+figure belongs to the line and column it sits under and text order does not
+record that. Columns come from their printed headings, lines from the numbers in
+the left margin; nothing assumes a page offset.
+
+- [Schedule B (Form 1116)](https://www.irs.gov/pub/irs-pdf/f1116sb.pdf)
+  (Rev. 12-2022): each page 1 is read with the page 2 printed right after it.
+  The single marked category must be passive, general or foreign branch, and
+  the entered calendar year must be the covered year. Every printed subtotal,
+  line 8's combination of lines 3-7, each sign and each shaded cell must hold.
+  A blank cell is zero only while all of them do.
+- [Schedule P (540)](https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf) Part
+  III: lines 6-10, 16-19, 21 and 23-24 by credit code. Column (d) must not
+  exceed (a) less (b), and a solar credit's Section B2 carryover must be its
+  Section C credit amount. Code 188 must agree with FTB 3510 line 39.
+- Form 1040's marked filing-status box is read the same way. The confirmed
+  status must match it.
+
+A table found but not read becomes a question (`ftc_schedule_b`,
+`ca_credit_carryovers`, `filing_status_mark`), never a partial table.
+[Schedule C (Form 8995-A)](https://www.irs.gov/pub/irs-pdf/f8995ac.pdf)
+lines 2-6 are ordinary right-hand boxes. The schedule prints a revision
+instead of a year, so it is read only beside a covered-year Form 8995-A page;
+an unreviewed revision of either schedule is a `*_revision` question. These
+readers are tested on the official forms filled and flattened with synthetic
+values. No tax software's own PDF has been read yet, so check the first real
+report table by table.
+
 The capital-loss worksheet is
 [Publication 550](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
 Worksheet 4-1. That edition prints it for the 2024-to-2025 carryover; the TY2025
@@ -73,7 +101,11 @@ Write an owner-only local JSON review under `summaries/` with exactly:
 
 - `seed_sha256`: the report's seed digest.
 - `confirmed_fields`: the exact list of individually confirmed field ids.
-- `filing_status`: `Single`, `MFJ`, `MFS`, `HOH` or `QSS`, confirmed against page 1.
+- `confirmed_tables`: the report's table confirmation ids, each once: one per
+  foreign tax credit category and origin year, zeros included, and one per
+  California credit code.
+- `filing_status`: `Single`, `MFJ`, `MFS`, `HOH` or `QSS`, confirmed against page 1;
+  it must match a box the report says is marked.
 - `ira_owners`: each `ira_basis_page_N` id mapped to the person it belongs to on
   THIS year's return, `primary` or `spouse` (last year's single filer may be this
   year's spouse; a non-joint prior return has one filer, so one named page), or
@@ -111,19 +143,28 @@ California opening payments reset `estimated_payments.ca_verified`.
 
 ## Manual worksheets remain hard gates
 
-The first reader imports Form 1040 line 36; Schedule D/1040 capital-loss inputs;
-individual Form 8606 line 14; Form 8801 line 26; Form 8995 lines 16/17; Form 540
-lines 97–99; and FTB 3510 line 39 when their dependencies are readable.
-The exact covered-year source URLs are retained with the seed.
+The reader imports Form 1040 line 36; Schedule D/1040 capital-loss inputs;
+individual Form 8606 line 14; Form 8801 line 26; Form 8995 lines 16/17 or
+Schedule C (Form 8995-A) line 6; Form 540 lines 97–99; and FTB 3510 line 39
+when their dependencies are readable. The exact covered-year source URLs are
+retained with the seed.
 
 Form 8801's unused credit and FTB 3510's unused credit do NOT include new
 current-year deferral AMT. Reconcile Form 6251/Schedule P separately before
 approving an aggregate opening credit. Nonzero REIT/PTP loss is separate from
 business QBI loss and has no automatic opening input here: it stays blocked.
-Form 8995-A Schedule C, foreign tax credit baskets/vintages (Form 1116 Schedule
-B), Schedule P credit columns, charitable vintages, passive/rental losses,
-depreciation and other carryovers require manual resolution in this delivery.
-Never reconstruct them from a summary or a paid-minus-allowed tax total.
+
+Foreign tax credit categories and vintages roll as
+`prior_year.imported_ftc_baskets`, and California credit codes as
+`prior_year.imported_ca_credits`. They are evidence for this year's worksheets,
+each category, origin year and code kept apart. No credit is computed from
+them. Any balance blocks computation until its worksheet is done by hand, and
+so does a Schedule P amount not carried (column (a) less (b) less (d)): that is
+an FTB 3870 refundable election or a figure that was not read. Never flatten
+the baskets into `unused_ftc_carryforward` or merge credit codes.
+Charitable vintages, passive/rental losses, depreciation and other carryovers
+require manual resolution. Never reconstruct any of them from a summary or a
+paid-minus-allowed tax total.
 
 `prior_year.import_unresolved` blocks computation. Reconcile every named item
 from its official worksheet, enter the supported current-year fields or follow

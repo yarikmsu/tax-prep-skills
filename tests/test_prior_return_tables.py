@@ -1,0 +1,508 @@
+"""The prior-return import's position readers, on TY2025 forms filled and flattened.
+
+`tests/fixtures/prior_return/official_tables_2025.json` holds each page's text
+and word positions as pdfplumber reads the official form after its own fields
+were filled with synthetic values and flattened; its builder sits beside it.
+The rest of the return is `official_2025.json`, as `test_prior_return.py` reads
+it. No real return or identity data is involved.
+"""
+import copy
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from agents.lib import prior_return as P
+from agents.lib.rollover import CurrentState, compute_diff, load_prior
+
+FIXTURES = Path(__file__).parent / "fixtures/prior_return"
+MAIN = json.loads((FIXTURES / "official_2025.json").read_text(encoding="utf-8"))
+TABLES = json.loads((FIXTURES / "official_tables_2025.json").read_text(encoding="utf-8"))["pages"]
+SHA = hashlib.sha256(b"synthetic flattened source").hexdigest()
+KEYS = ("text", "x0", "x1", "top", "bottom")
+ALL = ("1116B_page1", "1116B_page2", "P540_side1", "P540_side2", "P540_side3", "P540_side4")
+
+
+def words_of(name):
+    return [dict(zip(KEYS, word)) for word in TABLES[name]["words"]]
+
+
+def document(*names, drop=()):
+    """Official text for the whole return, Form 1040 page 1 flattened, then
+    `names` appended in order. Returns pages, words and each name's index."""
+    pages = {int(k): v for k, v in MAIN["pages"].items() if int(k) not in drop}
+    pages[0] = TABLES["1040_page1"]["text"]
+    words, where = {0: words_of("1040_page1")}, {"1040_page1": 0}
+    for name in names:
+        index = max(pages) + 1
+        pages[index], words[index] = TABLES[name]["text"], words_of(name)
+        where.setdefault(name, index)
+    return pages, words, where
+
+
+def seed(*names, edit=None, drop=()):
+    pages, words, where = document(*names, drop=drop)
+    if edit:
+        edit(pages, words, where)
+    return P.extract_seed(pages, 2025, SHA, words)
+
+
+def word(words, text, x=None, top=None):
+    """The word printed as `text`, nearest the given position."""
+    found = [w for w in words if w["text"] == text]
+    assert found, text
+    return min(found, key=lambda w: abs(w["x0"] - (x if x is not None else w["x0"]))
+               + abs(w["top"] - (top if top is not None else w["top"])))
+
+
+def set_text(name, text, new, x=None, top=None):
+    def edit(pages, words, where):
+        word(words[where[name]], text, x, top)["text"] = new
+    return edit
+
+
+def remove(name, text, x=None, top=None):
+    def edit(pages, words, where):
+        words[where[name]].remove(word(words[where[name]], text, x, top))
+    return edit
+
+
+def move(name, text, dx=0.0, dy=0.0, x=None, top=None):
+    def edit(pages, words, where):
+        target = word(words[where[name]], text, x, top)
+        for key, delta in (("x0", dx), ("x1", dx), ("top", dy), ("bottom", dy)):
+            target[key] = round(target[key] + delta, 1)
+    return edit
+
+
+PASSIVE = {"2016": 0.0, "2017": 0.0, "2018": 0.0, "2019": 0.0, "2020": 0.0, "2021": 0.0,
+           "2022": 300.0, "2023": 0.0, "2024": 600.0, "2025": 700.0}
+CREDITS = {"183": 500.0, "188": 1700.0, "180": 400.0, "242": 3800.0}
+
+
+def credits(parsed):
+    return {c["code"]: c["carryforward"] for c in parsed["table_evidence"]["ca_credits"]}
+
+
+def test_the_flattened_official_tables_are_read_by_position():
+    parsed = seed(*ALL)
+    (basket,) = parsed["table_evidence"]["ftc_baskets"]
+    assert basket["basket"] == "passive" and basket["carryforward_by_origin_year"] == PASSIVE
+    assert basket["provenance"]["pages"] == [13, 14]
+    # Columns (vii)/(viii) carry page 1's subtotal; (xiv) totals both pages.
+    assert basket["reconciliation"]["3"]["(vii)"] == basket["reconciliation"]["3"]["(viii)"] == 500
+    assert basket["reconciliation"]["8"]["(xiv)"] == 1600
+    assert credits(parsed) == CREDITS
+    solar = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "180")
+    assert [(row["line"], row["section"], row["carryover"]) for row in solar["lines"]] == [
+        ("16", "B2", 500.0), ("23", "C", 400.0)]
+    assert parsed["marked_filing_status"]["value"] == "MFJ"
+    assert not {"ftc_schedule_b", "ca_credit_carryovers", "filing_status_mark"} & set(parsed["unresolved"])
+    assert P.table_confirmation_ids(parsed) == sorted(
+        [f"ftc_passive_{year}" for year in PASSIVE] + [f"ca_credit_{code}" for code in CREDITS])
+
+
+def test_the_official_lines_read_from_a_flattened_form_1040_page():
+    """#69's line reader, on Form 1040 page 1 as the flattened form prints it."""
+    parsed = seed()
+    assert {k: v["value"] for k, v in parsed["fields"].items()}["capital_loss_carryforward_long_term"] == 7000
+
+
+def test_without_word_positions_the_tables_stay_questions():
+    pages, _, _ = document(*ALL)
+    parsed = P.extract_seed(pages, 2025, SHA)
+    assert "table_evidence" not in parsed and "marked_filing_status" not in parsed
+    assert "word positions" in parsed["unresolved"]["ftc_schedule_b"]
+    assert "word positions" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
+@pytest.mark.parametrize("names", [
+    ("1116B_page1",), ("1116B_page2", "1116B_page1"), ("1116B_page1", "P540_side1", "1116B_page2")])
+def test_each_schedule_b_page_1_needs_its_page_2_right_after_it(names):
+    assert "page 2 right after it" in seed(*names)["unresolved"]["ftc_schedule_b"]
+
+
+def general(pages, words, where):
+    """The second copy of page 1 marks General instead of Passive."""
+    second = max(index for index, text in pages.items() if text == TABLES["1116B_page1"]["text"])
+    mark = word(words[second], "4", x=240, top=152)
+    mark["top"], mark["bottom"] = mark["top"] + 12.1, mark["bottom"] + 12.1
+
+
+def test_two_categories_each_read_from_their_own_pair():
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2", edit=general)
+    baskets = {b["basket"]: b["carryforward_by_origin_year"] for b in parsed["table_evidence"]["ftc_baskets"]}
+    assert baskets == {"passive": PASSIVE, "general": PASSIVE}
+
+
+def test_interleaved_categories_are_not_paired_by_position_alone():
+    """Passive page 1, general page 1, passive page 2, general page 2: the
+    general page 1 is followed by a page 1, never bound to passive's page 2."""
+    parsed = seed("1116B_page1", "1116B_page1", "1116B_page2", "1116B_page2", edit=general)
+    assert "table_evidence" not in parsed or "ftc_baskets" not in parsed["table_evidence"]
+    assert "page 2 right after it" in parsed["unresolved"]["ftc_schedule_b"]
+
+
+def test_two_schedules_for_one_category_are_a_question():
+    parsed = seed("1116B_page1", "1116B_page2", "1116B_page1", "1116B_page2")
+    assert "two Schedules B for one category" in parsed["unresolved"]["ftc_schedule_b"]
+
+
+@pytest.mark.parametrize("edit, message", [
+    (remove("1116B_page1", "4", x=240, top=152), "exactly one category box"),
+    (move("1116B_page1", "4", dx=150.4, x=240, top=152), "needs its country"),
+    (set_text("1116B_page1", "4", "Paid", x=240, top=152), "text where a category box"),
+    (remove("1116B_page1", "25", x=238, top=56), "calendar year"),
+    (set_text("1116B_page1", "Passive", "Pasive"), "category boxes are not where"),
+])
+def test_the_category_and_year_are_read_or_asked(edit, message):
+    assert message in seed("1116B_page1", "1116B_page2", edit=edit)["unresolved"]["ftc_schedule_b"]
+
+
+def test_a_second_marked_category_is_a_question():
+    def both(pages, words, where):
+        mark = dict(word(words[where["1116B_page1"]], "4", x=240, top=152))
+        mark["top"], mark["bottom"] = mark["top"] + 12.1, mark["bottom"] + 12.1
+        words[where["1116B_page1"]].append(mark)
+    assert "exactly one category box" in seed("1116B_page1", "1116B_page2", edit=both)["unresolved"]["ftc_schedule_b"]
+
+
+def test_a_fiscal_year_schedule_is_a_question():
+    def fiscal(pages, words, where):
+        beginning = word(words[where["1116B_page1"]], "beginning")
+        words[where["1116B_page1"]].append({**beginning, "text": "07/01", "x0": 360.0, "x1": 380.0})
+    assert "fiscal year" in seed("1116B_page1", "1116B_page2", edit=fiscal)["unresolved"]["ftc_schedule_b"]
+
+
+def test_a_schedule_b_for_another_year_refuses():
+    with pytest.raises(P.ImportError, match="different tax year"):
+        seed("1116B_page1", "1116B_page2", edit=set_text("1116B_page1", "25", "24", x=238, top=56))
+
+
+@pytest.mark.parametrize("edit, message", [
+    # Line 3, column (vii) on page 1: no longer the sum of (i)-(vi).
+    (set_text("1116B_page1", "500", "600", x=742, top=416), "printed subtotals"),
+    # Page 2's (viii) must carry page 1's (vii).
+    (set_text("1116B_page2", "500", "600", x=265, top=278), "printed subtotals"),
+    # Line 8, column (x): 400 carried in and 100 used leave 300.
+    (lambda *a: (set_text("1116B_page2", "300", "400", x=423, top=409)(*a),
+                 set_text("1116B_page2", "1,600", "1,700", x=734, top=409)(*a)),
+     "combination of lines 3 through 7"),
+    # A blank is zero only while the sums hold: the 100 used is unreadable.
+    (remove("1116B_page2", "-100", x=420, top=302), "printed subtotals"),
+    (set_text("1116B_page2", "-100", "1OO", x=420, top=302), "cell holds text"),
+])
+def test_schedule_b_figures_must_reconcile(edit, message):
+    assert message in seed("1116B_page1", "1116B_page2", edit=edit)["unresolved"]["ftc_schedule_b"]
+
+
+def test_two_figures_in_one_cell_are_a_question():
+    def crowd(pages, words, where):
+        source = word(words[where["1116B_page2"]], "300", x=423, top=409)
+        words[where["1116B_page2"]].append({**source, "text": "5", "x0": source["x0"] - 9, "x1": source["x0"] - 4})
+    assert "more than one figure" in seed("1116B_page1", "1116B_page2", edit=crowd)["unresolved"]["ftc_schedule_b"]
+
+
+def zeros():
+    return {(line, label): 0.0 for line in P._SB_LINES for label in P._SB_COLUMNS}
+
+
+def consistent(values, line, label, amount):
+    """Put `amount` in one cell and carry it through every printed total."""
+    page = 0 if label in P._SB_HEADINGS[0] else 1
+    cells = [label, "(vii)", "(viii)", "(xiv)"] if page == 0 else [label, "(xiv)"]
+    for column in cells:
+        values[line, column] += amount
+        values["8", column] += amount
+
+
+@pytest.mark.parametrize("line, label, amount", [
+    ("5", "(ii)", -100.0),   # only the 10th preceding year expires
+    ("6", "(x)", 100.0),     # only the current year generates
+    ("7", "(xii)", -100.0),  # or carries back
+    ("3", "(xiii)", 100.0),  # the current year carries nothing in
+])
+def test_a_figure_in_a_shaded_cell_is_a_question(line, label, amount):
+    values = zeros()
+    consistent(values, line, label, amount)
+    if line in ("5", "7"):  # what expires or carries back was carried in first
+        consistent(values, "3", label, -amount)
+    with pytest.raises(P._Unreadable, match="shades"):
+        P._schedule_b_checks(values)
+    allowed = zeros()
+    consistent(allowed, "3", "(ii)", 100.0)
+    P._schedule_b_checks(allowed)
+
+
+def test_a_used_amount_printed_positive_is_a_question():
+    values = zeros()
+    consistent(values, "3", "(ii)", 100.0)
+    consistent(values, "4", "(ii)", 50.0)
+    consistent(values, "3", "(ii)", -100.0)
+    consistent(values, "3", "(ii)", 100.0)
+    values["8", "(ii)"] = values["8", "(vii)"] = values["8", "(viii)"] = values["8", "(xiv)"] = 150.0
+    with pytest.raises(P._Unreadable, match="positive"):
+        P._schedule_b_checks(values)
+
+
+def test_the_tenth_year_cannot_carry_forward():
+    values = zeros()
+    consistent(values, "3", "(i)", 100.0)
+    with pytest.raises(P._Unreadable, match="shades"):
+        P._schedule_b_checks(values)
+
+
+@pytest.mark.parametrize("edit, message", [
+    (remove("P540_side3", "183"), "without its credit code"),
+    (set_text("P540_side3", "188", "189"), "without its credit code"),
+    # Line 10, column (d): more than (a) less (b) is never carried.
+    (set_text("P540_side3", "1,700", "1,800", x=544, top=409), "at most (a) less (b)"),
+    # The solar credit's B2 carryover (500) must be Section C's credit amount.
+    (set_text("P540_side4", "500", "600", x=164, top=590), "does not reach its next section"),
+    (set_text("P540_side3", "183", "188"), "entered twice in one section"),
+    (move("P540_side4", "3,800", dx=60, x=544, top=488), "outside its columns"),
+    (set_text("P540_side4", "400", "4OO", x=552, top=590), "cell holds text"),
+])
+def test_schedule_p_lines_must_reconcile(edit, message):
+    parsed = seed("P540_side3", "P540_side4", edit=edit)
+    assert message in parsed["unresolved"]["ca_credit_carryovers"]
+    assert "table_evidence" not in parsed
+
+
+def test_a_credit_elected_refundable_is_carried_as_printed():
+    """Column (d) is (a) less (b) less any amount elected refundable on FTB
+    3870; the difference is shown for review, never added back."""
+    parsed = seed("P540_side3", "P540_side4", edit=set_text("P540_side4", "3,800", "3,000", x=544, top=488))
+    ptet = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "242")
+    assert ptet["carryforward"] == 3000 and ptet["not_carried"] == 800
+
+
+def test_a_blank_carryover_column_still_blocks_rollover():
+    """An unread column (d) is zero carried and the rest shown as not carried;
+    the not-carried amount blocks like a balance would."""
+    parsed = seed("P540_side3", "P540_side4", edit=remove("P540_side4", "3,800", x=544, top=488))
+    ptet = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "242")
+    assert ptet["carryforward"] == 0 and ptet["not_carried"] == 3800
+
+
+def test_a_side_printed_twice_is_a_question():
+    assert "printed twice" in seed("P540_side4", "P540_side4")["unresolved"]["ca_credit_carryovers"]
+
+
+def test_schedule_p_and_ftb_3510_must_agree_on_the_amt_credit():
+    def less_carried(pages, words, where):
+        word(words[where["P540_side3"]], "1,700", x=544, top=409)["text"] = "1,600"
+    with pytest.raises(P.ImportError, match="disagree on the prior-year AMT credit"):
+        seed("P540_side3", edit=less_carried)
+
+
+def test_amt_lines_reusing_credit_line_numbers_are_not_credits():
+    """Parts I and II number their AMT lines 6-24 too, without "Code:"."""
+    parsed = seed("P540_side1", "P540_side2")
+    assert "table_evidence" not in parsed and "ca_credit_carryovers" not in parsed["unresolved"]
+
+
+def test_an_unmarked_return_proposes_no_status_and_two_marks_are_a_question():
+    unmarked = seed(edit=remove("1040_page1", "4", x=99, top=219))
+    assert "marked_filing_status" not in unmarked
+    def second(pages, words, where):
+        mark = dict(word(words[0], "4", x=99, top=219))
+        mark["top"], mark["bottom"] = mark["top"] - 12, mark["bottom"] - 12
+        words[0].append(mark)
+    assert "more than one" in seed(edit=second)["unresolved"]["filing_status_mark"]
+
+
+def schedule_c(pages, words, where):
+    """Form 8995 replaced by Form 8995-A and its Schedule C."""
+    del pages[8]
+    for name in ("8995A_page1", "8995C"):
+        pages[max(pages) + 1] = TABLES[name]["text"]
+
+
+def test_schedule_c_carries_its_line_6_loss():
+    parsed = seed(edit=schedule_c)
+    field = parsed["fields"]["qbi_loss_carryforward"]
+    assert field["value"] == 4000
+    assert [source["line"] for source in field["provenance"]] == ["3", "4", "5", "6"]
+    assert {source["form"] for source in field["provenance"]} == {"8995C"}
+
+
+def test_schedule_c_needs_its_covered_year_parent():
+    def orphan(pages, words, where):
+        del pages[8]
+        pages[max(pages) + 1] = TABLES["8995C"]["text"]
+    parsed = seed(edit=orphan)
+    assert "qbi_loss_carryforward" not in parsed["fields"]
+    assert "covered-year Form 8995-A" in parsed["unresolved"]["qbi_loss"]
+
+
+def test_schedule_c_and_form_8995_must_agree():
+    def both(pages, words, where):
+        for name in ("8995A_page1", "8995C"):
+            pages[max(pages) + 1] = TABLES[name]["text"]
+    with pytest.raises(P.ImportError, match="disagree on the QBI loss carryforward"):
+        seed(edit=both)
+
+
+def test_an_unreviewed_schedule_c_revision_is_not_read():
+    def revised(pages, words, where):
+        schedule_c(pages, words, where)
+        pages[max(pages)] = pages[max(pages)].replace("(Rev. 12-2022)", "(Rev. 12-2025)")
+    parsed = seed(edit=revised)
+    assert "qbi_loss_carryforward" not in parsed["fields"]
+    assert "Rev. 12-2022" in parsed["unresolved"]["8995C_revision"]
+
+
+@pytest.mark.parametrize("old, new, message", [
+    ("6 ( 4,000)", "6 4,000", "loss line as a gain"),
+    ("5 ( 1,000)", "5 ( 2,000)", "arithmetic identity"),
+])
+def test_schedule_c_lines_follow_its_printed_arithmetic(old, new, message):
+    def changed(pages, words, where):
+        schedule_c(pages, words, where)
+        assert old in pages[max(pages)]
+        pages[max(pages)] = pages[max(pages)].replace(old, new)
+    with pytest.raises(P.ImportError, match=message):
+        seed(edit=changed)
+
+
+def test_schedule_c_without_income_nets_nothing():
+    """Line 4 is blank without income and line 5 then nets nothing; a line 5
+    the reader missed would break line 6's subtraction instead."""
+    def no_income(pages, words, where):
+        schedule_c(pages, words, where)
+        text = pages[max(pages)].replace(". . 4 1,000", ". . 4").replace("5 ( 1,000)", "5 ( )")
+        pages[max(pages)] = text.replace("6 ( 4,000)", "6 ( 5,000)")
+    assert seed(edit=no_income)["fields"]["qbi_loss_carryforward"]["value"] == 5000
+    def unread_netting(pages, words, where):
+        schedule_c(pages, words, where)
+        pages[max(pages)] = pages[max(pages)].replace("5 ( 1,000)", "5 ( )")
+    assert "qbi_loss_carryforward" not in seed(edit=unread_netting)["fields"]
+
+
+# --- Review, confirmation and rollover -------------------------------------
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    from agents.lib.secure_fs import secure_path
+    secure_path(tmp_path)
+    for directory in (tmp_path / "documents", tmp_path / "documents/prior_return"):
+        directory.mkdir()
+        secure_path(directory)
+    source = tmp_path / "documents/prior_return/synthetic.pdf"
+    source.write_bytes(b"%PDF synthetic")
+    secure_path(source)
+    for name, value in (("result.json", {"meta": {"tax_year": 2026}}),
+                        ("taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ"})):
+        (tmp_path / name).write_text(json.dumps(value), encoding="utf-8")
+        secure_path(tmp_path / name)
+    pages, words, _ = document(*ALL)
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: pages)
+    monkeypatch.setattr(P, "extract_pdf_words", lambda *a, **kw: words)
+    return tmp_path
+
+
+def pending(workspace):
+    archive = P.import_pdf(workspace, "documents/prior_return/synthetic.pdf", 2026)
+    parsed = json.loads((archive / "result.json").read_text(encoding="utf-8"))["prior_return_import"]
+    return archive, {"seed_sha256": P.digest(parsed), "confirmed_fields": list(parsed["fields"]),
+                     "confirmed_tables": P.table_confirmation_ids(parsed),
+                     "questions": {k: "not_applicable" for k in parsed["unresolved"]},
+                     "filing_status": "MFJ", "ira_owners": {"ira_basis_page_5": "primary"}}
+
+
+def test_the_review_report_lists_every_table_id(workspace):
+    archive, _ = pending(workspace)
+    report = P.review_report(json.loads((archive / "result.json").read_text(encoding="utf-8")))
+    assert "| 2024 | 600.00 | ftc_passive_2024 |" in report
+    assert "| 180 | 16, 23 | 400.00 | 0.00 | ca_credit_180 |" in report
+    assert "marks filing status MFJ" in report
+
+
+@pytest.mark.parametrize("change", [
+    lambda review: review["confirmed_tables"].pop(),
+    lambda review: review["confirmed_tables"].append(review["confirmed_tables"][0]),
+    lambda review: review["confirmed_tables"].__setitem__(0, "ftc_general_2024"),
+])
+def test_every_basket_year_and_credit_code_is_confirmed_once(workspace, change):
+    _, review = pending(workspace)
+    change(review)
+    with pytest.raises(P.ImportError, match="exactly once"):
+        P.confirm_import(workspace, 2025, review)
+
+
+def test_the_confirmed_status_must_match_the_marked_box(workspace):
+    _, review = pending(workspace)
+    review["filing_status"] = "Single"
+    with pytest.raises(P.ImportError, match="contradicts the box marked"):
+        P.confirm_import(workspace, 2025, review)
+
+
+def test_rollover_keeps_each_table_apart_and_blocks_on_a_balance(workspace):
+    archive, review = pending(workspace)
+    P.confirm_import(workspace, 2025, review)
+    prior = load_prior(archive, 2025, allow_imported=True)
+    current = CurrentState({"meta": {"tax_year": 2026}}, {"filing_status": "MFJ"}, {})
+    changes = {c.json_path: c.prior_value for c in compute_diff(prior, current, {"carryforwards"}, {})["carryforwards"]}
+    (basket,) = changes["prior_year.imported_ftc_baskets"]
+    assert basket["basket"] == "passive" and basket["carryforward_by_origin_year"] == PASSIVE
+    assert "reconciliation" not in basket
+    assert {c["code"]: c["carryforward"] for c in changes["prior_year.imported_ca_credits"]} == CREDITS
+    blocked = changes["prior_year.import_unresolved"]["questions"]
+    assert {"foreign_tax_credit", "ca_credit_carryovers"} <= set(blocked)
+
+
+def test_a_confirmed_review_without_its_tables_is_refused(workspace):
+    archive, review = pending(workspace)
+    P.confirm_import(workspace, 2025, review)
+    result = json.loads((archive / "result.json").read_text(encoding="utf-8"))
+    profile = json.loads((archive / "taxpayer_profile.json").read_text(encoding="utf-8"))
+    stripped = copy.deepcopy(result)
+    stripped["prior_return_import"]["review"].pop("confirmed_tables")
+    stripped["meta"]["imported_review_sha256"] = P.digest(stripped["prior_return_import"]["review"])
+    with pytest.raises(P.ImportError, match="carryover table requires individual confirmation"):
+        P.validate_reviewed(stripped, profile)
+    assert P.validate_reviewed(result, profile)
+
+
+def test_an_amount_not_carried_blocks_rollover_by_itself(workspace, monkeypatch):
+    """Every credit reads zero carried: the solar credit is used up and the
+    PTET credit's column (d) is unread. Its 3,800 not carried still blocks."""
+    pages, words, where = document("P540_side4")
+    for edit in (set_text("P540_side4", "100", "500", x=295, top=590),
+                 set_text("P540_side4", "400", "0", x=552, top=590),
+                 remove("P540_side4", "3,800", x=544, top=488)):
+        edit(pages, words, where)
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: pages)
+    monkeypatch.setattr(P, "extract_pdf_words", lambda *a, **kw: words)
+    archive, review = pending(workspace)
+    P.confirm_import(workspace, 2025, review)
+    prior = load_prior(archive, 2025, allow_imported=True)
+    current = CurrentState({"meta": {"tax_year": 2026}}, {"filing_status": "MFJ"}, {})
+    changes = {c.json_path: c.prior_value for c in compute_diff(prior, current, {"carryforwards"}, {})["carryforwards"]}
+    assert {c["code"]: c["carryforward"] for c in changes["prior_year.imported_ca_credits"]} == {"180": 0, "242": 0}
+    assert "ca_credit_carryovers" in changes["prior_year.import_unresolved"]["questions"]
+
+
+def test_a_line_without_its_own_headings_never_borrows_the_next_lines():
+    parsed = seed("P540_side3", "P540_side4", edit=remove("P540_side4", "(a)", x=106, top=120))
+    assert "line 16 has no column headings" in parsed["unresolved"]["ca_credit_carryovers"]
+
+
+def test_an_amount_not_carried_in_an_earlier_section_is_still_shown():
+    """The solar credit carries 450 of B2's 500 into Section C: the 50 left
+    behind is reported even though Section C itself carries all it may."""
+    def short(pages, words, where):
+        for text, new, x, top in (("500", "450", 552, 134), ("500", "450", 164, 590), ("400", "350", 552, 590)):
+            word(words[where["P540_side4"]], text, x, top)["text"] = new
+    parsed = seed("P540_side3", "P540_side4", edit=short)
+    solar = next(c for c in parsed["table_evidence"]["ca_credits"] if c["code"] == "180")
+    assert solar["carryforward"] == 350 and solar["not_carried"] == 50
+
+
+def test_punctuation_beside_a_box_is_not_a_mark():
+    def dotted(pages, words, where):
+        single = word(words[0], "Single", x=110, top=207)
+        words[0].append({**single, "text": ".", "x0": 100.0, "x1": 102.0})
+    assert seed(edit=dotted)["marked_filing_status"]["value"] == "MFJ"

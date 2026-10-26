@@ -939,6 +939,41 @@ class TestEveryExtractionRouteMasks:
     file, so the assertion is "the route applies `mask_ssn` and nothing else
     changed", not merely "the SSN is gone"."""
 
+    def test_pdf_words(self, tmp_path):
+        """Positions for a reader that finds a value by where the form prints
+        it. Masking runs over the page's rows as text does; a row holding an
+        identifier comes back as ONE masked word spanning it, and every other
+        word keeps the library's position."""
+        import pdfplumber
+        from agents.lib.parse_utils import extract_pdf_words
+        pdf = _build_pdf(tmp_path / "w2.pdf")
+        out = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
+        joined = " ".join(w["text"] for w in out)
+        assert _ssn("-") not in joined and _itin() not in joined and _ssn(" ") not in joined
+        assert {w["text"] for w in out} >= {f"Employee SSN {MASKED}", f"Spouse ITIN {MASKED}",
+                                            f"Old-style SSN {MASKED}", "Acme", "100,000.00"}
+        with pdfplumber.open(str(pdf)) as document:
+            raw = document.pages[0].extract_words()
+        for found in (w for w in raw if w["text"] in {"Acme", "Routing", "100,000.00"}):
+            assert {"text": found["text"], **{k: round(found[k], 1) for k in ("x0", "x1", "top", "bottom")}} in out
+
+    def test_pdf_words_mask_a_comb_field_under_its_label(self, tmp_path):
+        """The label row and the comb row are separate rows: the row ABOVE
+        governs, as in page text, whatever order the stream drew them."""
+        from reportlab.pdfgen import canvas
+        from agents.lib.parse_utils import extract_pdf_words
+        pdf = tmp_path / "f1040.pdf"
+        page = canvas.Canvas(str(pdf))
+        page.setFont("Helvetica", 10)
+        for index, digit in enumerate("00000" + LAST4):  # drawn before its label
+            page.drawCentredString(469 + 107 / 9 * (index + 0.5), 686, digit)
+        page.drawString(40, 686, "JANE Q DOE")
+        page.setFont("Helvetica", 7)
+        page.drawString(472, 700, "Your social security number")
+        page.save()
+        out = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
+        assert [w["text"] for w in out] == ["Your", "social", "security", "number", f"JANE Q DOE {MASKED}"]
+
     def test_pdf_text_masks_a_flattened_comb_field(self, tmp_path):
         """Drawn the way a flattened Form 1040 prints it: the label row, then
         each digit centred in its own box of the comb field (Form 1040 page 1,

@@ -1296,7 +1296,10 @@ unresolved and block computation through `prior_year.import_unresolved`.
 The seed is not a complete return baseline: YoY refuses it, and projections run
 as for a filer with no archive. Pages are identified by their official running
 headers and amounts by their right-hand line boxes; the tests read the blank
-TY2025 forms' own text with synthetic amounts.
+TY2025 forms' own text with synthetic amounts. Carryover tables (Schedule B
+(Form 1116), Schedule P (540) Part III) and Form 1040's filing-status box are
+read by word position from `parse_utils.extract_pdf_words`, tested on the
+official forms filled and flattened.
 The skill's [import reference](../../.agents/skills/tax-rollover/references/prior-return-import.md)
 states the initial covered-year/reader scope and manual follow-ups.
 

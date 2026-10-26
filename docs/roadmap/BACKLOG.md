@@ -88,7 +88,7 @@ Trigger and range behavior is documented in
 |---|---|---|
 | **1. California filers: ready now** | **AA87** — mask an identifier by the label box it sits in on the page: on Form 540 an SSN typed without hyphens is returned whole. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
-| **3. California filers: larger extensions** | **AA44** — the prior-return import's remaining readers: Form 8995-A Schedule C, Form 1116 Schedule B, Schedule P credit columns and page-1 proposals. Its first delivery shipped in #69; AA45 shipped in #71. | #70 built those readers on table grids the official forms do not have; the owner decides between reading them by position, descoping and closing it. |
+| **3. California filers: larger extensions** | **AA44** — the prior-return import's last readers: Form 540 Side 4's lines 98-99 by position, and page-1 identity and dependent proposals. Its first delivery shipped in #69, the carryover tables in #70; AA45 shipped in #71. | The owner chose reading by position (2026-10-26); a tax software's own PDF still needs a first real report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
@@ -243,11 +243,12 @@ CA/NY/NC withholding true-ups already exist and are not reopened.
   import's report line by line.
   A simulated flattened-field PDF put Form 540 Side 4's line 98-99 amounts on
   separate rows, so they stay questions; reading by position is the fix.
-  Remaining automated readers: Form 8995-A Schedule C, Form 1116 Schedule B
-  baskets/vintages, Schedule P credit columns, and page-1 identity/dependent
-  proposals; these remain explicit manual questions. #70 builds them on table
-  grids the official forms lack (pdfplumber finds no table on Schedule P) and
-  waits on the owner's decision.
+  #70 reads Schedule C (Form 8995-A) lines 2-6, the Schedule B (Form 1116)
+  baskets by origin year, Schedule P (540) Part III credit codes and Form 1040's
+  filing-status box. The tables and the box are read by word position, which the
+  owner chose on 2026-10-26, and tested on the official forms filled and
+  flattened. Remaining: Form 540 Side 4 by position, and page-1 identity and
+  dependent proposals, which stay the manual identity question.
   Origin: [2026-05-24-tax-rollover-design.md](https://github.com/yarikmsu/tax-prep-skills/blob/017d2dd45ead/docs/superpowers/specs/2026-05-24-tax-rollover-design.md) §Open follow-ups.
 
 
