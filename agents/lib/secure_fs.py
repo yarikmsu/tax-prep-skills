@@ -180,7 +180,15 @@ def redact(text) -> str:
 # A label is SSN, ITIN, "social security number", or a POSSESSIVE followed by
 # TIN / "identification number" / "identifying number" — "RECIPIENT'S TIN" on
 # every 1099, "Winner's TIN" on a W-2G, "Shareholder's identifying number" on a
-# K-1. The possessor is not enumerated on the taxpayer side, where a missed
+# K-1. Three spellings the attachment forms print in their header are labels
+# exactly as printed: "Your taxpayer identification number" (Forms 8995 and
+# 8995-A) and "Your identifying number" ending their row, and "Identifying
+# number" ending the row (Form 8801) or followed by "as shown" (Form 1116).
+# Mid-sentence they are not: Form 8938's "Identifying number or other designation" is a security's,
+# Form 8283's "Identifying number:" a partnership's, a CUSIP's heading "other
+# identifying number". "your TIN" in prose is no label either, and Form
+# 8995-A's column "(d) Taxpayer identification number" holds each business's
+# EIN. The possessor is not enumerated on the taxpayer side, where a missed
 # form family is an SSN in the transcript; it is enumerated on the PAYER side
 # (payer, employer, filer, issuer, lender, trustee, creditor, corporation,
 # partnership, estate, trust), where the number is an EIN and a miss masks an
@@ -218,19 +226,71 @@ _ID_LABEL = (
     r"(?<![A-Za-z])(?:(?:SSN|ITIN)s?(?![A-Za-z])"
     r"|social security[^\S\n]+(?:numbers?|nos?\.?|#)(?![A-Za-z])"
     r"|individual taxpayer identification(?: number)?"
+    # Never after "other" (a CUSIP heading) or a possessive, which the
+    # possessive alternative below decides, payer side excluded.
+    r"|(?<!other\s)(?<!other\s\s)(?<!['\u2019]s\s)identifying[^\S\n]+number(?=[^\S\n]*(?:$|as shown))"
+    r"|your[^\S\n]+(?:taxpayer[^\S\n]+identification|identifying)[^\S\n]+number(?=[^\S\n]*$)"
     rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
     r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
 # from a web table carries U+00A0 where the page had a space.
 _ID_VALUE_RE = re.compile(
     r"(?<![0-9])[0-9]{3}[^\S\n]*[0-9]{2}[^\S\n]*([0-9]{4})(?![0-9])")
+# A comb field, nine boxes of one digit each, is how the official fillable
+# forms print an SSN, and a flattened one extracts as nine digits apart. Like
+# the whitespace spelling it is masked only under a label: Form 1040 prints
+# the refund routing number in a comb field too.
+_ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}")
+_ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
-# A label line that already carries its value — in any spelling, or already
-# masked — is a same-line layout, and the line under it is something else.
-_ID_LABEL_ENDS_LINE = re.compile(
-    rf"{_ID_LABEL}(?:(?!{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}"
-    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-[0-9]{{4}})[^\n])*$", re.IGNORECASE)
+_ID_ANY_VALUE = re.compile(
+    rf"{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
+    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)", re.IGNORECASE)
+
+
+def _label_ends(text: str, start: int | None = None, end: int | None = None) -> bool:
+    """A label line that already carries its value — in any spelling, or
+    already masked, in either case — is a same-line layout, and the line
+    under it is something else. The line is `text[start:end]`, by default its
+    last line (a table cell can hold two); the text around it stays visible
+    to the labels' lookbehinds. Only its LAST label decides: one scan, where
+    a pattern tempered past every label took time quadratic in a long line."""
+    end = len(text) if end is None else end
+    start = text.rfind("\n", 0, end) + 1 if start is None else start
+    last = None
+    for last in _ID_LABEL_RE.finditer(text, start, end):
+        pass
+    return last is not None and not _ID_ANY_VALUE.search(text, last.end(), end)
+
+
+# A label wrapped onto a second row hands it to the row after: Schedule B
+# (Form 1116) and Form 1040-NR print the number under the continuation.
+_LABEL_CONTINUES = re.compile(r"[^\S\n]*(?:on page 1 of your tax return|\(see instructions\))[^\S\n]*",
+                              re.IGNORECASE)
+
+
+def _mask_spaced(text: str) -> str:
+    """Mask a run of spaced digits nine at a time. One row of comb fields is
+    one run (Form 1040's four dependents). A run that is not whole nines has
+    no boundary to trust, a short comb or a box number beside one, so none of
+    its digits is kept."""
+    def nines(match: re.Match) -> str:
+        digits = re.findall(r"[0-9]", match[0])
+        if len(digits) % 9:
+            return "XXX-XX-XXXX"
+        return " ".join(f"XXX-XX-{''.join(digits[i + 5:i + 9])}" for i in range(0, len(digits), 9))
+    return _ID_SPACED.sub(nines, text)
+
+
+def _mask_spaced_after_labels(text: str) -> str:
+    """The same-line layout for the comb spelling: every run after the label,
+    which a single-value pattern cannot reach past the first dependent."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if label := _ID_LABEL_RE.search(line):
+            lines[i] = line[:label.end()] + _mask_spaced(line[label.end():])
+    return "\n".join(lines)
 
 
 def _mask_under_labels(text: str) -> str:
@@ -238,10 +298,15 @@ def _mask_under_labels(text: str) -> str:
     an identifier label with no value after it — the label-above-value box of
     a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
     value the same-line pass has just rewritten still counts as present."""
-    lines = text.split("\n")
-    for i in range(1, len(lines)):
-        if _ID_LABEL_ENDS_LINE.search(lines[i - 1]):
-            lines[i] = _ID_VALUE_RE.sub(r"XXX-XX-\1", lines[i])
+    raw = text.split("\n")
+    lines = list(raw)
+    starts = [0]
+    for line in raw:
+        starts.append(starts[-1] + len(line) + 1)
+    for i in range(1, len(raw)):
+        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
+        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
+            lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw[i]))
     return "\n".join(lines)
 
 
@@ -267,6 +332,7 @@ def mask_ssn(value):
         return value
     out = _mask_under_labels(value)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
+    out = _mask_spaced_after_labels(out)
     return _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
 
 
@@ -306,12 +372,11 @@ def first_non_finite(node, _path: tuple = ()) -> "str | None":
 # break was: a label cell governs the cell to its RIGHT (the same-line layout)
 # and its own COLUMN from that row down (the label-above-value layout, which is
 # what a header row is). A label cell is one that carries a label and no value
-# of its own — `_ID_LABEL_ENDS_LINE`, the same tempered pattern the text rule
-# uses, which is why a cell that reads "SSN:" and then the hyphenated number
-# governs nothing after it.
+# of its own — `_label_ends`, the same rule the text uses, which is why a cell
+# that reads "SSN:" and then the hyphenated number governs nothing after it.
 def _is_id_label_cell(cell) -> bool:
     """True when this cell is an identifier LABEL carrying no value itself."""
-    return isinstance(cell, str) and bool(_ID_LABEL_ENDS_LINE.search(cell))
+    return isinstance(cell, str) and _label_ends(cell)
 
 
 def _mask_id_value(cell):
@@ -333,8 +398,8 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
-    masked = _ID_VALUE_RE.sub(r"XXX-XX-\1",
-                              _ID_DELIMITED.sub(r"XXX-XX-\1", text))
+    masked = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1",
+                                           _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
     return masked if masked != text else cell
 
 
@@ -381,7 +446,8 @@ def names_an_identifier(name: str) -> bool:
     which is a path that opens nothing and which two different documents can
     collide on.
     """
-    return bool(_ID_DELIMITED.search(name) or _ID_VALUE_RE.search(name))
+    return bool(_ID_DELIMITED.search(name) or _ID_VALUE_RE.search(name)
+                or _ID_SPACED.search(name))
 
 # The window a bare integer may be PRINTED in. Not a validity check — every
 # caller has its own accepted range and applies it after this — but the bound

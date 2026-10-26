@@ -642,6 +642,146 @@ class TestMaskSsn:
                       "SOCIAL SECURITY NUMBERS"):
             assert mask_ssn(f"{label} {_ssn('')}") == f"{label} {MASKED}"
 
+    def test_a_comb_field_spelling_is_masked_under_its_label(self):
+        """The official fillable forms print an SSN in a comb field, nine
+        boxes of one digit each. Flattened, pdfplumber extracts the digits
+        apart, a spelling no other pattern matched: Form 1040's name row put
+        the whole number in the transcript. Its label row also carries the
+        name labels; the row below holds the name and the nine digits."""
+        comb = " ".join("00000" + LAST4)
+        page = ("Your first name and middle initial Last name Your social security number\n"
+                f"JANE Q DOE {comb}\nHome address")
+        assert mask_ssn(page) == page.replace(comb, MASKED)
+
+    def test_every_comb_run_after_a_same_line_label_is_masked(self):
+        """Form 1040 prints up to four dependents' SSNs on the row that
+        starts "(3) SSN", and their comb fields extract as ONE run of spaced
+        digits. Masking only the first nine left the other dependents'."""
+        other = " ".join("00000" + "1111")
+        row = f"than four (3) SSN {' '.join('00000' + LAST4)} {other}"
+        assert mask_ssn(row) == f"than four (3) SSN {MASKED} XXX-XX-1111"
+
+    def test_a_run_that_is_not_whole_nines_keeps_no_digit(self):
+        """A comb holding eight digits beside a full one, or a box number
+        beside a comb, has no boundary to trust: splitting from either end
+        printed eight digits of the other dependent's number."""
+        comb, short = " ".join("00000" + LAST4), " ".join("0000" + "1111")
+        assert mask_ssn(f"SSN 4 {comb}") == "SSN XXX-XX-XXXX"
+        assert mask_ssn(f"than four (3) SSN {comb} {short}") == "than four (3) SSN XXX-XX-XXXX"
+        assert mask_ssn(f"SSN {comb} 1") == "SSN XXX-XX-XXXX"
+
+    def test_a_comb_digit_is_one_digit(self):
+        """A run of single digits ends at a longer number, which no comb
+        box prints."""
+        assert mask_ssn("SSN 0 0 0 0 0 6 7 8 912") == "SSN 0 0 0 0 0 6 7 8 912"
+
+    def test_a_same_line_label_governs_only_what_follows_it(self):
+        routing, comb = " ".join(ROUTING), " ".join("00000" + LAST4)
+        row = f"Routing {routing} Spouse's SSN {comb}"
+        assert mask_ssn(row) == f"Routing {routing} Spouse's SSN {MASKED}"
+
+    def test_a_comb_run_without_a_label_survives(self):
+        """Form 1040 prints the refund routing number in a comb field too,
+        and a row of line numbers is nine single digits apart."""
+        for row in (f"b Routing number {' '.join(ROUTING)} c Type: Checking",
+                    "1 2 3 4 5 6 7 8 9"):
+            assert mask_ssn(row) == row
+
+    def test_the_last_label_on_a_line_decides_whether_it_carries_its_value(self):
+        """The taxpayer's number beside its label, the spouse's label last on
+        the line and the spouse's number on the row below."""
+        page = f"Your SSN {_ssn('-')} Spouse's SSN\nJOHN R DOE {_ssn('')}"
+        assert mask_ssn(page) == f"Your SSN {MASKED} Spouse's SSN\nJOHN R DOE {MASKED}"
+
+    @pytest.mark.parametrize("value", ["xxx-xx-6789", "XXX-XX-6789", "***-**-6789", "XXX-XX-XXXX"])
+    def test_a_masked_value_in_any_case_is_the_labels_value(self, value):
+        """A statement that prints its TIN pre-masked, in lower case, or this
+        masker's own output for a run with no boundary: either way the line
+        below is something else, here an amount."""
+        row = " ".join(("1 Wages 850", "00", "2026"))
+        assert mask_ssn(f"Employee's SSN {value}\n{row}") == f"Employee's SSN {value}\n{row}"
+
+    def test_a_masked_comb_still_counts_as_the_labels_value(self):
+        row = " ".join(("1a Proceeds 850", "00", "2026"))
+        page = f"Spouse's SSN\nYour SSN {' '.join('00000' + LAST4)} 4\n{row}"
+        assert mask_ssn(page) == f"Spouse's SSN\nYour SSN XXX-XX-XXXX\n{row}"
+
+    def test_a_comb_run_starts_on_a_single_digit(self):
+        """The 0 of a 10 is not a comb box: the run after it is eight digits."""
+        assert mask_ssn("SSN 10 0 0 0 6 7 8 9 1") == "SSN 10 0 0 0 6 7 8 9 1"
+
+    def test_your_spellings_are_labels_only_ending_their_row(self):
+        """"Your identifying number" heads Form 1040-NR's box; in a sentence
+        it sits over whatever the page prints next."""
+        row = " ".join(("1a Proceeds 850", "00", "2026"))
+        for prose in ("Enter your taxpayer identification number on each page",
+                      "you must provide your identifying number."):
+            assert mask_ssn(f"{prose}\n{row}") == f"{prose}\n{row}"
+        assert mask_ssn(f"Your taxpayer identification number\n{_ssn('')}") == \
+            f"Your taxpayer identification number\n{MASKED}"
+
+    def test_a_long_line_of_labels_is_masked_in_linear_time(self):
+        """Only the line's last label is tested for a value after it. A
+        pattern tempered past every label took time quadratic in the line, and
+        the parse budget is checked only between pages."""
+        import time
+        line = ("SSN " * 10_000)[:39_988] + _ssn("-")
+        started = time.perf_counter()
+        assert mask_ssn(line + "\nX").endswith(f"{MASKED}\nX")
+        assert time.perf_counter() - started < 2
+
+    def test_a_label_line_carrying_a_comb_value_leaves_the_next_line_alone(self):
+        comb = " ".join("00000" + LAST4)
+        assert mask_ssn(f"SSN {comb}\nRouting {ROUTING}") == f"SSN {MASKED}\nRouting {ROUTING}"
+
+    @pytest.mark.parametrize("label", [
+        "Name(s) shown on return Your taxpayer identification number",
+        "Name(s) shown on return Identifying number",
+        "Your first name and middle initial Last name Your identifying number",
+        "Name Identifying number as shown on page 1 of your tax return",
+    ])
+    def test_the_attachment_forms_labels_govern_the_row_below(self, label):
+        """Forms 8995 and 8995-A with its schedules say "Your taxpayer
+        identification number", Form 8801 "Identifying number", Form 1116
+        "Identifying number as shown on page 1 of your tax return". None was
+        a label, so an SSN typed there without hyphens reached the transcript."""
+        for value in (_ssn(""), _ssn(" "), " ".join(_ssn(""))):
+            page = f"{label}\nJANE Q DOE {value}"
+            assert mask_ssn(page) == f"{label}\nJANE Q DOE {MASKED}"
+
+    @pytest.mark.parametrize("label, continued", [
+        ("Name Identifying number as shown", "on page 1 of your tax return"),
+        ("Your first name and middle initial Last name Your identifying number", "(see instructions)"),
+    ])
+    def test_a_label_wrapped_onto_a_second_row_governs_the_row_after_it(self, label, continued):
+        """Schedule B (Form 1116) and Form 1040-NR print the number on the row
+        under the label's continuation."""
+        for value in (_ssn(""), " ".join(_ssn(""))):
+            page = f"{label}\n{continued}\nJANE Q DOE {value}"
+            assert mask_ssn(page) == page.replace(value, MASKED)
+
+    @pytest.mark.parametrize("text", [
+        f"Identifying number or other designation\nXYZ FUND ORD SHS {ROUTING}",
+        f"Name: ACME FAMILY LP Identifying number: {ROUTING}",
+        " ".join(("enter the last four digits of your TIN\n1a Proceeds 850", "00", "2026")),
+        f"Business taxpayer identification number\n{ROUTING}",
+        f"Partnership's identifying number\n{ROUTING}",
+        f"CUSIP or other\u00a0identifying number\n{ROUTING}",
+        f"CUSIP or other  identifying number\n{ROUTING}",
+        f"CUSIP or other\nidentifying number\n{ROUTING} XYZ FUND",
+    ])
+    def test_an_identifying_number_that_is_not_the_taxpayers_survives(self, text):
+        """Form 8938 names a foreign security's identifier, Form 8283 a
+        partnership's EIN; "your TIN" in prose sits over an amount."""
+        assert mask_ssn(text) == text
+
+    def test_a_business_tin_column_is_not_the_taxpayers_label(self):
+        """Form 8995-A Part I's column "(d) Taxpayer identification number"
+        holds each business's EIN; without a possessive it governs nothing."""
+        for row in (f"(d) Taxpayer identification number {ROUTING}",
+                    f"specified service aggregation identification number patron\n{ROUTING}"):
+            assert mask_ssn(row) == row
+
     def test_a_labeled_bare_run_must_be_exactly_nine_digits(self):
         """A ten-digit account number under an SSN label is not an SSN, and
         truncating it to a masked last-four would hide the mismatch."""
@@ -724,9 +864,9 @@ class TestATableCarriesItsLabelInAnotherCell:
         assert out[2] == [None, 1234.56]
 
     def test_a_cell_that_carries_its_own_value_governs_nothing_after_it(self):
-        """The tempered rule the text layout uses: a label that already has
-        its value beside it is the same-line layout, and what follows is
-        something else."""
+        """The rule the text layout uses: a label that already has its value
+        beside it is the same-line layout, and what follows is something
+        else."""
         out = mask_table([[f"SSN {_ssn('-')}"], [ROUTING], [_ssn("")]])
         assert out == [[f"SSN {MASKED}"], [ROUTING], [_ssn("")]]
 
@@ -736,6 +876,20 @@ class TestATableCarriesItsLabelInAnotherCell:
                           ["Ann", _ssn("")]])
         assert out[0] == ["Prior balance", ROUTING]
         assert out[2] == ["Ann", MASKED]
+
+    def test_a_comb_cell_under_a_label_is_masked(self):
+        rows = [["SSN", "Wages"], [" ".join("00000" + LAST4), "50,000.00"]]
+        assert mask_table(rows)[1] == [MASKED, "50,000.00"]
+
+    def test_a_cusip_column_is_not_the_taxpayers_number(self):
+        for heading in ("CUSIP or other identifying number", "CUSIP or other\nidentifying number"):
+            rows = [[heading, "Proceeds"], [ROUTING, "850 00"]]
+            assert mask_table(rows) == rows
+
+    def test_a_label_on_an_earlier_line_of_a_cell_governs_nothing(self):
+        """Only a cell's last line can end in its label, as in page text."""
+        rows = [["Employee SSN\nWages", "Other"], [ROUTING, " ".join(("850", "00", "2026"))]]
+        assert mask_table(rows) == rows
 
     def test_a_row_that_is_not_a_sequence_is_still_masked(self):
         assert mask_table([f"Employee SSN {_ssn('-')}", None]) == \
@@ -784,6 +938,28 @@ class TestEveryExtractionRouteMasks:
     """Each route is compared against the UNMASKED library read of the same
     file, so the assertion is "the route applies `mask_ssn` and nothing else
     changed", not merely "the SSN is gone"."""
+
+    def test_pdf_text_masks_a_flattened_comb_field(self, tmp_path):
+        """Drawn the way a flattened Form 1040 prints it: the label row, then
+        each digit centred in its own box of the comb field (Form 1040 page 1,
+        field f1_16: 107 points across nine boxes)."""
+        from reportlab.pdfgen import canvas
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = tmp_path / "f1040.pdf"
+        page = canvas.Canvas(str(pdf))
+        page.setFont("Helvetica", 7)
+        page.drawString(36, 700, "Your first name and middle initial")
+        page.drawString(472, 700, "Your social security number")
+        page.setFont("Helvetica", 10)
+        page.drawString(40, 686, "JANE Q DOE")
+        for index, digit in enumerate("00000" + LAST4):
+            page.drawCentredString(469 + 107 / 9 * (index + 0.5), 686, digit)
+        page.save()
+        raw_text, _ = _raw_pdf(pdf)
+        comb = " ".join("00000" + LAST4)
+        assert comb in raw_text[0], "fixture does not extract the comb spelling"
+        out = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+        assert comb not in out[0] and f"JANE Q DOE {MASKED}" in out[0]
 
     def test_pdf_text(self, tmp_path):
         from agents.lib.parse_utils import extract_pdf_text
@@ -1109,6 +1285,12 @@ class TestEveryStringTheModuleReturnsIsMasked:
         assert proc.returncode == 0, proc.stderr
         assert _ssn(sep) not in proc.stdout and _ssn(sep) not in proc.stderr
         assert "Rename the file" in proc.stderr
+
+    def test_a_comb_spelled_identifier_names_a_file_too(self):
+        """`names_an_identifier` stays wider than `mask_ssn`."""
+        from agents.lib.secure_fs import names_an_identifier
+        assert names_an_identifier(f"W2 {' '.join('00000' + LAST4)}.pdf")
+        assert not names_an_identifier("W2 1 2 3 4.pdf")
 
     def test_a_scanned_path_is_one_the_extractor_can_open(self, tmp_path):
         """`scan` hands the next step a path, not a display name."""
