@@ -435,21 +435,30 @@ def _owner_closing(result: dict, owner: str) -> dict | None:
         record = by_taxpayer.get(owner)
         return record if isinstance(record, dict) else None
     status = _canonical_status((result.get("meta") or {}).get("filing_status"), "Roth plan")
-    return form if status != "MFJ" and owner == "primary" and form.get("line_6_year_end_value") else None
+    present = form.get("line_6_year_end_value") or form.get("line_3_total_basis")
+    return form if status != "MFJ" and owner == "primary" and present else None
 
 
-def filing_year_growth(plan: dict, result: dict, profile: dict) -> float | None:
-    """The filing year's realized growth, where its return records the
-    owner's Dec 31 value with no conversion: one plan-wide forecast rate
-    cannot also carry a year that already happened, and in a down year
-    forcing it to would under-state every later balance."""
+def _following_year_deposits(closing: dict) -> float:
+    """Form 8606 line 4: the closed year's contributions made January to
+    April. A legacy flat record has no such key, but its line 3 less line 5
+    is the same amount."""
+    if "line_4_following_year_contributions" in closing:
+        return closing["line_4_following_year_contributions"] or 0
+    if "line_3_total_basis" in closing and "line_5_basis_net_of_deadline" in closing:
+        return round(closing["line_3_total_basis"] - closing["line_5_basis_net_of_deadline"], 2)
+    return 0
+
+
+def filing_year_dec_31(plan: dict, result: dict, profile: dict) -> float | None:
+    """The owner's Dec 31 value the computed return records, with nothing
+    converted (the flow guard has refused any), or None."""
     closing = _owner_closing(result, plan["ira"]["owner"])
-    balance = plan["ira"]["traditional_balance"]
-    if closing is None or "line_6_year_end_value" not in closing or not balance:
+    if closing is None or "line_6_year_end_value" not in closing:
         return None
     from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
     validate_individual_8606(result, profile)
-    return round(_number(closing["line_6_year_end_value"], "Form 8606 line 6") / balance - 1, 10)
+    return _number(closing["line_6_year_end_value"], "Form 8606 line 6")
 
 
 def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> None:
@@ -474,7 +483,7 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
         # Line 14's basis counts line 4, the closed year's contributions made
         # January to April: they are in the account when the year starts.
         # Later deposits only add, which prices more of a conversion.
-        floor = round(closing["line_6_year_end_value"] + (closing.get("line_4_following_year_contributions") or 0), 2)
+        floor = round(closing["line_6_year_end_value"] + _following_year_deposits(closing), 2)
         if ira["traditional_balance"] < floor:
             raise PlanError("Plan balance is below the owner's closing Form 8606 Dec 31 value (line 6) "
                             "plus its January-April contributions (line 4)")
@@ -555,7 +564,7 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
     if (result.get("meta") or {}).get("source") == "imported_prior_return":
         raise PlanError("An imported seed is not a computed-return planning baseline")
     _basis_check(plan, result, profile, return_year)
-    realized = filing_year_growth(plan, result, profile) if plan["start_year"] == return_year else None
+    recorded = filing_year_dec_31(plan, result, profile) if plan["start_year"] == return_year else None
     balance, roth, basis = (float(plan["ira"][key]) for key in ("traditional_balance", "roth_balance", "basis"))
     rows = []
     for assumptions in plan["years"]:
@@ -582,13 +591,24 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
         notes = []
         priced: dict[float, dict] = {}
         growth = plan["ira"]["growth_rate"]
-        if anchored and realized is not None:
-            growth = realized
-            notes.append("Filing-year growth is the realized return its Form 8606 line 6 records")
+        dec_31 = recorded if anchored else None
+        if dec_31 is not None:
+            notes.append("The filing year's Dec 31 value is its return's Form 8606 line 6; the conversion is "
+                         "priced at whichever timing leaves more in the IRA")
 
         def year_end(amount):
             """Form 8606 line 6, the Dec 31 value: what the conversion leaves,
-            grown at the plan's rate. It is also next year's starting balance."""
+            grown at the plan's rate. It is also next year's starting balance.
+
+            Where the return records the year's Dec 31 value, price from it
+            at the timing that leaves more there: a year-end conversion out of
+            it, or a Jan 1 one before the year's change. A deposit line 6
+            holds but no 8606 line shows (a rollover in, last year's January
+            contribution) then stays in the denominator instead of reading as
+            growth, and an early-year conversion never looks cheaper."""
+            if dec_31 is not None:
+                early = dec_31 * (1 - amount / balance) if balance else 0.0
+                return round(max(dec_31 - amount, early, 0.0), 2)
             return round((balance - amount) * (1 + growth), 2)
 
         def price(amount):
