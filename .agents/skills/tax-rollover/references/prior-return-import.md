@@ -26,8 +26,8 @@ and `documents/prior_return/` must already be owner-only using `secure_fs`.
 
 ## Create and inspect the pending seed
 
-Place the PDF under `documents/prior_return/`, named without an SSN or ITIN: the
-seed keeps its path to re-check the file, so the import refuses one. Run:
+Place the PDF under `documents/prior_return/`. The seed stores no file name;
+confirmation and rollover find the reviewed PDF there by its digest. Run:
 
 ```bash
 sh agents/lib/run.sh -m agents.lib.prior_return import-pdf \
@@ -74,7 +74,9 @@ Write an owner-only local JSON review under `summaries/` with exactly:
 - `seed_sha256`: the report's seed digest.
 - `confirmed_fields`: the exact list of individually confirmed field ids.
 - `filing_status`: `Single`, `MFJ`, `MFS`, `HOH` or `QSS`, confirmed against page 1.
-- `ira_owners`: each `ira_basis_page_N` id mapped to `primary` or `spouse`, or
+- `ira_owners`: each `ira_basis_page_N` id mapped to the person it belongs to on
+  THIS year's return, `primary` or `spouse` (last year's single filer may be this
+  year's spouse; a non-joint prior return has one filer, so one named page), or
   to `duplicate_of:ira_basis_page_M` when the PDF holds a second copy of that
   page. The report flags pages printing identical figures; a copy must match its
   original figure for figure, and spouses with equal figures are two owners.
@@ -82,6 +84,8 @@ Write an owner-only local JSON review under `summaries/` with exactly:
   (`XXX-XX-1234`) and confirmation holds the assignment to it: a copy prints
   its original's SSN, one SSN on two pages is one owner, and a page assigned
   to a person whose profile `ssn_last4` differs is someone else's worksheet.
+  The report says which pages printed no readable SSN: nothing checks those
+  assignments, so confirm them from the name on the page.
 - `questions`: every unresolved id mapped to `not_applicable` or `manual_required`.
 
 `not_applicable` means the filer affirmatively established no such item; a

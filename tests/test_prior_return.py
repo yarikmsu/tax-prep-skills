@@ -91,6 +91,8 @@ def test_sidebar_and_wrapped_rows_are_read_by_their_right_hand_label():
     ("c Check if (see instructions) . . . . . 1 Rollover 2 QCD 3", "1040", None),
     # A flattened amount can extract with its characters apart.
     ("• The loss on line 16; or . . . . . . . 21 ( 3 , 0 0 0 )", "D", ("21", "(3,000)")),
+    # Two groups are never joined: dollars and cents would become 30,000.
+    ("• The loss on line 16; or . . . . . . . 21 ( 300 00 )", "D", None),
 ])
 def test_only_a_labelled_box_holds_an_amount(row, form, expected):
     assert P._labelled_amount(row, form) == expected
@@ -281,8 +283,9 @@ def test_form_1040_sr_reads_as_form_1040():
     assert values(P.extract_seed(doc, 2025, SHA)) == EXPECTED
 
 
-def test_an_unmarked_amended_box_is_not_out_of_scope():
-    assert not P._out_of_scope(AMENDED_ROW + " month________ year 2026.")
+@pytest.mark.parametrize("box", ["", "\u2610 ", "o ", "[ ] "])
+def test_an_unmarked_amended_box_is_not_out_of_scope(box):
+    assert not P._out_of_scope(box + AMENDED_ROW + " month________ year 2026.")
 
 
 def test_instruction_text_naming_other_returns_is_not_out_of_scope():
@@ -456,14 +459,22 @@ def test_a_source_changed_during_extraction_refuses(workspace, monkeypatch):
     assert not (workspace / "archive").exists()
 
 
-@pytest.mark.parametrize("name", ["Pat 000-00-0000 2025.pdf", "return 000000000.pdf", "prior 000 00 0000.pdf",
-                                  "prior_000_00_0000.pdf", "ret_2025000000000.pdf"])
-def test_a_source_path_holding_an_identification_number_refuses(workspace, name):
-    source = workspace / "documents/prior_return" / name
-    source.write_bytes(b"%PDF synthetic")
-    with pytest.raises(P.ImportError, match="identification number"):
-        P.import_pdf(workspace, f"documents/prior_return/{name}", 2026)
-    assert not (workspace / "archive").exists()
+def test_the_seed_stores_no_source_path_and_finds_the_pdf_by_digest(workspace):
+    # A file name can carry a name or an SSN in any spelling.
+    named = workspace / "documents/prior_return/Pat Sample 000 00 0000 2025.pdf"
+    named.write_bytes(b"%PDF named after its owner")
+    archive = P.import_pdf(workspace, "documents/prior_return/Pat Sample 000 00 0000 2025.pdf", 2026)
+    stored = (archive / "result.json").read_text(encoding="utf-8")
+    assert "Pat" not in stored and "0000 2025" not in stored and "synthetic.pdf" not in stored
+    parsed = json.loads(stored)["prior_return_import"]
+    review = {"seed_sha256": P.digest(parsed), "confirmed_fields": list(parsed["fields"]),
+              "questions": {k: "not_applicable" for k in parsed["unresolved"]},
+              "filing_status": "Single", "ira_owners": {IRA: "primary"}}
+    named.rename(workspace / "documents/prior_return/renamed.pdf")
+    P.confirm_import(workspace, 2025, review)
+    (workspace / "documents/prior_return/renamed.pdf").write_bytes(b"%PDF edited after review")
+    with pytest.raises(RolloverError, match="changed"):
+        load_prior(archive, 2025, allow_imported=True)
 
 
 def test_manual_worksheet_resolution_blocks_compute(workspace):
@@ -560,6 +571,7 @@ def test_zero_basis_and_two_owners_are_not_combined(workspace, monkeypatch):
 
 @pytest.mark.parametrize("status,owners", [
     ("MFJ", {IRA: "primary", "ira_basis_page_13": "primary"}),
+    # A non-joint return has one filer, so one owner.
     ("Single", {IRA: "primary", "ira_basis_page_13": "spouse"}),
     ("MFJ", {IRA: "primary", "ira_basis_page_13": "owner"}),
 ])
@@ -672,15 +684,49 @@ def test_printed_owners_decide_copy_or_spouse(workspace, monkeypatch, second, ow
         P.confirm_import(workspace, 2025, review)
 
 
-def test_a_page_assigned_to_a_person_with_another_ssn_refuses(workspace, monkeypatch):
+@pytest.mark.parametrize("spelling", ["{}", "XXX-XX-{}"])
+def test_a_page_assigned_to_a_person_with_another_ssn_refuses(workspace, monkeypatch, spelling):
     doc = pages()
     doc[4] = with_owner(doc[4], "XXX-XX-0002")
     monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
     write_json(workspace / "taxpayer_profile.json",
-               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": "0001"}})
+               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": spelling.format("0001")}})
     _, review = pending(workspace)
     with pytest.raises(P.ImportError, match="different SSN"):
         P.confirm_import(workspace, 2025, review)
     write_json(workspace / "taxpayer_profile.json",
-               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": "0002"}})
+               {"tax_year": 2026, "filing_status": "Single", "primary": {"ssn_last4": spelling.format("0002")}})
     P.confirm_import(workspace, 2025, review)
+
+
+def test_last_years_single_filer_may_be_this_years_spouse(workspace, monkeypatch):
+    doc = pages()
+    doc[4] = with_owner(doc[4], "XXX-XX-0002")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    write_json(workspace / "taxpayer_profile.json", {"tax_year": 2026, "filing_status": "MFJ",
+               "primary": {"ssn_last4": "0001"}, "spouse": {"ssn_last4": "XXX-XX-0002"}})
+    archive, review = pending(workspace)
+    review["ira_owners"][IRA] = "spouse"
+    P.confirm_import(workspace, 2025, review)
+    assert diff(archive, "MFJ")["prior_year.ira_basis_by_taxpayer"] == {"spouse": 9000}
+
+
+def test_spouses_sharing_last_four_digits_can_both_own_a_worksheet(workspace, monkeypatch):
+    doc = pages()
+    doc[12] = with_owner(doc[4].replace("13 1,000", "13 10,000").replace("14 9,000", "14 0"), "XXX-XX-0001")
+    doc[4] = with_owner(doc[4], "XXX-XX-0001")
+    monkeypatch.setattr(P, "extract_pdf_text", lambda *a, **kw: doc)
+    archive, review = pending(workspace)
+    review["filing_status"] = "MFJ"
+    review["ira_owners"]["ira_basis_page_13"] = "spouse"
+    P.confirm_import(workspace, 2025, review)
+    assert diff(archive, "MFJ")["prior_year.ira_basis_by_taxpayer"] == {"primary": 9000, "spouse": 0}
+
+
+def test_a_software_mask_is_read_as_the_owner_and_the_report_says_when_none_was():
+    doc = pages()
+    assert "no owner SSN was read" in P.review_report({"prior_return_import": seed(doc)})
+    doc[4] = with_owner(doc[4], "***-**-0003")
+    parsed = seed(doc)
+    assert parsed["worksheets"]["ira_basis_owners"] == {IRA: "XXX-XX-0003"}
+    assert "prints owner XXX-XX-0003" in P.review_report({"prior_return_import": parsed})

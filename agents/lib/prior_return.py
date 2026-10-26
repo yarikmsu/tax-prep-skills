@@ -120,7 +120,8 @@ def _out_of_scope(text: str) -> bool:
             or bool(re.search(r"(?m)^(?=.*\bAMENDED return\b).*(?:^|\s)(?:X|\u2612|\[X\])(?:\s|$)", text))
             # Form 540's row starts with its label; a ticked box puts a glyph
             # before it, which a flattened checkbox extracts as "4", "n" or a cid.
-            or bool(re.search(r"(?m)^\s*(?:\S{1,3}|\(cid:\d+\))\s+Check here if this is an AMENDED return", text)))
+            or bool(re.search(r"(?m)^\s*(?!(?:\u2610|\u25a1|o|q|\[\s?\])\s)(?:\S{1,3}|\(cid:\d+\))\s+"
+                              r"Check here if this is an AMENDED return", text)))
 
 
 def _form(text: str) -> tuple[str, int] | None:
@@ -154,7 +155,7 @@ def _labelled_amount(row: str, form: str) -> tuple[str, str] | None:
         row = re.sub(r"\s+\.?\s?00$", "", row)
     # A pre-printed "( )" is padded with spaces, and a flattened amount
     # inside it can extract with its characters apart: "( 3 , 0 0 0 )".
-    row = re.sub(r"\(\s*(\d[\d ,.]*?)\s*\)$", lambda m: "(" + m[1].replace(" ", "") + ")", row)
+    row = re.sub(r"\(\s*((?:[\d,.] )+[\d,.])\s*\)$", lambda m: "(" + m[1].replace(" ", "") + ")", row)
     match = re.search(rf"(?:^|[.\u2022]|\(cid:\d+\))\s*(\d{{1,3}}[a-z]?)\s+"
                       rf"(?:\(\s*({_MAGNITUDE})\s*\)|({_NUMBER}))$", row)
     if not match:
@@ -227,8 +228,9 @@ def _form_8606_owner(text: str) -> str | None:
     end = next((i for i, row in enumerate(rows) if row.startswith("Home address")), None)
     if start is None or end is None or end <= start:
         return None
-    found = set(re.findall(r"XXX-XX-\d{4}", "\n".join(rows[start:end + 1])))
-    return found.pop() if len(found) == 1 else None
+    # mask_ssn writes XXX-XX-; software may already print its own mask.
+    found = set(re.findall(r"(?:XXX|\*{3})-(?:XX|\*{2})-(\d{4})\b", "\n".join(rows[start:end + 1])))
+    return f"XXX-XX-{found.pop()}" if len(found) == 1 else None
 
 
 def _with_blanks(lines: dict, output: str, inputs: tuple[str, ...], compute, blank: set) -> list | None:
@@ -433,11 +435,6 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
     allowed = resolve_under_workspace("documents/prior_return", workspace)
     if not path.is_relative_to(allowed):
         raise ImportError("Prior return PDF must be inside documents/prior_return")
-    relative = str(path.relative_to(workspace.resolve()))
-    # The seed keeps this path to re-hash the PDF; a full SSN is never stored,
-    # whatever separates its groups.
-    if mask_ssn(relative) != relative or re.search(r"\d{9,}|(?<!\d)\d{3}[ _.\-/]\d{2}[ _.\-/]\d{4}(?!\d)", relative):
-        raise ImportError("Rename the prior return PDF so its path holds no taxpayer identification number")
     year = current_year - 1
     archive = workspace / "archive" / str(year)
     if archive.exists():
@@ -447,7 +444,6 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
     seed = extract_seed(pages, year, before)
     if hashlib.sha256(path.read_bytes()).hexdigest() != before:
         raise ImportError("Source PDF changed during import")
-    seed["source"] = relative
     result = {"meta": {"tax_year": year, "source": "imported_prior_return", "imported_review": "pending"},
               "prior_return_import": seed}
     profile = {"tax_year": year}
@@ -469,7 +465,12 @@ def review_report(result: dict) -> str:
         refs = "; ".join(f"page {p['page']}, {p['form']} line {p['line']}" for p in field["provenance"])
         lines.append(f"| {key} | {field['value']:.2f} | {refs} |")
     pages = seed["worksheets"].get("ira_basis_pages", {})
+    printed = seed["worksheets"].get("ira_basis_owners", {})
     keys = sorted(pages)
+    for key in keys:
+        lines += ["", f"{key} prints owner {printed[key]}; confirmation holds the assignment to it." if key in printed
+                  else f"{key}: no owner SSN was read, so nothing checks its assignment; confirm the owner from "
+                       "the name on that page."]
     for index, key in enumerate(keys):
         for other in keys[index + 1:]:
             if pages[key] == pages[other]:
@@ -514,14 +515,22 @@ def validate_reviewed(result: dict, profile: dict) -> dict:
 
 
 def verify_source(workspace: Path, result: dict) -> None:
+    """Find the reviewed PDF by its digest. The seed stores no path: a file
+    name can hold a name or an SSN in any spelling, and none is needed."""
     from agents.lib.workspace import resolve_under_workspace
     seed = result["prior_return_import"]
-    source = resolve_under_workspace(seed["source"], workspace)
-    checked = _validate_file_path(str(source), {".pdf"}, workspace=str(workspace))
     allowed = resolve_under_workspace("documents/prior_return", workspace)
-    if (not checked.is_relative_to(allowed)
-            or hashlib.sha256(checked.read_bytes()).hexdigest() != seed["source_sha256"]):
-        raise ImportError("Source PDF changed or left the import directory; re-import and review it")
+    for candidate in sorted(allowed.iterdir()) if allowed.is_dir() else ():
+        if candidate.suffix.lower() != ".pdf":
+            continue
+        try:
+            checked = _validate_file_path(str(candidate), {".pdf"}, workspace=str(workspace))
+        except (OSError, ValueError):
+            continue  # a link or oversized file is never the reviewed source
+        if (checked.is_relative_to(allowed)
+                and hashlib.sha256(checked.read_bytes()).hexdigest() == seed["source_sha256"]):
+            return
+    raise ImportError("Source PDF changed or left the import directory; re-import and review it")
 
 
 def _check_ira_owners(seed: dict, owners, filing_status: str) -> None:
@@ -541,12 +550,15 @@ def _check_ira_owners(seed: dict, owners, filing_status: str) -> None:
                                      or None not in (printed.get(key), printed.get(original))
                                      and printed[key] != printed[original]):
             raise ImportError("A duplicate Form 8606 copy must match a named page figure for figure")
-    known = [printed[key] for key in named if key in printed]
-    if len(known) != len(set(known)):
-        raise ImportError("Two Form 8606 pages print one owner's SSN; mark the second a duplicate_of the first")
+    keys = sorted(named)
+    if any(key in printed and printed.get(other) == printed[key] and pages.get(key) == pages.get(other)
+           for index, key in enumerate(keys) for other in keys[index + 1:]):
+        raise ImportError("Two identical Form 8606 pages print one owner's SSN; mark the second a duplicate_of the first")
+    # Owners are THIS year's roles, where the basis goes: last year's single
+    # filer may be this year's spouse. A non-joint return has one filer.
     if (any(v not in {"primary", "spouse"} for v in named.values())
             or len(set(named.values())) != len(named)
-            or ("spouse" in named.values() and filing_status != "MFJ")):
+            or (len(named) > 1 and filing_status != "MFJ")):
         raise ImportError("Assign each individual IRA worksheet to a distinct eligible owner")
 
 
@@ -557,7 +569,9 @@ def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
     for key, owner in owners.items():
         person = current.get(owner) if owner in {"primary", "spouse"} else None
         last4 = person.get("ssn_last4") if isinstance(person, dict) else None
-        if key in printed and isinstance(last4, str) and printed[key] != f"XXX-XX-{last4}":
+        # The profile may hold "1234" or "XXX-XX-1234"; compare the digits.
+        digits = re.search(r"(\d{4})$", last4) if isinstance(last4, str) else None
+        if key in printed and digits and printed[key] != f"XXX-XX-{digits[1]}":
             raise ImportError("A Form 8606 page prints a different SSN than the person it is assigned to")
 
 
