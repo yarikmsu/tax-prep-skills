@@ -884,71 +884,44 @@ def recorded_dec_31(value):
     return r
 
 
-def test_the_filing_year_prices_from_its_recorded_dec_31_value():
-    p = plan()
-    p["years"] = p["years"][:1]
-    p["years"][0]["conversion"] = 20000
-    row = build(p, r=recorded_dec_31(120000))["years"][0]
-    # An up year: a year-end conversion leaves more, 120,000 - 20,000 =
-    # 100,000 against 120,000 x (1 - 20,000 / 100,000) = 96,000. Line 9 =
-    # 120,000; 20,000 x 20,000 / 120,000 = 3,333.33 nontaxable.
-    assert (row["taxable_conversion"], row["ira_next_year"]) == (16666.67, 100000)
-    assert any("Form 8606 line 6" in note for note in row["notes"])
-
-
-def test_a_deposit_line_6_holds_is_never_read_as_growth():
-    # Last year's 7,000 January contribution: in line 6 (13,000) and in the
-    # opening basis, though not in the 6,000 Jan 1 balance entered.
-    prof = profile()
-    prof["prior_year"]["ira_basis_by_taxpayer"]["primary"] = 7000
-    r = result()
-    r["form_8606"] = closing_8606(13000, prof=prof)
-    r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
-    p = plan()
-    p["years"] = p["years"][:1]
-    p["ira"].update(traditional_balance=6000, basis=7000)
-    p["years"][0]["conversion"] = 6000
-    # Line 6 = 13,000 - 6,000 = 7,000; line 9 = 13,000; 6,000 x 7,000 /
-    # 13,000 = 3,230.77 nontaxable.
-    assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 2769.23
-
-
-def test_a_tampered_filing_year_record_is_not_a_dec_31_value():
-    r = recorded_dec_31(120000)
-    r["form_8606"]["by_taxpayer"]["primary"]["basis_remaining"] = 25000
-    with pytest.raises(ValueError):
-        build(r=r)
-
-
-def test_a_down_year_is_not_forecast_at_its_own_loss():
-    p = plan()
-    p["ira"]["growth_rate"] = .06
-    p["years"] = [annual(2025), annual(2026), annual(2027)]
-    for row in p["years"]:
-        row["conversion"] = 10000
-    years = build(p, r=recorded_dec_31(80000))["years"]
-    # 2025 lost 20%, so a Jan 1 conversion leaves more: line 6 = 80,000 x
-    # (1 - 10,000 / 100,000) = 72,000 against 70,000, line 9 = 82,000,
-    # 10,000 x 20,000 / 82,000 = 2,439.02 nontaxable. Then the 6% forecast:
-    # 62,000 x 1.06 = 65,720, 10,000 x 17,560.98 / 75,720 = 2,319.20; and
-    # 55,720 x 1.06 = 59,063.20, 10,000 x 15,241.78 / 69,063.20 = 2,206.93.
-    assert [y["taxable_conversion"] for y in years] == [7560.98, 7680.80, 7793.07]
-    assert [y["ira_next_year"] for y in years] == [72000, 65720, 59063.20]
-
-
-def test_a_legacy_single_filer_form_8606_records_the_dec_31_value():
-    prof = profile()
-    prof["prior_year"] = {"ira_basis": 20000}
-    r = result()
-    r["form_8606"] = {"by_taxpayer": {}, "line_6_year_end_value": 120000}
-    p = plan()
-    p["years"] = p["years"][:1]
-    p["years"][0]["conversion"] = 20000
-    assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 16666.67
-
-
 def test_a_falling_index_never_lowers_the_top_below_its_2027_amount():
     indexed, _ = P.resolve_law({"mode": "hypothetical", "basis": "indexed_from_2026_at_-0.02"}, 2028,
                                {2026: statutory_irmaa()})
     tiers = indexed["federal"]["irmaa"]["tiers"]
     assert tiers["single"][-1]["magi_threshold"] == 500000 and tiers["mfj"][-1]["magi_threshold"] == 750000
+
+
+@pytest.mark.parametrize("record", ["individual", "legacy"])
+def test_a_recorded_dec_31_value_makes_the_filing_year_counterfactual(record):
+    # Line 6 would depend on when in the year the conversion happened and on
+    # deposits no 8606 line shows; nothing on the return bounds it.
+    prof = profile()
+    if record == "individual":
+        r = recorded_dec_31(120000)
+    else:
+        prof["prior_year"] = {"ira_basis": 20000}
+        r = result()
+        r["form_8606"] = {"by_taxpayer": {}, "line_6_year_end_value": 120000}
+    with pytest.raises(P.PlanError, match="cannot be priced"):
+        build(r=r, prof=prof)
+
+
+def test_a_legacy_record_without_a_dec_31_value_does_not_block_the_filing_year():
+    # Basis carried with nothing happening: line 6 is left at zero.
+    prof = profile()
+    prof["prior_year"] = {"ira_basis": 20000}
+    r = result()
+    r["form_8606"] = {"by_taxpayer": {}, "line_3_total_basis": 20000, "line_6_year_end_value": 0}
+    assert build(r=r, prof=prof)["years"][0]["taxable_conversion"] == 8000
+
+
+def test_a_template_shaped_legacy_record_floors_at_all_of_line_1():
+    r = result()
+    r["form_8606"] = {"by_taxpayer": {}, "line_1_nondeductible_current": 7000, "line_6_year_end_value": 10000}
+    p = plan()
+    p["start_year"], p["years"] = 2026, [annual(2026, conversion=10000)]
+    p["ira"].update(basis_source="reviewed_worksheet", basis=7000, traditional_balance=10000)
+    prof = profile()
+    prof["prior_year"] = {"ira_basis": 0}
+    with pytest.raises(P.PlanError, match="below"):
+        build(p, r=r, prof=prof)

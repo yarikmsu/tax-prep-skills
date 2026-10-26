@@ -35,10 +35,10 @@ defaults are accepted.
   filing-year plan is refused when the return already records the owner's
   contributions, distributions or conversions (on a legacy return without
   individual records, any household ones or any Form 1040 line 4a): plan from
-  the following year. Where the return records the owner's Dec 31 value, the
-  filing year prices from it at whichever conversion timing leaves more in the
-  IRA (year end, or Jan 1 before the year's change), so a deposit that line 6
-  holds never reads as growth; the forecast rate applies from the next year.
+  the following year. A return that records the owner's Dec 31 value also
+  refuses a filing-year plan: a conversion in that year is a counterfactual
+  whose line 6 depends on when it happened and on deposits no Form 8606 line
+  shows, so plan from the following year with `closing_form_8606`.
 - `basis_confirmed`, `regular_worksheet_confirmed`,
   `no_other_ira_flows_confirmed`: all true. Confirm no new IRA contributions,
   other distributions, rollovers, inherited IRA treatment or tax withholding

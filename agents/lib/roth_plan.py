@@ -442,23 +442,13 @@ def _owner_closing(result: dict, owner: str) -> dict | None:
 def _following_year_deposits(closing: dict) -> float:
     """Form 8606 line 4: the closed year's contributions made January to
     April. A legacy flat record has no such key, but its line 3 less line 5
-    is the same amount."""
+    is the same amount; with neither, all of line 1 is taken, which can only
+    raise the floor."""
     if "line_4_following_year_contributions" in closing:
         return closing["line_4_following_year_contributions"] or 0
     if "line_3_total_basis" in closing and "line_5_basis_net_of_deadline" in closing:
         return round(closing["line_3_total_basis"] - closing["line_5_basis_net_of_deadline"], 2)
-    return 0
-
-
-def filing_year_dec_31(plan: dict, result: dict, profile: dict) -> float | None:
-    """The owner's Dec 31 value the computed return records, with nothing
-    converted (the flow guard has refused any), or None."""
-    closing = _owner_closing(result, plan["ira"]["owner"])
-    if closing is None or "line_6_year_end_value" not in closing:
-        return None
-    from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
-    validate_individual_8606(result, profile)
-    return _number(closing["line_6_year_end_value"], "Form 8606 line 6")
+    return closing.get("line_1_nondeductible_current") or 0
 
 
 def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> None:
@@ -479,6 +469,15 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
                 "line_1_nondeductible_current", "line_7_distributions", "line_8_converted")):
             raise PlanError("The computed return already records this owner's IRA contributions, distributions "
                             "or conversions; plan from the following year")
+        # A return that records the year's Dec 31 value makes a conversion in
+        # that year a counterfactual: its Form 8606 line 6 depends on when in
+        # the year it happened and on deposits no 8606 line shows, and no
+        # figure on the return bounds it from below. A legacy flat record's
+        # zero line 6 means none was entered.
+        if closing is not None and (closing.get("line_6_year_end_value") if not by_taxpayer
+                                    else "line_6_year_end_value" in closing):
+            raise PlanError("The computed return records this owner's Dec 31 IRA value, so a conversion in its "
+                            "year cannot be priced; plan from the following year from the closing Form 8606")
     elif closing is not None and "line_6_year_end_value" in closing:
         # Line 14's basis counts line 4, the closed year's contributions made
         # January to April: they are in the account when the year starts.
@@ -564,7 +563,6 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
     if (result.get("meta") or {}).get("source") == "imported_prior_return":
         raise PlanError("An imported seed is not a computed-return planning baseline")
     _basis_check(plan, result, profile, return_year)
-    recorded = filing_year_dec_31(plan, result, profile) if plan["start_year"] == return_year else None
     balance, roth, basis = (float(plan["ira"][key]) for key in ("traditional_balance", "roth_balance", "basis"))
     rows = []
     for assumptions in plan["years"]:
@@ -591,24 +589,10 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
         notes = []
         priced: dict[float, dict] = {}
         growth = plan["ira"]["growth_rate"]
-        dec_31 = recorded if anchored else None
-        if dec_31 is not None:
-            notes.append("The filing year's Dec 31 value is its return's Form 8606 line 6; the conversion is "
-                         "priced at whichever timing leaves more in the IRA")
 
         def year_end(amount):
             """Form 8606 line 6, the Dec 31 value: what the conversion leaves,
-            grown at the plan's rate. It is also next year's starting balance.
-
-            Where the return records the year's Dec 31 value, price from it
-            at the timing that leaves more there: a year-end conversion out of
-            it, or a Jan 1 one before the year's change. A deposit line 6
-            holds but no 8606 line shows (a rollover in, last year's January
-            contribution) then stays in the denominator instead of reading as
-            growth, and an early-year conversion never looks cheaper."""
-            if dec_31 is not None:
-                early = dec_31 * (1 - amount / balance) if balance else 0.0
-                return round(max(dec_31 - amount, early, 0.0), 2)
+            grown at the plan's rate. It is also next year's starting balance."""
             return round((balance - amount) * (1 + growth), 2)
 
         def price(amount):
