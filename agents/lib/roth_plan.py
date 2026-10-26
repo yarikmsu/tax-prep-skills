@@ -147,13 +147,17 @@ def validate_plan(raw: dict, return_year: int) -> dict:
             raise PlanError("Annual filing status and state must be canonical (CA or null)")
         if ira["owner"] == "spouse" and row["filing_status"] != "MFJ":
             raise PlanError("Plan the spouse's separate return in their own workspace")
-        # A loss goes in capital_gains or self_employment_net, where the §1211
-        # limit and SE arithmetic apply; other ordinary income cannot carry one.
-        for key in ("wages", "other_ordinary_income", "qualified_dividends", "social_security", "adjustments",
+        for key in ("wages", "qualified_dividends", "social_security", "adjustments",
                     "additional_standard_deduction", "net_investment_income", "niit_magi_addbacks", "irmaa_magi_addbacks"):
             _money(row[key], key)
-        for key in ("capital_gains", "self_employment_net"):
+        for key in ("other_ordinary_income", "capital_gains", "self_employment_net"):
             _money(row[key], key, signed=True)
+        # The filing year copies the return, whose Schedule 1 may carry a loss.
+        # A forecast loss belongs where its limits apply: a capital loss in
+        # capital_gains (§1211), an ordinary one in adjustments.
+        if row["year"] != return_year and row["other_ordinary_income"] < 0:
+            raise PlanError("Forecast other ordinary income cannot be negative; enter an ordinary loss in "
+                            "adjustments and a capital loss in capital_gains")
         if row["deduction"] != "standard":
             _money(row["deduction"], "annual deduction")
             if row["additional_standard_deduction"]:
@@ -260,7 +264,9 @@ def _indexed_irmaa(tiers: dict, base: int, target: int, rate: float) -> dict:
     lower = [_thousand(_scale(tier["magi_threshold"], factor)) for tier in single[:4]]
     top = _number(single[4]["magi_threshold"], "IRMAA top threshold")
     if target >= 2028:
-        top = _thousand(_scale(top, (1 + rate) ** (target - max(base, 2027))))
+        # Increased by the CPI rise "(if any)": never below the 2027 amount.
+        indexed = _thousand(_scale(top, (1 + rate) ** (target - max(base, 2027))))
+        top = max(top, indexed) if base <= 2027 else indexed
     bounds = {"single": [*lower, top], "mfj": [*(2 * amount for amount in lower), 1.5 * top],
               "mfs": [lower[0], top - lower[0]]}
     out = {}
@@ -420,13 +426,21 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
     ira = plan["ira"]
     if (profile.get("prior_year") or {}).get("import_unresolved"):
         raise PlanError("Resolve imported carryovers before planning from the return")
-    closing = ((result.get("form_8606") or {}).get("by_taxpayer") or {}).get(ira["owner"])
-    if plan["start_year"] == return_year and isinstance(closing, dict) and any(
-            closing.get(key) for key in ("line_1_nondeductible_current", "line_7_distributions", "line_8_converted")):
+    form_8606 = result.get("form_8606") or {}
+    closing = (form_8606.get("by_taxpayer") or {}).get(ira["owner"])
+    if plan["start_year"] == return_year:
         # The plan's worksheet starts from the opening basis and knows no
         # other flow, so it would price the conversion as if these never were.
-        raise PlanError("The computed return already records this owner's IRA contributions, distributions "
-                        "or conversions; plan from the following year")
+        # Without the owner's own record, the household lines decide.
+        recorded = closing if isinstance(closing, dict) else form_8606
+        unattributed = not isinstance(closing, dict) and (result.get("form_1040") or {}).get("line_4a_ira_distributions")
+        if unattributed or any(recorded.get(key) for key in (
+                "line_1_nondeductible_current", "line_7_distributions", "line_8_converted")):
+            raise PlanError("The computed return already records this owner's IRA contributions, distributions "
+                            "or conversions; plan from the following year")
+        if isinstance(closing, dict) and "line_6_year_end_value" in closing and abs(
+                round(ira["traditional_balance"] * (1 + ira["growth_rate"]), 2) - closing["line_6_year_end_value"]) > 1:
+            raise PlanError("Filing-year balance and growth must reproduce the return's Form 8606 Dec 31 value (line 6)")
     if (profile.get("flags") or {}).get("subject_to_rmd_" + ira["owner"]) is True and ira["traditional_balance"]:
         raise PlanError("The selected owner is already subject to RMDs; stop before the RMD period")
     if ira["basis_source"] == "reviewed_worksheet":
@@ -453,8 +467,12 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
         if not isinstance(section, dict):
             raise PlanError("No verified closing individual Form 8606 for the plan owner")
         value = section["basis_remaining"]
-        if ira["traditional_balance"] != section.get("line_6_year_end_value", ira["traditional_balance"]):
-            raise PlanError("Plan balance differs from the owner's closing Form 8606 Dec 31 value (line 6)")
+        # Line 14's basis includes line 4, the closed year's contributions made
+        # from January to April; they are in the account when the year starts.
+        if "line_6_year_end_value" in section and ira["traditional_balance"] != round(
+                section["line_6_year_end_value"] + (section.get("line_4_following_year_contributions") or 0), 2):
+            raise PlanError("Plan balance differs from the owner's closing Form 8606 Dec 31 value (line 6) "
+                            "plus its January-April contributions (line 4)")
     if ira["basis"] != value:
         raise PlanError("Plan basis differs from the selected owner's recorded basis source")
 

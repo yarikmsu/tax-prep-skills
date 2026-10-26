@@ -610,7 +610,7 @@ def test_federal_only_plan_never_declares_a_zero_state_liability():
     assert output["totals"]["state_cost"] is None
 
 
-def closing_8606(year_end_value=300000, converted=0, contribution=0):
+def closing_8606(year_end_value=300000, converted=0, contribution=0, after_year_end=0, prof=None):
     from agents.lib.tax_computations.federal.ira_basis import compute_individual_8606
     distributions = ([{"doc_id": "doc-1", "ordinary": 0, "converted": converted, "excluded": 0,
                        "excluded_taxable": 0, "exclusion_reason": None}] if converted else [])
@@ -619,8 +619,8 @@ def closing_8606(year_end_value=300000, converted=0, contribution=0):
         "accounts": [{"account_id": "acct-1", "person": "primary", "kind": "traditional_ira",
                       "year_end_value": year_end_value}],
         "distributions": distributions, "nondeductible_contrib_current": contribution,
-        "contrib_made_by_deadline": 0, "outstanding_rollovers": 0}}}
-    return compute_individual_8606(inputs, profile())
+        "contrib_made_by_deadline": after_year_end, "outstanding_rollovers": 0}}}
+    return compute_individual_8606(inputs, prof or profile())
 
 
 def test_a_next_year_plan_starts_from_the_closing_8606_balance():
@@ -666,11 +666,21 @@ def test_child_credit_years_say_the_refundable_credit_is_not_repriced():
     assert any("additional child tax credit" in line for line in P.LIMITATIONS)
 
 
-def test_a_loss_cannot_ride_in_other_ordinary_income():
+def test_a_forecast_loss_cannot_ride_in_other_ordinary_income():
     p = future_plan()
     p["years"][0]["other_ordinary_income"] = -5000
-    with pytest.raises(P.PlanError, match="nonnegative"):
+    with pytest.raises(P.PlanError, match="cannot be negative"):
         P.validate_plan(p, 2025)
+
+
+def test_the_filing_year_keeps_the_returns_schedule_1_loss():
+    r = result()
+    r["form_1040"].update(line_8_schedule1_other=-5000, line_11_agi=35000, line_24_total_tax=2500)
+    p = plan()
+    p["years"] = p["years"][:1]
+    p["years"][0]["other_ordinary_income"] = -5000
+    # Taxable 25,000 + 8,000 taxable conversion stays in the 10% bracket.
+    assert build(p, r=r)["years"][0]["federal_cost"] == 800
 
 
 def test_an_unreviewed_california_year_prices_no_state_cost():
@@ -783,3 +793,50 @@ def test_cli_refuses_a_law_that_changed_during_its_freshness_check(tmp_path, mon
     monkeypatch.setattr("agents.lib.tax_law_fetcher.check_freshness", fresh)
     assert P._main(["--workspace", str(root), "--name", "reviewed"]) == 2
     assert not (root / "scenarios/roth_plan_reviewed.json").exists()
+
+
+def test_a_next_year_plan_starts_with_january_to_april_contributions():
+    # Backdoor: 7,000 nondeductible for 2025 deposited in February 2026 is in
+    # line 14's basis and in the account, though not in line 6 (10,000).
+    prof = profile()
+    prof["prior_year"]["ira_basis_by_taxpayer"]["primary"] = 0
+    r = result()
+    r["form_8606"] = closing_8606(10000, contribution=7000, after_year_end=7000, prof=prof)
+    r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
+    p = plan()
+    p["start_year"], p["years"] = 2026, [annual(2026, conversion=10000)]
+    p["ira"].update(basis_source="closing_form_8606", basis=7000, traditional_balance=10000)
+    with pytest.raises(P.PlanError, match="line 4"):
+        build(p, r=r, prof=prof)
+    p["ira"]["traditional_balance"] = 17000
+    # Line 9 = 7,000 + 10,000; 10,000 x 7,000 / 17,000 = 4,117.65 nontaxable.
+    assert build(p, r=r, prof=prof)["years"][0]["taxable_conversion"] == 5882.35
+
+
+@pytest.mark.parametrize("layout", ["flat", "line_4a"])
+def test_the_filing_year_reads_household_lines_without_an_owner_record(layout):
+    r = result()
+    if layout == "flat":
+        r["form_8606"] = {"by_taxpayer": {}, "line_8_converted": 50000}
+    else:
+        r["form_1040"]["line_4a_ira_distributions"] = 50000
+    with pytest.raises(P.PlanError, match="already records"):
+        build(r=r)
+
+
+def test_the_filing_year_must_reproduce_the_returns_dec_31_value():
+    r = result()
+    r["form_8606"] = closing_8606(120000)
+    r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
+    with pytest.raises(P.PlanError, match="Dec 31 value"):
+        build(r=r)
+    p = plan()
+    p["ira"]["traditional_balance"] = 120000
+    assert build(p, r=r)["years"][0]["ira_start"] == 120000
+
+
+def test_a_falling_index_never_lowers_the_top_below_its_2027_amount():
+    indexed, _ = P.resolve_law({"mode": "hypothetical", "basis": "indexed_from_2026_at_-0.02"}, 2028,
+                               {2026: statutory_irmaa()})
+    tiers = indexed["federal"]["irmaa"]["tiers"]
+    assert tiers["single"][-1]["magi_threshold"] == 500000 and tiers["mfj"][-1]["magi_threshold"] == 750000
