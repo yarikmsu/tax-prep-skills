@@ -79,14 +79,20 @@ def test_two_year_basis_and_balance_worksheet():
     p["years"][1]["conversion"] = 22000
     output = build(p)
     a, b = output["years"]
-    # Year1:20k basis /100k pool ->4k nontaxable of20k. Basis16k,
-    # remaining80k grows to88k; Roth20k grows to22k.
-    assert (a["taxable_conversion"], a["basis_remaining"], a["ira_next_year"], a["roth_next_year"]) == (16000, 16000, 88000, 22000)
-    # Year2:16k/88k *22k=4k recovered. Taxable18k, basis12k,
-    # IRA66k*1.1=72.6k; Roth(22k+22k)*1.1=48.4k.
-    assert (b["taxable_conversion"], b["basis_remaining"], b["ira_next_year"], b["roth_next_year"]) == (18000, 12000, 72600, 48400)
-    assert a["federal_cost"] == 1600 and b["federal_cost"] == 1800
-    assert output["totals"]["federal_cost"] == 3400
+    # Form 8606 line 6 is the Dec 31 value. Year 1: (100,000 - 20,000) x 1.1 =
+    # 88,000; line 9 = 88,000 + 20,000 = 108,000; 20,000 x 20,000 / 108,000 =
+    # 3,703.70 nontaxable, 16,296.30 taxable and 16,296.30 basis left. Roth
+    # 20,000 grows to 22,000.
+    assert (a["taxable_conversion"], a["basis_remaining"], a["ira_next_year"], a["roth_next_year"]) == (
+        16296.30, 16296.30, 88000, 22000)
+    # Year 2: (88,000 - 22,000) x 1.1 = 72,600; line 9 = 94,600; 22,000 x
+    # 16,296.30 / 94,600 = 3,789.84 nontaxable, 18,210.16 taxable, 12,506.46
+    # basis left. Roth (22,000 + 22,000) x 1.1 = 48,400.
+    assert (b["taxable_conversion"], b["basis_remaining"], b["ira_next_year"], b["roth_next_year"]) == (
+        18210.16, 12506.46, 72600, 48400)
+    # All in the 10% bracket: 1,629.63 + 1,821.02.
+    assert a["federal_cost"] == 1629.63 and b["federal_cost"] == 1821.02
+    assert output["totals"]["federal_cost"] == 3450.65
     assert a["calculation"] == "computed" and b["calculation"] == "forecast"
     assert "hypothetical held_at_2025" in b["law"]
 
@@ -114,8 +120,8 @@ def test_filing_year_accepts_existing_canonical_hoh_spelling(recorded_status, be
     if benefits:
         p["years"][0].update(social_security=20000, social_security_inputs={
             "tax_exempt_interest": 0, "excluded_income_addbacks": 0, "regular_worksheet_confirmed": True})
-        # Benefits are already at their85% cap:40k wages+17k taxableSS,
-        # less10k deduction=47k. Conversion8k spans3k at10% and5k at20%.
+        # Benefits are already at their 85% cap: 40k wages + 17k taxable SS,
+        # less a 10k deduction = 47k. Conversion 8k spans 3k at 10% and 5k at 20%.
         r["form_1040"].update(line_6a_social_security=20000, line_6b_taxable_ss=17000,
             line_11_agi=57000, line_24_total_tax=4700)
         r["social_security_worksheet"] = {"regular_worksheet_confirmed": True, "tax_year": 2025,
@@ -148,8 +154,8 @@ def test_bracket_fill_prices_taxable_conversion_not_gross():
     del p["years"][0]["conversion"]
     p["years"][0]["fill_to"] = {"kind": "bracket", "rate": .1}
     row = build(p)["years"][0]
-    # Ordinary taxable30k leaves20k to first bracket edge50k. 80% taxable
-    # means25k gross conversion, not20k. The next cent crosses the edge.
+    # Ordinary taxable 30k leaves 20k to the first bracket edge at 50k. 80%
+    # taxable means a 25k gross conversion, not 20k. The next cent crosses it.
     assert row["conversion"] == 25000 and row["taxable_conversion"] == 20000
     assert row["federal_cost"] == 2000
 
@@ -181,7 +187,7 @@ def test_irmaa_fill_uses_premium_year_law_and_strict_lower_boundary():
     assert output["irmaa_cost"] == 0 and output["premium_year"] == 2027
 
 
-def test_top_irmaa_boundary_is_inclusive_and_fill_stops_one_cent_below():
+def test_top_irmaa_boundary_is_inclusive_and_fill_stops_one_dollar_below():
     p = plan()
     p["ira"].update(traditional_balance=500000, basis=0)
     prof = profile()
@@ -191,7 +197,8 @@ def test_top_irmaa_boundary_is_inclusive_and_fill_stops_one_cent_below():
     del row["conversion"]
     row.update(fill_to={"kind": "irmaa", "tier": 5}, premium_law={"mode": "fetched"})
     selected = build(p, prof=prof, laws={2025: law(), 2027: law(2027)})["years"][0]
-    assert selected["conversion"] == 209999.99 and selected["magi"] == 249999.99
+    # A return rounded to whole dollars would carry 249,999.99 as 250,000.
+    assert selected["conversion"] == 209999 and selected["magi"] == 249999
 
 
 def test_premium_increment_is_separate_and_prorated_for_enrollment_months():
@@ -205,8 +212,8 @@ def test_premium_increment_is_separate_and_prorated_for_enrollment_months():
     r["meta"]["filing_status"] = prof["filing_status"] = "MFJ"
     output = build(p, r=r, prof=prof)
     selected = output["years"][0]
-    # AGI60k crosses first50k tier1000 per beneficiary-year. 18 months=1.5
-    # beneficiary-years ->1500 premium cost, separate from2000 federal cost.
+    # AGI 60k crosses the first 50k tier: 1,000 per beneficiary-year. 18 months
+    # = 1.5 beneficiary-years -> 1,500 premium cost, apart from 2,000 federal.
     assert selected["irmaa_cost"] == 1500 and selected["federal_cost"] == 2000
     assert output["totals"]["federal_cost"] == 2000
 
@@ -419,9 +426,9 @@ def test_social_security_feedback_is_recomputed_for_each_conversion():
         social_security_inputs={"tax_exempt_interest": 0, "excluded_income_addbacks": 0,
                                 "regular_worksheet_confirmed": True})
     row = build(p)["years"][0]
-    # Single regular worksheet: provisional40k -> taxableSS9600; after
-    # taxableconversion8k provisional48k -> taxableSS16400. Federal10%
-    # on8k+6800 extra taxable benefits =1480, not800.
+    # Single regular worksheet: provisional 40k -> taxable SS 9,600; after an
+    # 8k taxable conversion, provisional 48k -> taxable SS 16,400. Federal 10%
+    # on 8k + 6,800 extra taxable benefits = 1,480, not 800.
     assert row["federal_cost"] == 1480
     assert row["rate_inputs"]["deduction"] == 10000
     assert row["baseline_income_inputs"]["social_security"]["worksheet"]["ss_benefits"] == 20000
@@ -431,9 +438,9 @@ def test_self_employment_and_qbi_remain_in_the_shared_keystone():
     p = future_plan()
     p["years"][0]["self_employment_net"] = 20000
     row = build(p)["years"][0]
-    # SE2825.91, half1412.96, QBI(20k-1412.96)*20%=3717.41.
-    # Taxable44869.63 ->52869.63: regular4486.96 ->5573.93;
-    # SE does not change with the IRA conversion. Delta1086.97.
+    # SE 2,825.91, half 1,412.96, QBI (20k - 1,412.96) x 20% = 3,717.41.
+    # Taxable 44,869.63 -> 52,869.63: regular 4,486.96 -> 5,573.93;
+    # SE does not change with the IRA conversion. Delta 1,086.97.
     assert row["federal_cost"] == 1086.97
 
 
@@ -443,11 +450,11 @@ def test_niit_magi_and_irmaa_magi_are_independent_concepts():
     row.update(wages=190000, other_ordinary_income=20000, net_investment_income=20000,
                irmaa_magi_addbacks=50000)
     output = build(p)["years"][0]
-    # BaselineNIIT380 ->684, in addition to8k*30%regular=2400.
+    # Baseline NIIT 380 -> 684, in addition to 8k x 30% regular = 2,400.
     assert output["federal_cost"] == 2704
     assert output["magi"] == 268000
     row["niit_magi_addbacks"] = 20000
-    # NIIT already saturated at the baseline, so incrementalNIIT=0.
+    # NIIT is already saturated at the baseline, so incremental NIIT = 0.
     assert build(p)["years"][0]["federal_cost"] == 2400
 
 
@@ -461,8 +468,8 @@ def test_forecast_ca_uses_reviewed_contract_when_year_and_inputs_exist():
     synthetic = law()
     synthetic["state"] = ca_law["state"]
     row = build(p, r=result(2024), prof=profile(2024), laws={2025: synthetic})["years"][0]
-    # CA synthetic10%rate, fixed10k deduction and400 exemption credit:
-    # 2600 ->3400 after8k taxable conversion, no federal anchor for2025.
+    # CA synthetic 10% rate, fixed 10k deduction and 400 exemption credit:
+    # 2,600 -> 3,400 after an 8k taxable conversion; no federal anchor for 2025.
     assert row["calculation"] == "forecast" and row["state_cost"] == 800
     p["years"][0]["state_inputs"]["retirement_basis_matches_federal"] = False
     assert build(p, r=result(2024), prof=profile(2024), laws={2025: synthetic})["years"][0]["state_cost"] is None
@@ -561,15 +568,218 @@ def test_report_preserves_rate_premium_and_basis_inputs_for_reproduction():
     assert len(row["source_law_sha256"]) == 64
 
 
-def test_hypothetical_single_and_joint_top_tiers_use_their_own_rounding_grid():
-    indexed, _ = P.resolve_law({"mode": "hypothetical", "basis": "indexed_from_2025_at_0.02"}, 2028, {2025: law()})
-    # Synthetic250000*1.02**3=265302. The single grid is1000, while the
-    # joint top grid from2028 is500. Do not share one status switch for both.
-    assert indexed["federal"]["irmaa"]["tiers"]["single"][-1]["magi_threshold"] == 265000
-    assert indexed["federal"]["irmaa"]["tiers"]["mfj"][-1]["magi_threshold"] == 265500
+def statutory_irmaa(year=2026):
+    # The 2026 CMS boundaries, shaped as 42 USC 1395r(i)(3)(C) prints them:
+    # joint twice the unmarried amounts but 150% at the top, cohabiting MFS the
+    # unmarried threshold and the top less it. Surcharges are synthetic.
+    single = [109000, 137000, 171000, 205000, 500000]
+    tiers = {"single": single, "mfj": [218000, 274000, 342000, 410000, 750000], "mfs": [109000, 391000]}
+    cfg = law(year)
+    cfg["federal"]["irmaa"]["tiers"] = {status: [
+        {"magi_threshold": amount, "annual_surcharge_per_person": 1000 * (i + 1 + (3 if status == "mfs" else 0))}
+        for i, amount in enumerate(amounts)] for status, amounts in tiers.items()}
+    return cfg
+
+
+@pytest.mark.parametrize("base,target,single,joint,separate", [
+    # Before 2027 too, only the lower amounts move.
+    (2025, 2026, [112000, 141000, 176000, 211000, 500000], [224000, 282000, 352000, 422000, 750000], [112000, 388000]),
+    # 1.03: 112,270 -> 112,000; 141,110 -> 141,000; 176,130 -> 176,000;
+    # 211,150 -> 211,000. The $500,000 top is not indexed before 2028.
+    (2026, 2027, [112000, 141000, 176000, 211000, 500000], [224000, 282000, 352000, 422000, 750000], [112000, 388000]),
+    # 1.03^2 = 1.0609: 115,638 -> 116,000; 145,343 -> 145,000; 181,414 ->
+    # 181,000; 217,485 -> 217,000. From 2028 the top is indexed from August
+    # 2026, one year here: 515,000, so the joint top is 772,500.
+    (2026, 2028, [116000, 145000, 181000, 217000, 515000], [232000, 290000, 362000, 434000, 772500], [116000, 399000]),
+])
+def test_indexed_irmaa_follows_the_statutory_tables(base, target, single, joint, separate):
+    indexed, _ = P.resolve_law({"mode": "hypothetical", "basis": f"indexed_from_{base}_at_0.03"}, target,
+                               {base: statutory_irmaa(base)})
+    tiers = indexed["federal"]["irmaa"]["tiers"]
+    assert [t["magi_threshold"] for t in tiers["single"]] == single
+    assert [t["magi_threshold"] for t in tiers["mfj"]] == joint
+    assert [t["magi_threshold"] for t in tiers["mfs"]] == separate
+    for status in ("single", "mfj", "mfs"):
+        assert P.read_irmaa_tiers(indexed, {"single": "Single", "mfj": "MFJ", "mfs": "MFS"}[status],
+                                  lived_apart=False if status == "mfs" else None)
 
 
 def test_federal_only_plan_never_declares_a_zero_state_liability():
     output = build()
     assert all(row["state_cost"] is None for row in output["years"])
     assert output["totals"]["state_cost"] is None
+
+
+def closing_8606(year_end_value=300000, converted=0, contribution=0):
+    from agents.lib.tax_computations.federal.ira_basis import compute_individual_8606
+    distributions = ([{"doc_id": "doc-1", "ordinary": 0, "converted": converted, "excluded": 0,
+                       "excluded_taxable": 0, "exclusion_reason": None}] if converted else [])
+    inputs = {"tax_year": 2025, "by_taxpayer": {"primary": {
+        "regular_worksheet_confirmed": True, "accounts_complete": True,
+        "accounts": [{"account_id": "acct-1", "person": "primary", "kind": "traditional_ira",
+                      "year_end_value": year_end_value}],
+        "distributions": distributions, "nondeductible_contrib_current": contribution,
+        "contrib_made_by_deadline": 0, "outstanding_rollovers": 0}}}
+    return compute_individual_8606(inputs, profile())
+
+
+def test_a_next_year_plan_starts_from_the_closing_8606_balance():
+    r = result()
+    r["form_8606"] = closing_8606()
+    r["form_1040"].update(line_4a_ira_distributions=0, line_4b_taxable_ira=0)
+    p = plan()
+    p["start_year"], p["years"] = 2026, [annual(2026, conversion=50000)]
+    p["ira"].update(basis_source="closing_form_8606", basis=20000, traditional_balance=100000)
+    with pytest.raises(P.PlanError, match="line 6"):
+        build(p, r=r)
+    p["ira"]["traditional_balance"] = 300000
+    # Line 9 = 250,000 + 50,000; 50,000 x 20,000 / 300,000 = 3,333.33 nontaxable.
+    assert build(p, r=r)["years"][0]["taxable_conversion"] == 46666.67
+
+
+@pytest.mark.parametrize("flows", [{"converted": 50000}, {"contribution": 7000}])
+def test_the_filing_year_refuses_ira_flows_the_return_already_records(flows):
+    r = result()
+    r["form_8606"] = closing_8606(50000, **flows)
+    with pytest.raises(P.PlanError, match="already records"):
+        build(r=r)
+
+
+def test_tax_exempt_interest_is_part_of_irmaa_magi():
+    p = future_plan()
+    p["years"][0].update(social_security=20000, social_security_inputs={
+        "tax_exempt_interest": 40000, "excluded_income_addbacks": 0, "regular_worksheet_confirmed": True})
+    with pytest.raises(P.PlanError, match="tax-exempt interest"):
+        P.validate_plan(p, 2025)
+    p["years"][0]["irmaa_magi_addbacks"] = 40000
+    P.validate_plan(p, 2025)
+    r = result()
+    r["form_1040"]["line_2a_tax_exempt_interest"] = 30000
+    with pytest.raises(P.PlanError, match="line 2a"):
+        build(r=r)
+
+
+def test_child_credit_years_say_the_refundable_credit_is_not_repriced():
+    p = future_plan()
+    p["years"][0]["ctc_children"] = 2
+    assert any("additional child tax credit" in note for note in build(p)["years"][0]["notes"])
+    assert any("additional child tax credit" in line for line in P.LIMITATIONS)
+
+
+def test_a_loss_cannot_ride_in_other_ordinary_income():
+    p = future_plan()
+    p["years"][0]["other_ordinary_income"] = -5000
+    with pytest.raises(P.PlanError, match="nonnegative"):
+        P.validate_plan(p, 2025)
+
+
+def test_an_unreviewed_california_year_prices_no_state_cost():
+    from tests.test_state_planning import case
+    ca_result, ca_law = case("CA", agi=40000, status="Single")
+    p = future_plan()
+    inputs = copy.deepcopy(ca_result["state_planning_inputs"])
+    inputs["tax_year"] = 2026
+    p["years"][0].update(state="CA", state_inputs=inputs)
+    synthetic = law()
+    synthetic["state"] = ca_law["state"]
+    row = build(p, laws={2025: synthetic})["years"][0]
+    assert row["state_cost"] is None
+    assert any("not been reviewed" in note for note in row["notes"])
+
+
+@pytest.mark.parametrize("lived_apart,surcharge", [(False, 2000), (True, 3000)])
+def test_cohabiting_mfs_prices_from_its_own_premium_table(lived_apart, surcharge):
+    p = future_plan()
+    p["years"][0].update(filing_status="MFS", spouse_itemizes=False, medicare_lived_apart_all_year=lived_apart,
+        wages=140000, conversion=20000, premium_law={"mode": "hypothetical", "basis": "held_at_2025"},
+        medicare_enrollees_two_years_later=1, medicare_months_two_years_later=[12],
+        medicare_parts_b_and_d_confirmed=True)
+    # AGI 140,000 + 16,000 taxable = 156,000: the cohabiting table's second
+    # (top) tier at 100,000, but the unmarried table's third tier at 150,000.
+    assert build(p)["years"][0]["irmaa_surcharge"] == surcharge
+
+
+def test_each_filing_year_anchor_refuses_a_contradiction():
+    p = plan()
+    p["years"][0]["law"] = {"mode": "hypothetical", "basis": "held_at_2025"}
+    with pytest.raises(P.PlanError, match="fetched covered-year law"):
+        P.validate_plan(p, 2025)
+    prof = profile()
+    prof["address"]["state"] = "CA"
+    with pytest.raises(P.PlanError, match="California return"):
+        build(prof=prof)
+    r = result()
+    r["form_1040"]["line_10_adjustments"] = 500
+    with pytest.raises(P.PlanError, match="non-SE above-AGI adjustments"):
+        build(r=r)
+    r = result()
+    r["meta"]["source"] = "imported_prior_return"
+    with pytest.raises(P.PlanError, match="imported seed"):
+        build(r=r)
+    prof = profile()
+    prof["prior_year"]["import_unresolved"] = {"source_year": 2024, "questions": ["capital_loss"]}
+    with pytest.raises(P.PlanError, match="imported carryovers"):
+        build(prof=prof)
+
+
+def test_the_filing_year_social_security_worksheet_must_be_the_returns():
+    p = plan()
+    p["years"] = p["years"][:1]
+    r = result()
+    p["years"][0].update(social_security=20000, social_security_inputs={
+        "tax_exempt_interest": 0, "excluded_income_addbacks": 100, "regular_worksheet_confirmed": True})
+    r["form_1040"].update(line_6a_social_security=20000, line_6b_taxable_ss=17000,
+                          line_11_agi=57000, line_24_total_tax=4700)
+    r["social_security_worksheet"] = {"regular_worksheet_confirmed": True, "tax_year": 2025,
+        "inputs": {"ss_benefits": 20000, "other_income": 40000, "tax_exempt_interest": 0,
+                   "adjustments": 0, "filing_status": "Single", "lived_apart_from_spouse_all_year": None,
+                   "lump_sum_prior_year_benefits": 0, "excluded_income_addbacks": 0}}
+    with pytest.raises(P.PlanError, match="original reviewed worksheet"):
+        build(p, r=r)
+
+
+@pytest.mark.parametrize("edit,message", [
+    (lambda row: row.update(net_investment_income=1), "cannot exceed"),
+    (lambda row: row.update(deduction=9000, additional_standard_deduction=1000), "already includes"),
+    (lambda row: row.update(medicare_enrollees_two_years_later=1, medicare_months_two_years_later=[12]),
+     "Part B and D"),
+])
+def test_annual_assumptions_refuse_contradictions(edit, message):
+    p = future_plan()
+    edit(p["years"][0])
+    with pytest.raises(P.PlanError, match=message):
+        P.validate_plan(p, 2025)
+
+
+def test_a_tampered_closing_8606_is_not_a_basis_source():
+    r = result()
+    r["form_8606"] = closing_8606()
+    r["form_8606"]["by_taxpayer"]["primary"]["basis_remaining"] = 25000
+    p = plan()
+    p["start_year"], p["years"] = 2026, [annual(2026, conversion=50000)]
+    p["ira"].update(basis_source="closing_form_8606", basis=25000, traditional_balance=300000)
+    with pytest.raises(ValueError):
+        build(p, r=r)
+
+
+def test_cli_refuses_a_name_its_input_does_not_carry(tmp_path, monkeypatch):
+    root = workspace(tmp_path)
+    renamed = plan()
+    renamed["name"] = "other"
+    write_secure(root / "scenarios/roth_plan_reviewed.input.json", json.dumps(renamed))
+    monkeypatch.setattr("agents.lib.tax_law_fetcher.check_freshness", lambda *a: {"status": "FRESH"})
+    assert P._main(["--workspace", str(root), "--name", "reviewed"]) == 2
+    assert not (root / "scenarios/roth_plan_reviewed.json").exists()
+
+
+def test_cli_refuses_a_law_that_changed_during_its_freshness_check(tmp_path, monkeypatch):
+    root = workspace(tmp_path)
+
+    def fresh(year, workspace):
+        changed = law()
+        changed["federal"]["filing_statuses"]["single"]["standard_deduction"] = 1
+        write_secure(root / "tax_law_2025.json", json.dumps(changed))
+        return {"status": "FRESH"}
+    monkeypatch.setattr("agents.lib.tax_law_fetcher.check_freshness", fresh)
+    assert P._main(["--workspace", str(root), "--name", "reviewed"]) == 2
+    assert not (root / "scenarios/roth_plan_reviewed.json").exists()

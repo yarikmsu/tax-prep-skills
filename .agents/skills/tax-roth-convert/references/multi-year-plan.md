@@ -23,11 +23,15 @@ defaults are accepted.
 - `owner`: `primary` or `spouse`, one individual's traditional/SEP/SIMPLE pool.
 - `traditional_balance`, `roth_balance`, `basis`: explicit starting amounts.
 - `growth_rate`: the signed annual forecast fraction, shown on each row. It is
-  applied after conversion to project the next year's starting balances.
+  applied after conversion: the grown remainder is both Form 8606 line 6 (the
+  Dec 31 value) and the next year's starting balance.
 - `basis_source`: `opening_profile` for a filing-year plan;
   `closing_form_8606` for the following year; or `reviewed_worksheet` when the
   filer supplies an independently reviewed worksheet. Resolve conflicts with
-  known individual balances before proceeding.
+  known individual balances before proceeding. From `closing_form_8606`, the
+  starting balance must equal that worksheet's line 6. A filing-year plan is
+  refused when the return already records the owner's contributions,
+  distributions or conversions: plan from the following year.
 - `basis_confirmed`, `regular_worksheet_confirmed`,
   `no_other_ira_flows_confirmed`: all true. Confirm no new IRA contributions,
   other distributions, rollovers, inherited IRA treatment or tax withholding
@@ -38,15 +42,15 @@ Every annual object requires ALL of these fields:
 | Fields | Meaning |
 |---|---|
 | `year`, `filing_status` | Consecutive year; `Single`, `MFJ`, `MFS`, `HOH` or `QSS`. |
-| `wages`, `other_ordinary_income`, `self_employment_net` | Annual income before the conversion. Other ordinary income excludes separately entered qualified dividends, net long-term gains, Social Security and SE net income. It includes pensions, taxable interest, nonqualified dividends and ordinary short-term gains. |
+| `wages`, `other_ordinary_income`, `self_employment_net` | Annual income before the conversion. Other ordinary income excludes separately entered qualified dividends, net long-term gains, Social Security and SE net income. It includes pensions, taxable interest, nonqualified dividends and ordinary short-term gains, and cannot be negative: a capital loss belongs in `capital_gains`, where the $3,000 limit applies. |
 | `qualified_dividends`, `capital_gains` | Preferential dividends and net long-term gain/loss, including separately reviewed carryforward effects. No automatic capital-loss/QBI carryover between plan years. |
 | `adjustments` | Fixed non-SE above-AGI deductions. The engine calculates deductible half of SE tax. Business-attributable health/retirement adjustments and changing deduction phaseouts need separate modeling. |
 | `deduction`, `additional_standard_deduction` | `standard` reads this year's selected law; enter any age/blind addition explicitly for that year. Otherwise give the complete deduction amount and an additional amount of zero. |
 | `spouse_itemizes` | Explicit boolean for MFS, null otherwise. MFS cannot choose standard when the spouse itemizes. |
-| `ctc_children` | Reviewed eligible-child count for THAT year, never last year's count copied forward. |
+| `ctc_children` | Reviewed eligible-child count for THAT year, never last year's count copied forward. The credit is priced as nonrefundable; each such year notes that a lost refundable additional child tax credit can raise the cost. |
 | `social_security`, `social_security_inputs` | Gross benefits. When positive, inputs are `tax_exempt_interest`, `excluded_income_addbacks`, `regular_worksheet_confirmed: true`. Otherwise inputs are null. Only the regular worksheet is supported; no repayment/lump-sum method. |
 | `net_investment_income` | The explicit NIIT subset already included in income, not another income addition. |
-| `niit_magi_addbacks`, `irmaa_magi_addbacks` | Separate reviewed amounts: NIIT and Medicare MAGI are different concepts. |
+| `niit_magi_addbacks`, `irmaa_magi_addbacks` | Separate reviewed amounts: NIIT and Medicare MAGI are different concepts. Medicare MAGI adds tax-exempt interest back, so the IRMAA addbacks cannot be below the year's `tax_exempt_interest` or the filing year's Form 1040 line 2a. |
 | `state`, `state_inputs` | `CA` or null for federal-only modeling, with state cost left unknown. For CA, supply that year's reviewed `state_planning_inputs` contract or null to report state cost unmodeled. Filing-year data come from the computed return and must agree. |
 | `medicare_enrollees_two_years_later`, `medicare_months_two_years_later` | Zero through two beneficiaries, and a matching list of each beneficiary's enrollment months. Two beneficiaries require MFJ for the lookback year; other returns can model one person's premium. Empty list for no beneficiaries. Partial years are explicit. |
 | `medicare_parts_b_and_d_confirmed` | Confirm both parts for beneficiaries whose combined B/D surcharge is priced; the cache holds a combined amount. |
@@ -64,8 +68,10 @@ Finally, each year contains exactly one of:
   permits the remaining balance.
 - `fill_to: {"kind": "irmaa", "tier": ...}`: stay below a premium-year surcharge
   tier. Requires a complete premium-year table. The top boundary is inclusive,
-  so the search stops before it; lower tiers start above their boundary. If the
-  baseline already exceeds the edge, no conversion fits that target.
+  so the search stops a whole dollar before it, since a return rounded to
+  dollars carries $0.99 short as the boundary itself; lower tiers start above
+  their boundary. If the baseline already exceeds the edge, no conversion fits
+  that target.
 
 Filing-year income, deduction, children, status and Social Security facts must
 match the recorded return. Its federal/state point uses the existing ladder
@@ -88,8 +94,11 @@ the user's choice. Offer held law first, without silently selecting it:
   named annual fraction to federal ordinary bracket boundaries, base standard
   deductions, preferential boundaries, SS wage base and Medicare thresholds/
   surcharges. Rates, CTC parameters, statutory NIIT/Additional Medicare gates
-  and other law remain held. Medicare boundaries use the shared table-format
-  rounding rule. CA inputs are held, not automatically indexed.
+  and other law remain held. Medicare boundaries follow 42 USC 1395r(i): the
+  unmarried amounts are indexed and rounded to $1,000, the $500,000 top only
+  from 2028 (indexed from 2027); joint amounts are twice the unmarried ones and
+  the top 150%; cohabiting MFS uses the unmarried threshold and the top less
+  it. CA inputs are held, not automatically indexed.
 
 The basis cache must itself be FRESH and cannot be a later year. Both are
 in-memory forecasts, labelled on each row and in the header. Never save one as a

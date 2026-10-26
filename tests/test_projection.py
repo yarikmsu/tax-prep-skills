@@ -491,8 +491,8 @@ def test_qss_additional_medicare_is_single_while_niit_is_joint():
     prof = _profile_mfj()
     prof["filing_status"] = "QSS"
     fed = P.project_federal_tax(_proj(wages=220000, ordinary_dividends=20000, medicare_wages=220000), prof, law)
-    # MAGI240k is below joint NIIT250k; wages220k exceed single Medicare200k
-    # by20k, so Additional Medicare is180. Joint brackets remain in use.
+    # MAGI 240k is below the joint NIIT 250k; wages 220k exceed the single
+    # Medicare 200k by 20k, so Additional Medicare is 180. Joint brackets stay.
     assert fed.niit == 0
     assert fed.additional_medicare == 180
     assert fed.taxable_income == 210000

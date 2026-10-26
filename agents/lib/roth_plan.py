@@ -30,7 +30,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     compute_se_tax, compute_taxable_ss,
 )
 from agents.lib.tax_computations.federal.irmaa import (  # noqa: E402
-    irmaa_boundary_quantum, irmaa_status_key, irmaa_surcharge, read_irmaa_tiers,
+    irmaa_status_key, irmaa_surcharge, read_irmaa_tiers,
 )
 
 SCHEMA = "roth-plan/v1"
@@ -50,7 +50,8 @@ LIMITATIONS = [
     "Forecasts are planning estimates; only the filing-year point is anchored to the computed return.",
     "Future federal tax uses the simplified scenario model. Other credits, AMT and special deductions require separate reviewed modeling.",
     "No RMDs, inherited IRAs, new IRA contributions, other IRA distributions, withholding from the IRA, multiple owners or Roth distribution five-year rules.",
-    "Growth is an explicit forecast assumption applied after conversion; taxes are paid from outside the IRA. No investment tax or spending cash-flow model.",
+    "Growth is an explicit forecast assumption applied after conversion; Form 8606 line 6 is the grown Dec 31 value, which starts the next year. Taxes are paid from outside the IRA. No investment tax or spending cash-flow model.",
+    "Refundable credits, including the additional child tax credit, are not repriced.",
     "Annual net gains/losses must include separately reviewed carryforwards. Only IRA basis and balances carry automatically between plan years.",
     "Medicare costs cover the entered enrollment months for Parts B and D before any appeal or other relief. Premium costs are separate from income tax.",
 ]
@@ -146,10 +147,12 @@ def validate_plan(raw: dict, return_year: int) -> dict:
             raise PlanError("Annual filing status and state must be canonical (CA or null)")
         if ira["owner"] == "spouse" and row["filing_status"] != "MFJ":
             raise PlanError("Plan the spouse's separate return in their own workspace")
-        for key in ("wages", "qualified_dividends", "social_security", "adjustments",
+        # A loss goes in capital_gains or self_employment_net, where the §1211
+        # limit and SE arithmetic apply; other ordinary income cannot carry one.
+        for key in ("wages", "other_ordinary_income", "qualified_dividends", "social_security", "adjustments",
                     "additional_standard_deduction", "net_investment_income", "niit_magi_addbacks", "irmaa_magi_addbacks"):
             _money(row[key], key)
-        for key in ("other_ordinary_income", "capital_gains", "self_employment_net"):
+        for key in ("capital_gains", "self_employment_net"):
             _money(row[key], key, signed=True)
         if row["deduction"] != "standard":
             _money(row["deduction"], "annual deduction")
@@ -195,6 +198,9 @@ def validate_plan(raw: dict, return_year: int) -> dict:
                 raise PlanError("Confirm the regular Social Security worksheet; lump-sum/repayment methods are outside scope")
             for key in ("tax_exempt_interest", "excluded_income_addbacks"):
                 _money(ss[key], key)
+            # IRMAA MAGI adds tax-exempt interest back (42 USC 1395r(i)(4)(A)).
+            if row["irmaa_magi_addbacks"] < ss["tax_exempt_interest"]:
+                raise PlanError("IRMAA MAGI addbacks must include the year's tax-exempt interest")
         elif ss is not None:
             raise PlanError("Zero benefits require null Social Security inputs")
         possible_nii = max(row["other_ordinary_income"], 0) + row["qualified_dividends"] + max(row["capital_gains"], 0)
@@ -232,6 +238,44 @@ def _scale(value, factor: float) -> float:
     return round(number, 2)
 
 
+def _thousand(amount: float) -> float:
+    """42 USC 1395r(i)(5)(B): the nearest multiple of $1,000."""
+    return float((Decimal(str(amount)) / 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * 1000)
+
+
+def _indexed_irmaa(tiers: dict, base: int, target: int, rate: float) -> dict:
+    """The statute's tables, indexed from the base year's unmarried table.
+
+    42 USC 1395r(i)(5) indexes the unmarried amounts, rounding each to $1,000,
+    and leaves the $500,000 top alone until 2028, then indexes it from August
+    2026 ((i)(5)(C)). Joint amounts are twice the unmarried ones and the top
+    150% ((i)(3)(C)(ii)). Separate filers' are reduced by the unmarried
+    threshold ((i)(3)(C)(iii)), leaving that threshold and the top less it.
+    Scaling every table on its own drifts from all three.
+    """
+    single = sorted(tiers.get("single") or [], key=lambda tier: tier["magi_threshold"])
+    if len(single) != 5:
+        raise PlanError("An indexed hypothetical IRMAA table needs the base year's five-tier unmarried table")
+    factor = (1 + rate) ** (target - base)
+    lower = [_thousand(_scale(tier["magi_threshold"], factor)) for tier in single[:4]]
+    top = _number(single[4]["magi_threshold"], "IRMAA top threshold")
+    if target >= 2028:
+        top = _thousand(_scale(top, (1 + rate) ** (target - max(base, 2027))))
+    bounds = {"single": [*lower, top], "mfj": [*(2 * amount for amount in lower), 1.5 * top],
+              "mfs": [lower[0], top - lower[0]]}
+    out = {}
+    for status, rows in tiers.items():
+        if not rows:
+            out[status] = rows
+            continue
+        rows = sorted(rows, key=lambda tier: tier["magi_threshold"])
+        if status not in bounds or len(rows) != len(bounds[status]):
+            raise PlanError("An indexed hypothetical IRMAA table needs the statutory status tables")
+        out[status] = [{"magi_threshold": amount, "annual_surcharge_per_person": _scale(
+            row["annual_surcharge_per_person"], factor)} for amount, row in zip(bounds[status], rows)]
+    return out
+
+
 def resolve_law(ref: dict, target: int, laws: dict[int, dict]) -> tuple[dict, str]:
     """In-memory hypothetical only; rates and unindexed statutory blocks stay held."""
     base, rate, label = _law_ref(ref, target)
@@ -266,12 +310,9 @@ def resolve_law(ref: dict, target: int, laws: dict[int, dict]) -> tuple[dict, st
                 limits[status] = _scale(amount, factor)
     if fed.get("social_security", {}).get("wage_base") is not None:
         fed["social_security"]["wage_base"] = _scale(fed["social_security"]["wage_base"], factor)
-    for status, tiers in fed.get("irmaa", {}).get("tiers", {}).items():
-        for index, tier in enumerate(tiers):
-            quantum = irmaa_boundary_quantum(target, index, len(tiers), separate=status == "mfs", joint=status == "mfj")
-            amount = Decimal(str(_scale(tier["magi_threshold"], factor))) / quantum
-            tier["magi_threshold"] = float(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP) * quantum)
-            tier["annual_surcharge_per_person"] = _scale(tier["annual_surcharge_per_person"], factor)
+    tiers = fed.get("irmaa", {}).get("tiers", {})
+    if any(tiers.values()):
+        fed["irmaa"]["tiers"] = _indexed_irmaa(tiers, base, target, rate)
     law["tax_year"] = target
     law["_meta"] = {"tax_year": target, "source": label, "hypothetical": True}
     return law, label
@@ -354,6 +395,8 @@ def _anchor_checks(row: dict, result: dict, profile: dict, law: dict) -> None:
         "net_investment_income": roth_ladder._net_investment_income(inputs)}
     if any(abs(row[key] - value) > 0.01 for key, value in expected.items()) or row["adjustments"] != 0 or row["niit_magi_addbacks"] != 0:
         raise PlanError("Filing-year income assumptions must match the anchored ladder; separately model non-SE adjustments or NIIT addbacks")
+    if row["irmaa_magi_addbacks"] < (form.get("line_2a_tax_exempt_interest", 0) or 0):
+        raise PlanError("IRMAA MAGI addbacks must include the return's tax-exempt interest (Form 1040 line 2a)")
     forecast, kwargs, _ = _year_inputs(row, law)
     if abs(kwargs["deduction"] - return_deduction(result)) > 0.01 or row["ctc_children"] != sum(
             bool(d.get("ctc_eligible")) for d in profile.get("dependents", []) if isinstance(d, dict)):
@@ -377,6 +420,13 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
     ira = plan["ira"]
     if (profile.get("prior_year") or {}).get("import_unresolved"):
         raise PlanError("Resolve imported carryovers before planning from the return")
+    closing = ((result.get("form_8606") or {}).get("by_taxpayer") or {}).get(ira["owner"])
+    if plan["start_year"] == return_year and isinstance(closing, dict) and any(
+            closing.get(key) for key in ("line_1_nondeductible_current", "line_7_distributions", "line_8_converted")):
+        # The plan's worksheet starts from the opening basis and knows no
+        # other flow, so it would price the conversion as if these never were.
+        raise PlanError("The computed return already records this owner's IRA contributions, distributions "
+                        "or conversions; plan from the following year")
     if (profile.get("flags") or {}).get("subject_to_rmd_" + ira["owner"]) is True and ira["traditional_balance"]:
         raise PlanError("The selected owner is already subject to RMDs; stop before the RMD period")
     if ira["basis_source"] == "reviewed_worksheet":
@@ -403,6 +453,8 @@ def _basis_check(plan: dict, result: dict, profile: dict, return_year: int) -> N
         if not isinstance(section, dict):
             raise PlanError("No verified closing individual Form 8606 for the plan owner")
         value = section["basis_remaining"]
+        if ira["traditional_balance"] != section.get("line_6_year_end_value", ira["traditional_balance"]):
+            raise PlanError("Plan balance differs from the owner's closing Form 8606 Dec 31 value (line 6)")
     if ira["basis"] != value:
         raise PlanError("Plan basis differs from the selected owner's recorded basis source")
 
@@ -479,16 +531,24 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
         separate = irmaa_status_key(status, row["medicare_lived_apart_all_year"]) == "mfs"
         notes = []
         priced: dict[float, dict] = {}
+        growth = plan["ira"]["growth_rate"]
+
+        def year_end(amount):
+            """Form 8606 line 6, the Dec 31 value: what the conversion leaves,
+            grown at the plan's rate. It is also next year's starting balance."""
+            return round((balance - amount) * (1 + growth), 2)
 
         def price(amount):
             if amount in priced:
                 return priced[amount]
-            worksheet = compute_form_8606(0, basis, round(balance - amount, 2), 0, amount)
+            worksheet = compute_form_8606(0, basis, year_end(amount), 0, amount)
             taxable = worksheet["taxable_conversion"]
             if anchored:
+                # The ladder's line 6 is its value less the conversion, so
+                # hand it the year-end value plus the conversion.
                 ladder = roth_ladder.build_ladder(result, profile, law, year,
                     max_amount=amount, step=amount or 1, name=plan["name"], today=today or datetime.date.today(),
-                    ira_basis=basis, ira_value=balance, ira_owner=plan["ira"]["owner"])
+                    ira_basis=basis, ira_value=round(year_end(amount) + amount, 2), ira_owner=plan["ira"]["owner"])
                 rung = ladder.rungs[-1]
                 out = {"agi": rung.agi, "taxable_income": rung.taxable_income,
                        "total_federal_tax": rung.total_tax}
@@ -542,7 +602,10 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
                 raise PlanError("IRMAA target tier is absent for this filing status")
             edge = tiers[index]["magi_threshold"]
             if premium_year >= 2019 and index == len(tiers) - 1:
-                edge -= 0.01  # top tier starts AT its boundary; others start ABOVE it
+                # The top tier starts AT its boundary, the others above theirs.
+                # A return rounded to whole dollars turns 499,999.99 into
+                # 500,000, so stop a dollar short.
+                edge -= 1
             conversion, flags = _fill(balance, lambda c: price(c)["magi"], edge)
             notes += flags
         selected = price(conversion)
@@ -565,9 +628,12 @@ def build_plan(plan: dict, result: dict, profile: dict, laws: dict[int, dict], *
             notes.append("IRMAA not modeled for this premium year; totals exclude Medicare costs")
         if threshold is None and row["net_investment_income"]:
             notes.append("NIIT not modeled; federal forecast excludes this cost")
+        if row["ctc_children"]:
+            notes.append("The child tax credit is priced as nonrefundable. Where a conversion only uses up unused "
+                         "credit, the refundable additional child tax credit (Schedule 8812) also falls, so the "
+                         "federal cost can be higher")
         next_basis = selected["worksheet"]["basis_remaining"]
-        growth = plan["ira"]["growth_rate"]
-        next_balance = round((balance - conversion) * (1 + growth), 2)
+        next_balance = year_end(conversion)
         next_roth = round((roth + conversion) * (1 + growth), 2)
         record = {"year": year, "calculation": "computed" if anchored else "forecast", "law": label,
             "premium_year": premium_year, "premium_law": premium_label, "assumptions": row,

@@ -22,21 +22,6 @@ def irmaa_status_key(filing_status: str, lived_apart: bool | None = None) -> str
     return "mfj" if fs == "MFJ" else "single"
 
 
-def irmaa_boundary_quantum(premium_year: int, index: int, count: int, *, separate=False,
-                           joint: bool | None = None) -> int:
-    """The same printed-boundary format for validation and named forecasts.
-
-    This is the existing (i)(5)(B)/(C) rule, shared rather than copied into a
-    forecaster. Validation has historically accepted the joint-compatible
-    envelope when the caller knows only `separate`; a forecaster supplies the
-    actual joint-table selection, so unmarried boundaries are not rounded on
-    the joint top tier's finer grid.
-    """
-    joint_table = not separate if joint is None else joint
-    top_of_joint = joint_table and premium_year >= 2028 and index == count - 1
-    return 500 if premium_year in {2018, 2019} or top_of_joint else 1000
-
-
 def validate_irmaa_tiers(raw, premium_year, *, separate=False) -> list[dict]:
     if raw is None or raw == []:
         return []
@@ -72,7 +57,8 @@ def validate_irmaa_tiers(raw, premium_year, *, separate=False) -> list[dict]:
         # years to thousands. Neither encoding admits a first-dollar +1. From
         # 2028 the joint top tier is 150% of an indexed, thousand-rounded
         # figure ((i)(3)(C)(ii), (i)(5)(C)), so it may land on a half-thousand.
-        quantum = irmaa_boundary_quantum(premium_year, index, len(cleaned), separate=separate)
+        top_of_joint = not separate and premium_year >= 2028 and index == len(cleaned) - 1
+        quantum = 500 if premium_year in {2018, 2019} or top_of_joint else 1000
         if item["magi_threshold"] % quantum:
             raise ValueError("IRMAA threshold must be the printed rounded boundary, never the old first-dollar value; refetch")
     if any(b["magi_threshold"] <= a["magi_threshold"]
