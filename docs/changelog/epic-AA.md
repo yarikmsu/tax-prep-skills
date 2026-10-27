@@ -4099,3 +4099,23 @@ on a layout nobody checked; `secure_fs` already calls an unhyphenated EIN
 masked the safe direction. With every field filled, the sweep masks the eleven
 fields above and one preparer number on NY IT-370, and unmasks nothing. Form
 4506-C and NY IT-213 still leak, as on main: AA90.
+
+
+## AA88 — identifiers drawn over their own labels (#81)
+
+The PDF routes now recover identifier labels from the non-digit character
+layer and find digit glyphs whose boxes overlap the labels' letters. The whole
+nine-digit group is replaced with X in a fresh derived page before text, word
+or table extraction. Ambiguous interleaved text keeps no last four; values
+already governed by the existing positional rules retain their usual masked
+last-four spelling. The source character dictionaries, PDF bytes and table
+rules remain intact.
+
+A grid of 150 font/offset combinations covers overlays on and around a label's
+baseline. Additional tests protect business identifiers, wage figures, nearby
+routing numbers and table extraction. Review caught nearby numeric runs being
+joined and repeated label words being indexed quadratically. A distinct spacing gap separates a nearby number; an ambiguous overlapping
+run refuses instead of deleting a financial amount. Protection of an already
+governed value is bound to its glyph location, so a normal copy cannot exempt
+an overlapping copy with the same digits. Words are indexed once, and a bounded
+per-page spatial index refuses before exceeding its allocation budget.

@@ -68,6 +68,7 @@ MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024      # 1 GB of XML behind a workbook
 MAX_COMPRESSION_RATIO = 200                       # 100 KB expanding to 20 MB
 MAX_EXTRACTED_CHARS = 20 * 1024 * 1024            # 20 MB of returned text
 MAX_PAGES = 2000                                  # pages in one PDF
+MAX_OVERLAY_INDEX_ENTRIES = 100_000              # per-page spatial-index memory budget
 PARSE_TIME_BUDGET_SECONDS = 300                   # wall clock inside one call
 
 
@@ -378,6 +379,117 @@ def _validate_file_path(
     return p
 
 
+def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]:
+    """Digits over an identifier's letters, recovered without the digit layer.
+    Once one digit overlaps, mask its whole geometrical run: the end can hang
+    outside the label, and interleaved text cannot preserve a reliable last four.
+    The original PDF and its character dictionaries are never modified.
+    """
+    from pdfplumber.utils import extract_words
+
+    digits = [c for c in chars if c["text"] in "0123456789" and len(c["text"]) == 1]
+    if not digits:
+        return set()
+    letters = [c for c in chars if not any(d in "0123456789" for d in c["text"])]
+    index: dict[tuple[int, int], list[dict]] = {}
+    indexed: set[int] = set()
+    indexed_words: set[int] = set()
+    entries = 0
+    for row in _word_rows(extract_words(letters, return_chars=True)):
+        tick()
+        text, starts = _row_text(row)
+        phrase_of = {id(w): phrase for phrase in _phrases(row) for w in phrase}
+        ends = [start + len(w["text"].rstrip(" .:)")) for start, w in zip(starts, row)]
+        for low, high, _ in identifier_spans(text)[0]:
+            tick()
+            cover = _covered(row, starts, low, high)
+            phrase = phrase_of[id(cover[0])]
+            if cover[-1] is phrase[-1] and high >= ends[bisect.bisect_left(starts, high) - 1]:
+                cover = phrase
+            for word in cover:
+                if id(word) in indexed_words:
+                    continue
+                indexed_words.add(id(word))
+                for char in word["chars"]:
+                    if id(char) in indexed or not char["text"].isalpha():
+                        continue
+                    indexed.add(id(char))
+                    for x in _strip_span(char["x0"], char["x1"]):
+                        for y in _strip_span(char["top"], char["bottom"]):
+                            tick()
+                            entries += 1
+                            if entries > MAX_OVERLAY_INDEX_ENTRIES:
+                                raise ParseBudgetError("Identifier overlap index exceeds its per-page budget; split or repair the PDF.")
+                            index.setdefault((x, y), []).append(char)
+    if not index:
+        return set()
+    hidden: set[int] = set()
+    for row in _word_rows(digits):
+        tick()
+        groups: list[list[dict]] = []
+        for digit in row:
+            tick()
+            if groups and digit["x0"] - groups[-1][-1]["x1"] <= 2 * (digit["bottom"] - digit["top"]):
+                groups[-1].append(digit)
+            else:
+                groups.append([digit])
+        for group in groups:
+            tick()
+            # A separate amount or account can sit close to the identifier.
+            # Split at its distinct word gap; ambiguous long runs refuse.
+            candidates = [group]
+            if 9 < len(group) <= 18:
+                gaps = [right["x0"] - left["x1"] for left, right in zip(group, group[1:])]
+                cut = max(range(len(gaps)), key=gaps.__getitem__) + 1
+                if max(gaps) > min(gaps) + 1 and cut <= 9 and len(group) - cut <= 9:
+                    candidates = [group[:cut], group[cut:]]
+            for candidate in candidates:
+                tick()
+                bounds = _box(candidate)
+                if tuple(round(bounds[k], 3) for k in ("x0", "x1", "top", "bottom")) in protected:
+                    continue
+                overlaps = False
+                for digit in candidate:
+                    tick()
+                    for x in _strip_span(digit["x0"], digit["x1"]):
+                        for y in _strip_span(digit["top"], digit["bottom"]):
+                            tick()
+                            for char in index.get((x, y), ()):
+                                if (digit["x0"] < char["x1"] and digit["x1"] > char["x0"]
+                                        and digit["top"] < char["bottom"] and digit["bottom"] > char["top"]):
+                                    overlaps = True
+                                    break
+                if overlaps:
+                    if len(candidate) != 9:
+                        raise ValueError("An ambiguous numeric overlay crosses an identifier label; repair the PDF before parsing.")
+                    hidden.update(id(digit) for digit in candidate)
+    return hidden
+
+
+def _safe_pdf_page(page, tick):
+    """A fresh derived page with overlaid identifier digits replaced by X.
+    FilteredPage owns its objects mapping; copied character records keep both
+    the source page and every non-character object (table rules) intact.
+    """
+    tick()
+    hidden = _overlaid_digits(page.chars, tick)
+    if not hidden:
+        return page
+    words = page.extract_words()
+    governed = prepare_runs(_governed_runs(words, tick)).spelling
+    protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
+                 for raw, box in _page_identifiers(words, tick)[1]
+                 if "".join(re.findall(r"[0-9]", raw)) in governed}
+    if protected:
+        hidden = _overlaid_digits(page.chars, tick, protected=protected)
+    if not hidden:
+        return page
+    safe = page.filter(lambda obj: True)
+    safe.objects["char"] = [{**c, "text": "X"} if id(c) in hidden else c for c in page.chars]
+    tick()
+    return safe
+
+
 def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, str]:
     """Extract text from PDF, page by page.
 
@@ -416,10 +528,11 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            text = pdf.pages[i].extract_text() or ""
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            text = page.extract_text() or ""
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
-            runs = _governed_runs(pdf.pages[i].extract_words(), budget.tick)
+            runs = _governed_runs(page.extract_words(), budget.tick)
             result[i] = mask_runs(mask_ssn(text), runs)
     budget.tick()
     return result
@@ -976,7 +1089,8 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            words = pdf.pages[i].extract_words()
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            words = page.extract_words()
             budget.tick()
             for word in words:
                 budget.charge_cell(word["text"])
@@ -1020,14 +1134,15 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            tables = pdf.pages[i].extract_tables() or []
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            tables = page.extract_tables() or []
             # AFTER the extraction, and outside the `if`: a page that yields no
             # table is the one that charges nothing, and the last such page had
             # no check left after it at all.
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                runs = prepare_runs(_governed_runs(pdf.pages[i].extract_words(), budget.tick))
+                runs = prepare_runs(_governed_runs(page.extract_words(), budget.tick))
                 result[i] = [_mask_table_runs(mask_table(table), runs, budget.tick) for table in tables]
     budget.tick()
     return result
