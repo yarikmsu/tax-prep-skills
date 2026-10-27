@@ -1055,8 +1055,8 @@ class TestMaskingByPosition:
         assert _SECOND in mask_ssn(raw)
         assert _ssn("") not in out and _SECOND not in out
 
-    @pytest.mark.parametrize("pitch", [36, 21])   # Form 1095-B's rows (5.1 heights), IT-201's dependents (3)
-    def test_a_column_runs_on_from_entry_to_entry(self, tmp_path, pitch):
+    @pytest.mark.parametrize("pitch", [36, 21], ids=["1095-B rows, 5.1 heights", "IT-201 dependents, 3"])
+    def test_a_column_runs_on_to_each_entry_lined_up_with_its_first(self, tmp_path, pitch):
         """Eight entries run far past a heading's own reach, each lined up
         with the first (IT-201's first dependent prints 0.2 points right of
         the rest). Each is its own number: a run governed once is masked
@@ -1070,28 +1070,29 @@ class TestMaskingByPosition:
     @pytest.mark.parametrize("between", [
         [(300, 337.6 + 36 * k, 9, "01/15/2020") for k in (1, 2, 3)],    # a date of birth in the next column
         [(218, 337.6 + 36 * k, 9, "XXX-XX-1111") for k in (1, 2, 3)],   # entries the page masked itself
-    ])
+    ], ids=["dates of birth", "masked by the page"])
     def test_a_column_runs_on_past_rows_without_a_number(self, tmp_path, between):
         """Form 1095-C's covered individuals: a person with no SSN gets a
-        date of birth instead, so three rows leave the column's box empty
-        and its next entry prints 19 heights below the last."""
+        date of birth instead, so three rows leave the column's box empty,
+        or hold entries the page masked itself, and its next entry prints
+        19 heights below the last."""
         raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")), *between,
                                          (218, 337.6 + 36 * 4, 9, _SECOND)])
         assert _SECOND in mask_ssn(raw)
         assert _SECOND not in out
 
-    @pytest.mark.parametrize("first", [218, 215])   # boxes aligned left, and centred (Form 1095-B's)
+    @pytest.mark.parametrize("first", [218, 215, 212], ids=["left", "centred (Form 1095-B's)", "right"])
     def test_a_column_runs_on_under_a_filers_hyphens(self, tmp_path, first):
         """The first entry typed with hyphens, a later one without: the two
-        share a left edge, or in a centred box only a centre, the hyphens
-        adding 3 points a side."""
+        share only a left edge, a centre or a right edge, as the boxes align
+        what is typed in them, the hyphens adding 3 points a side."""
         raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (first, 337.6, 9, _ssn("-")),
                                          (218, 337.6 + 36 * 4, 9, _SECOND)])
         assert _SECOND in mask_ssn(raw)
         assert _SECOND not in out
 
-    @pytest.mark.parametrize("head, overlay", [("(2) Social security", " " * 5),   # TY2024 Form 1040
-                                               ("(2) Identifying", "")])             # Form 1040-NR
+    @pytest.mark.parametrize("head, overlay", [("(2) Social security", " " * 5), ("(2) Identifying", "")],
+                             ids=["TY2024 1040", "1040-NR"])
     def test_a_heading_wrapped_over_two_rows(self, tmp_path, head, overlay):
         """The dependents' heading prints its last word on a row of its own,
         and the TY2024 Form 1040 draws spaces over it, splitting "number"
@@ -1153,15 +1154,21 @@ class TestMaskingByPosition:
         # its value: a box's value lines up with no column under it.
         [(328, 39, 7, "Social Security number"), (311.5, 51, 9, _ssn("")),
          *[(308.5, 75 + 12 * k, 9, "".join(("021", "000", f"{k:03d}"))) for k in range(8)], (308.5, 171, 9, ROUTING)],
-        # A heading's second row that is more than the label's end (Form
-        # 1099-B's instructions end a sentence there), is not under it, or
-        # finishes a heading that is no identifier label.
+        # A statement's box: the page's masked number, the run under it its
+        # account's; numbers lined up far below are no column of the filer's.
+        [(238, 319.5, 7, "SSN"), (218, 330, 9, "XXX-XX-1111"), (218, 341, 9, _ssn("")), (218, 600, 9, ROUTING)],
+        # A heading's second row that is more than the label's end, is not
+        # under it, or finishes a heading that is no identifier label; and a
+        # number 17 heights under a wrapped heading, past a reach measured in
+        # one row's height.
         [(36, 100, 7, "(2) Social security"), (36, 109, 7, "number of children"), (36, 120, 9, ROUTING)],
-        [(36, 100, 7, "other applicable identifying"), (36, 109, 7, "number."), (36, 120, 9, ROUTING)],  # the pattern's own refusal
+        # Form 1099-B's instructions end a sentence there: the period is the pattern's own refusal.
+        [(36, 100, 7, "other applicable identifying"), (36, 109, 7, "number."), (36, 120, 9, ROUTING)],
         [(36, 100, 7, "(2) Social security"), (200, 109, 7, "number"), (200, 120, 9, ROUTING)],   # right of it
         [(200, 100, 7, "(2) Social security"), (36, 109, 7, "number"), (36, 120, 9, ROUTING)],    # left of it
         [(36, 100, 7, "(2) Social security"), (36, 130, 7, "number"), (36, 141, 9, ROUTING)],     # rows apart
         [(36, 100, 7, "(3) Account"), (36, 109, 7, "number"), (36, 120, 9, ROUTING)],             # no label
+        [(36, 100, 7, "(2) Social security"), (36, 109, 7, "number"), (36, 240, 9, ROUTING)],     # far below
         [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
          (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
     ])
@@ -1181,28 +1188,28 @@ class TestMaskingByPosition:
         lower = [{"text": "number", "x0": 16.0 * k, "x1": 16.0 * k + 3, "top": 108.0, "bottom": 115.0} for k in range(500)]
         parse_utils._wrapped_labels([upper, lower], lambda: None)
         assert reads.count(2000) == 1 and len(texts) == 500
-        assert max(len(text) for text in texts) <= parse_utils._WRAP + len(" number")
+        assert max(len(text) for text in texts) <= 100, "the phrase's end, not its 2,000 words"
 
     def test_a_heading_lower_down_takes_its_column_over(self):
         """A column has no reach to end it, so the next lined up with it
         replaces it: a strip holds no more columns than it has places to
         line up, however long the page."""
-        from agents.lib.parse_utils import _extend, _lined_columns
+        from agents.lib.parse_utils import _lined_columns, _lines_up, _start_column
         columns, lined = {}, {}
         entry = {"x0": 100.0, "x1": 145.0, "top": 10.0, "bottom": 19.0}
-        _extend(columns, lined, 0, entry, 7.0)
-        _extend(columns, lined, 1, {**entry, "x0": 110.0, "x1": 155.0}, 7.0)    # 10 points right: its own
-        _extend(columns, lined, 2, {**entry, "x0": 97.0, "top": 500.0, "bottom": 509.0}, 7.0)   # its right edge
+        _start_column(columns, lined, 0, entry, 7.0)
+        _start_column(columns, lined, 1, {**entry, "x0": 110.0, "x1": 155.0}, 7.0)    # 10 points right: its own
+        _start_column(columns, lined, 2, {**entry, "x0": 97.0, "top": 500.0, "bottom": 509.0}, 7.0)   # its right edge
         assert sorted(columns) == [1, 2] and not any(0 in found for found in lined.values())
-        assert [k for k, *_ in _lined_columns(columns, lined, entry)] == [1, 2]
+        assert [k for k, _, column in _lined_columns(columns, lined, entry) if _lines_up(entry, column)] == [2]
 
-    @pytest.mark.parametrize("edges", [(200.0, 225.0), (285.0, 305.0), (237.5, 267.5)])   # left, right, centre
+    @pytest.mark.parametrize("edges", [(200.0, 225.0), (285.0, 305.0), (237.5, 267.5)], ids=["left", "right", "centre"])
     def test_a_column_is_found_by_the_edge_its_entries_share(self, edges):
         """A narrower entry shares one place with the column's first: its
         left edge, right edge or centre, each in a strip of its own here."""
-        from agents.lib.parse_utils import _extend, _lined_columns
+        from agents.lib.parse_utils import _lined_columns, _start_column
         columns, lined = {}, {}
-        _extend(columns, lined, 0, {"x0": 200.0, "x1": 305.0, "top": 10.0, "bottom": 19.0}, 7.0)
+        _start_column(columns, lined, 0, {"x0": 200.0, "x1": 305.0, "top": 10.0, "bottom": 19.0}, 7.0)
         entry = {"x0": edges[0], "x1": edges[1], "top": 500.0, "bottom": 509.0}
         assert [k for k, *_ in _lined_columns(columns, lined, entry)] == [0]
 

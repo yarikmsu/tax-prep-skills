@@ -487,7 +487,7 @@ def _row_text(row: list[dict]) -> tuple[str, list[int]]:
 
 
 def _phrases(row: list[dict]) -> list[list[dict]]:
-    """A row's words in runs no further apart than a word is tall: the
+    """A row's words in groups no further apart than a word is tall: the
     cells of a heading row."""
     out: list[list[dict]] = []
     for word in row:
@@ -502,9 +502,10 @@ def _wrapped_labels(rows: list[list[dict]], tick) -> list:
     """Identifier headings printed on two rows: "(2) Social security" over
     "number" (the TY2024 Form 1040's dependents) and "(2) Identifying" over
     "number" (Form 1040-NR's). A label starts in the upper phrase and ends
-    the lower one, which holds nothing else; it is boxed on the lower row,
-    as wide as both. Only an upper phrase's last `_WRAP` characters are
-    read, where such a label starts."""
+    the lower one, which holds nothing else and starts no further below the
+    upper than it is tall; it is boxed on the lower row, as wide as both.
+    Only an upper phrase's last `_WRAP` characters are read, where such a
+    label starts."""
     labels = []
     for upper, lower in zip(rows, rows[1:]):
         tick()
@@ -638,9 +639,15 @@ def _beside(labels: list, items: list, under: list, tick) -> set[str]:
     return runs
 
 
+def _strip(x: float) -> int:
+    """The vertical strip of the page `x` falls in, the page's first or last
+    for an `x` off it."""
+    return min(max(int(x // _BIN), 0), _STRIPS)
+
+
 def _strip_span(x0: float, x1: float) -> range:
     """The vertical strips of the page from `x0` to `x1`."""
-    return range(max(int(x0 // _BIN), 0), min(int(x1 // _BIN), _STRIPS) + 1)
+    return range(_strip(x0), _strip(x1) + 1)
 
 
 def _strips(words: list[dict]) -> dict[int, list]:
@@ -673,8 +680,8 @@ def _by_height(labels: list) -> list:
 
 
 def _in_column(box: dict, above: list[dict], label: dict, height: float) -> bool:
-    """`box` is in the column `label` heads: below it, in its span, and
-    nothing printed between but what does not end a column."""
+    """`box` is in the column `label` heads: below it, in its span, and no
+    word printed between, across `box`, as short as the label's own text."""
     ceiling = next((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), float("-inf"))
     return (box["top"] > label["bottom"] >= ceiling - 1
             and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height)
@@ -700,24 +707,18 @@ def _edge_strips(column: tuple) -> set[int]:
     return {strip for x in first for strip in _strip_span(x - reach, x + reach)}
 
 
-def _strip(x: float) -> int:
-    return min(max(int(x // _BIN), 0), _STRIPS)
-
-
 def _lined_columns(columns: dict, lined: dict, box: dict) -> list:
-    """The columns `box` may line up with, as (label, height, column): those
-    filed under the strips its edges and centre fall in."""
+    """The columns `box` may line up with, as (label index, height, column):
+    those filed under the strips its edges and centre fall in."""
     found = set().union(*(lined.get(_strip(x), ()) for x in _edges(box)))
     return [(k, columns[k][0], columns[k]) for k in sorted(found)]
 
 
-def _extend(columns: dict, lined: dict, k: int, box: dict, height: float) -> None:
-    """`box` is an entry of label `k`'s column. The first files the column
-    under the strips a lined-up entry's edges fall in, and takes over each
-    column it lines up with: a heading lower down starts a table of its own,
-    and a strip holds no more columns than it has places to line up."""
-    if k in columns:
-        return
+def _start_column(columns: dict, lined: dict, k: int, box: dict, height: float) -> None:
+    """`box` is the first entry of label `k`'s column: file the column under
+    the strips a lined-up entry's edges fall in, taking over each column the
+    entry lines up with. A heading lower down starts a table of its own, and
+    a strip holds no more columns than it has places to line up."""
     for j, _, column in _lined_columns(columns, lined, box):
         if _lines_up(box, column):
             for strip in _edge_strips(columns.pop(j)):
@@ -736,12 +737,14 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
     entry lined up with its first, by an edge or the centre, until the form
     prints across it: however many rows a filer leaves empty (Form 1095-C's
     date-of-birth rows), and whatever the filer's hyphens do to an entry's
-    width in a centred box (Form 1095-B's). A label whose own value just
-    under it the page masked itself is a box's label on a statement, and
-    heads no column; a filer's hyphens in the first entry do not end it
-    (Form 2441's qualifying persons). No official form lines a column of
-    amounts up with a header SSN box's value (IT-201's is 3 points off);
-    printed flush with one, only its identifier-shaped amounts are masked."""
+    width in a centred box (Form 1095-B's). An entry the page masked itself
+    neither starts a column nor ends one, and a label whose own value just
+    under it the page masked is a box's label on a statement, heading no
+    column; a filer's hyphens in the first entry do not end it (Form 2441's
+    qualifying persons). A header SSN typed in a comb box spans it, so its
+    right edge can line up with the amounts down the margin under it (Form
+    5695's page 2), and the column masks those that are identifier-shaped;
+    IT-201's page 3 header is 3 points off its amounts."""
     free = [k for k, (_, carries, _) in enumerate(labels) if not carries]
     heads = {k for k in free if not any(masked for _, _, masked in under[k])}
     classes = _by_height([labels[k] for k in free])
@@ -762,15 +765,15 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
             label = labels[k][0]
             if column is not None:
                 governed = _lines_up(box, column) and _in_column(box, above, label, height)
-            else:
+            else:   # a spelled entry is masked already, and counts only toward a column it starts
                 governed = ((raw is not None and _is_under(box, label, height))
                             or (k in heads and box["top"] - label["bottom"] <= _COLUMN * height
                                 and _in_column(box, above, label, height)))
             if governed:
                 if raw is not None:
                     runs.add(raw)
-                if k in heads:
-                    _extend(columns, lined, k, box, height)
+                if k in heads and k not in columns:
+                    _start_column(columns, lined, k, box, height)
                 break
     return runs
 
