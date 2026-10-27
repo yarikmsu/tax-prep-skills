@@ -3926,3 +3926,83 @@ fixed with a hand-worked test. Two attempts to price a filing-year conversion
 against a return's recorded Dec 31 value (a realized rate, then the larger of
 two timings) each failed review because deposits no 8606 line shows break any
 bound, so such a plan now refuses: that year's conversion is a counterfactual.
+
+## AA86 — comb-field SSNs and the attachment forms' labels are masked (#73)
+
+Official fillable forms print an SSN in a comb field, nine boxes of one digit
+each. Flattened, pdfplumber extracts the digits apart, a spelling `mask_ssn`
+did not match: a filled TY2025 Form 1040 returned the taxpayer's SSN on its
+name row and every dependent's on the "(3) SSN" row, into the transcript
+AGENTS.md §1 forbids. Forms 8995, 8995-A and its Schedule C, 8801, and Form
+1116 with its Schedule B printed identifier labels the masker did not
+recognise, so a number typed there without hyphens came back whole.
+
+The comb spelling is now masked under a label nine digits at a time, and a run
+that is not whole nines keeps no digit. The attachment forms' labels are
+recognised exactly as printed and ending their row, never in prose, after
+"other" or after a possessive: review found the first version masking Form
+8938's CUSIPs, Form 8283's entity EIN and "your TIN" in prose. Whether a
+label's line already carries its value is now decided by its last label in
+one scan; main's pattern for it was quadratic (13 s on 40,000 characters). A
+value separated from its label by another row still came back whole, which
+AA87 took up.
+
+## AA44 (part) — the carryover tables, read by position (#70)
+
+#70 first read Schedule B (Form 1116) and Schedule P (540) as pdfplumber
+table grids, which the official forms do not print: pdfplumber finds no table
+on Schedule P. On 2026-10-26 the owner chose to read them by position.
+`parse_utils.extract_pdf_words` returns word boxes masked row by row like page
+text; columns come from printed headings and lines from margin numbers. The
+readers take each foreign tax credit category's carryover by origin year, each
+California credit code through its sections (a solar credit's Section B2
+figure only as Section C's amount), Schedule C (Form 8995-A) lines 2-6 beside
+a covered-year Form 8995-A, and Form 1040's checked filing-status box. A
+review confirms every basket, year and code; the tables roll as evidence, and
+any balance or amount not carried blocks computation.
+
+Three of four review rounds found a way a figure could leave a table unseen:
+- a blank Section C letting B2's 500 stand for C's 400, an over-statement;
+- figures drawn into a line's number or heading row, above line 6, or under a
+  line number that did not extract;
+- a line whose every figure sat in its credit name, which let a credit chained
+  from Section A2 into B2 carry A2's figure.
+
+Each Schedule P side now needs every line number it prints, and every figure
+on it must be a line number, a code, part of a credit name, a cited line, or
+in a box its line has. The other round caught two fixes overreaching: the
+FTB's own "Program 3.0" credit name read as a stray figure, and a Side 2 check
+aimed at a column the form shades. A Schedule B page 2 binds to its page 1 by the
+subtotal it repeats, so two categories with the same subtotals are a question.
+The readers were tested on the official forms filled and flattened about
+forty ways; no tax software's own PDF has been read yet.
+
+## AA87 — identifiers masked by their position on the page (#74)
+
+`mask_ssn` reads extracted text, where a label governs its own row and the
+row after it. A flattened official form often prints something between a
+label and its value: Form 540's margin glyph and rotated sidebars, a W-2
+copy's form code, Form 2441's provider rows. An SSN typed without hyphens
+there came back whole from every PDF route; on CA Form 540, every page. Each
+PDF route now also reads the page's word boxes and masks a run by the label
+whose box it sits in: beside it on its row (each next value within reach, as
+Form 540's dependents print), just under it, or down a heading's column (Form
+2441's providers, FTB 3506's qualifying persons). On 60 filled official forms
+main leaked an identifier on 17; this leaks on 3, each explained.
+
+Four review rounds shaped the rules:
+- **Round 1:** the reaches were unbounded, so an account number or ZIP+4 on a
+  TIN's row was masked page-wide. `extract_tables` still returned Form 1040's
+  comb SSNs split across cells, and a crafted page ran 636s.
+- **Round 2:** the fix's heading test cut Form 2441 Part II after its first
+  person, a table that cut Form 1040-SR's comb row short leaked it, and a
+  stretched glyph cost gigabytes.
+- **Round 3:** a first dependent typed with hyphens stopped CA Form 540's row.
+  Rows and columns now stop only at a value the page masked itself, as a
+  broker's statement prints its TIN.
+- **Round 4:** found only test gaps.
+
+The reaches leave headroom over the farthest value on the filled forms: 9.1
+label heights beside, 1.8 aside and 12.3 down a column. Extraction costs
+about 5% more. Identifiers outside these
+reaches went to AA89, and an SSN drawn over its own label to AA88.
