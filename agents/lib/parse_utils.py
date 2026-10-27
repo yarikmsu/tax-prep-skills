@@ -459,19 +459,76 @@ _CHAIN = 20.0    # how far beyond one value on that row the next may start
 _UNDER = 2.5     # how far below its label a boxed value may print
 _ASIDE = 2.0     # how far outside the label's span that value may start
 _COLUMN = 14.0   # how far down its column a heading label governs
+_LINED = 0.25    # how far off its first entry's edge a column's entry may print (IT-201's: 0.2 points)
 _DOTS = 2.0      # how far from its label, and from each other, a leader's dots may print (Schedule 1's first: 1.5)
 _BIN = 20.0      # the width of the strips a page's words are indexed in
 _STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
 _LEADER = re.compile(r"[.\u2026]+")   # a word printed as dots alone
+_WRAP = 64       # characters at a heading phrase's end that a wrapped label can start in
+_ABUT = 0.05     # points apart at most for two words to be one a hidden glyph split
 
 
 def _row_text(row: list[dict]) -> tuple[str, list[int]]:
-    """The row's text as page text joins it, and where each word starts in it."""
-    starts, offset = [], 0
-    for word in row:
+    """The row's text as page text joins it, and where each word starts in
+    it. Words that abut are one word a hidden glyph split: the TY2024 Form
+    1040 draws spaces over "number" in its dependents' heading."""
+    starts, parts, offset = [], [], 0
+    for i, word in enumerate(row):
+        if i:
+            gap = "" if word["x0"] - row[i - 1]["x1"] <= _ABUT else " "
+            parts.append(gap)
+            offset += len(gap)
         starts.append(offset)
-        offset += len(word["text"]) + 1
-    return " ".join(word["text"] for word in row), starts
+        parts.append(word["text"])
+        offset += len(word["text"])
+    return "".join(parts), starts
+
+
+def _phrases(row: list[dict]) -> list[list[dict]]:
+    """A row's words in runs no further apart than a word is tall: the
+    cells of a heading row."""
+    out: list[list[dict]] = []
+    for word in row:
+        if out and word["x0"] - out[-1][-1]["x1"] <= word["bottom"] - word["top"]:
+            out[-1].append(word)
+        else:
+            out.append([word])
+    return out
+
+
+def _wrapped_labels(rows: list[list[dict]], tick) -> list:
+    """Identifier headings printed on two rows: "(2) Social security" over
+    "number" (the TY2024 Form 1040's dependents) and "(2) Identifying" over
+    "number" (Form 1040-NR's). A label starts in the upper phrase and ends
+    the lower one, which holds nothing else; it is boxed on the lower row,
+    as wide as both. Only an upper phrase's last `_WRAP` characters are
+    read, where such a label starts."""
+    labels = []
+    for upper, lower in zip(rows, rows[1:]):
+        tick()
+        heads = _phrases(upper)
+        ends = [head[-1]["x1"] for head in heads]
+        read: dict[int, tuple] = {}
+        for tail in _phrases(lower):
+            tick()
+            j = bisect.bisect_right(ends, tail[0]["x0"])
+            if j == len(heads) or heads[j][0]["x0"] >= tail[-1]["x1"]:
+                continue
+            if j not in read:
+                read[j] = (*_row_text(heads[j]), max(w["bottom"] for w in heads[j]))
+            head_text, starts, head_bottom = read[j]
+            top, bottom = tail[0]["top"], max(w["bottom"] for w in tail)
+            if top - head_bottom > bottom - top:
+                continue
+            cut = max(len(head_text) - _WRAP, 0)
+            joined = f"{head_text[cut:]} {_row_text(tail)[0]}"
+            low = next((cut + low for low, high, _ in identifier_spans(joined)[0]
+                        if low < len(head_text) - cut and high == len(joined)), None)
+            if low is not None:
+                span = _covered(heads[j], starts, low, len(head_text)) + tail
+                labels.append(({"x0": min(w["x0"] for w in span), "x1": max(w["x1"] for w in span),
+                                "top": top, "bottom": bottom}, False, max(w["x1"] for w in span)))
+    return labels
 
 
 def _covered(row: list[dict], starts: list[int], start: int, end: int) -> list[dict]:
@@ -503,7 +560,8 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
     values: list[tuple[str, dict]] = []
     spelled: list[tuple[dict, bool]] = []
     covered: set[int] = set()
-    for row in _word_rows(words):
+    rows = _word_rows(words)
+    for row in rows:
         tick()
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
@@ -526,7 +584,7 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
             spelled.append((_box(cover), masked))
         for low, high in notes:
             covered.update(id(w) for w in _covered(row, starts, low, high))
-    return labels, values, spelled, covered
+    return labels + _wrapped_labels(rows, tick), values, spelled, covered
 
 
 def _is_under(box: dict, label: dict, height: float) -> bool:
@@ -608,39 +666,82 @@ def _by_height(labels: list) -> list:
     return [(sorted(members), max(h for _, _, h in members)) for members in classes.values()]
 
 
-def _under(labels: list, values: list, under: list, printed: list[dict], tick) -> set[str]:
+def _down_column(box: dict, above: list[dict], label: dict, height: float, entry: float) -> bool:
+    """`box` is down the column `label` heads: in its span, within reach of
+    the column's last entry (`entry`, the label's own bottom at first), and
+    nothing printed between but what does not end a column."""
+    ceiling = next((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), float("-inf"))
+    return (box["top"] > label["bottom"] >= ceiling - 1 and box["top"] - entry <= _COLUMN * height
+            and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height)
+
+
+def _edge_strips(column: tuple) -> set[int]:
+    """The strips an entry's edge falls in when it lines up with `column`'s
+    first entry: (last entry's bottom, label height, first's x0, first's x1)."""
+    _, height, x0, x1 = column
+    reach = _LINED * height
+    return {strip for x in (x0, x1) for strip in range(_strip(x - reach), _strip(x + reach) + 1)}
+
+
+def _strip(x: float) -> int:
+    return min(max(int(x // _BIN), 0), _STRIPS)
+
+
+def _extend(columns: dict, lined: dict, k: int, box: dict, height: float) -> None:
+    """`box` is label `k`'s column's latest entry. The first one also files
+    the column under the strips a lined-up entry's edge falls in."""
+    if k not in columns:
+        columns[k] = (box["bottom"], height, box["x0"], box["x1"])
+        for strip in _edge_strips(columns[k]):
+            lined.setdefault(strip, set()).add(k)
+    columns[k] = (box["bottom"], height, *columns[k][2:])
+
+
+def _under(labels: list, items: list, under: list, printed: list[dict], tick) -> set[str]:
     """Runs under a label with no value on its row: just below it, or down
     its column with nothing printed between but other identifiers, notes on
     the label, and the entries typed in the column's boxes, which print
     larger than the form's own labels (Form 2441's providers, one of them
-    "Tax-Exempt"). A label whose own value just under it the page masked
-    itself is a box's label on a statement, and heads no column; a filer's
-    hyphens in the first entry do not end it (Form 2441's qualifying
-    persons)."""
+    "Tax-Exempt"). Past the label's own reach a column runs on from entry
+    to entry, each lined up with its first and within reach of the one
+    above (Form 1095-B's rows, IT-201's dependents), a filer's hyphens
+    included; the amounts under Schedule B's header SSN do not line up with
+    it. A label whose own value just under it the page masked itself is a
+    box's label on a statement, and heads no column; a filer's hyphens in
+    the first entry do not end it (Form 2441's qualifying persons)."""
     free = [k for k, (_, carries, _) in enumerate(labels) if not carries]
     heads = {k for k in free if not any(masked for _, _, masked in under[k])}
     classes = _by_height([labels[k] for k in free])
     index = _strips(printed)
+    columns: dict[int, tuple] = {}     # a column's last entry's bottom, label height, first entry's x0 and x1
+    lined: dict[int, set[int]] = {}    # the columns an entry with an edge in each strip may line up with
     runs = set()
-    for raw, box in values:
+    for box, raw, masked in sorted(items, key=lambda item: item[0]["top"]):
         tick()
+        if masked:
+            continue
+        near = sorted(lined.get(_strip(box["x0"]), set()) | lined.get(_strip(box["x1"]), set()))
+        for k in [k for k in near if box["top"] - columns[k][0] > _COLUMN * columns[k][1]]:
+            for strip in _edge_strips(columns.pop(k)):   # out of reach of every entry still to come
+                lined[strip].discard(k)
         above = sorted(_over(index, box), key=lambda w: -w["bottom"])
-        for members, tallest in classes:
-            first = bisect.bisect_left(members, (box["top"] - _COLUMN * tallest,))
-            for _, j, height in members[first:bisect.bisect_right(members, (box["top"] + 1, float("inf")))]:
-                tick()
-                k = free[j]
-                label = labels[k][0]
-                if _is_under(box, label, height):
+        window = [(free[j], height, None) for members, tallest in classes
+                  for _, j, height in members[bisect.bisect_left(members, (box["top"] - _COLUMN * tallest,)):
+                                              bisect.bisect_right(members, (box["top"] + 1, float("inf")))]]
+        for k, height, column in window + [(k, columns[k][1], columns[k]) for k in near if k in columns]:
+            tick()
+            label = labels[k][0]
+            if column is None:
+                governed = ((raw is not None and _is_under(box, label, height))
+                            or (k in heads and _down_column(box, above, label, height, label["bottom"])))
+            else:
+                governed = ((abs(box["x0"] - column[2]) <= _LINED * height or abs(box["x1"] - column[3]) <= _LINED * height)
+                            and _down_column(box, above, label, height, column[0]))
+            if governed:
+                if raw is not None:
                     runs.add(raw)
-                    break
-                ceiling = next((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), float("-inf"))
-                if (k in heads and box["top"] > label["bottom"] >= ceiling - 1
-                        and box["top"] - label["bottom"] <= _COLUMN * height
-                        and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height):
-                    runs.add(raw)
-                    break
-            if raw in runs:
+                if k in heads:
+                    _extend(columns, lined, k, box, height)
                 break
     return runs
 
@@ -655,7 +756,7 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
     items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
     under = _just_under(labels, items, tick)
     printed = [w for w in words if id(w) not in covered]
-    return _beside(labels, items, under, tick) | _under(labels, values, under, printed, tick)
+    return _beside(labels, items, under, tick) | _under(labels, items, under, printed, tick)
 
 
 def _mask_table_runs(table: list, runs, tick) -> list:
