@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA89** — mask the identifiers AA87's reaches miss: every filled FTB 3532 returns its head-of-household qualifying person's SSN. **AA88** — mask an SSN drawn over its own label. AA87 shipped in #74. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
+| **1. California filers: ready now** | **AA89** — mask the identifiers AA87's reaches still miss: Form 1095-A Part II (Covered California's form), Form 8332 and Schedule EIC line 2. FTB 3532's leader shipped in #76, columns past a heading's reach and wrapped headings in #77. **AA88** — mask an SSN drawn over its own label. AA87 shipped in #74. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | **AA44** — the prior-return import's last readers: Form 540 Side 4's lines 98-99 by position, and page-1 identity and dependent proposals. Its first delivery shipped in #69, the carryover tables in #70; AA45 shipped in #71. | The owner chose reading by position (2026-10-26); a tax software's own PDF still needs a first real report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -201,22 +201,58 @@ Trigger and range behavior is documented in
   percentage or substitute TY2025 values. Found by the same review.
 
 - **AA89 (P1, M): Mask the identifiers AA87's reaches miss.**
-  AA87's positional pass governs a value beside its label within 12 label
-  heights, under it within 2.5, and down a heading's column within 14. #74's
-  third review found official forms that print an SSN past those reaches,
-  each leaking on main as well:
-  - FTB 3532 line 3, the head-of-household qualifying person, after a dot
-    leader 45 heights long. Every filled 3532 leaks, and California filers
-    come first.
-  - Form 1095-A Part II, whose "SSN" label prints right of its values.
-  - Form 1095-B and 1095-C from row 3, and IT-201's dependents 6 and 7, whose
-    rows run past 14 heights.
-  - Schedule EIC line 2, whose label sits several lines above and left.
-  - Form 8332, whose label prints under its value.
-  - A TY2024 Form 1040, whose dependents' heading extracts as "num b e r".
+  #76 carried a label's row reach past its dot leader (FTB 3532 line 3,
+  Schedule 1 line 19b). #77 ran a column past its heading's reach (Form
+  1095-B and 1095-C rows, IT-201's dependents 6 and 7) and read headings
+  wrapped onto a second row (the TY2024 Form 1040, Form 1040-NR, Form 8839).
+  Three layouts still leak on main, each every SSN on the form:
+  - **Form 1095-A Part II** heads its SSN column "B. Covered individual SSN"
+    and prints each SSN under the letter, ending 17 points left of the label
+    "SSN". The entry is outside the label's span, so the column never starts.
+  - **Form 8332** prints "Custodial parent's SSN" under the signature line
+    the SSN is typed on: a value above its label.
+  - **Schedule EIC line 2**: "Child's SSN" opens ten lines of instructions,
+    and each child's SSN prints beside the last, 105 points below.
 
-  A dot leader carries a label's reach to the row's end. A table's rows run
-  as far as its rules do. Test each against the filled form.
+  A design built and checked against the filled forms and the corpus of
+  2,790 filled PDFs masks all eleven SSNs and nothing else:
+  - **A lettered caption** heads its column from the letter, when the label
+    ends a phrase opening with a form's letter or line number ("B.",
+    "(b)", "2", "12b") no more than 12 label heights left of the label
+    (1095-A's: 9.4). Use the caption's start for the column's span check,
+    both within the heading's reach and down the chain. Restricted to
+    lettered phrases: an unlettered caption masked IT-201's preparer's
+    firm EIN under "Preparer's PTIN or SSN".
+  - **A lone label** is free, prints nothing just under it, and prints no
+    identifier right of it on its row (geometrically, so a raised baseline
+    counts). It governs a run whose bottom lies within one label height
+    above its top and which overlaps from the start of the phrase the label
+    ends to the label's end (8332's value overlaps "Custodial", not "SSN").
+  - **A paragraph's lines**: a lone label that ends its row's first phrase,
+    which opens with a line number, lends its row reach to each line of the
+    paragraph below as a stand-in label, beside only. The first line starts
+    within 2 label heights of that phrase (EIC: 1.4); each later line is
+    flush with the first, no further below the line above than the label
+    is tall, and holds no run in its first phrase. The next numbered line
+    starts left of them, which ends the paragraph.
+  - **Traps:**
+    - Instructions mention "an SSN" mid-sentence; those are labels too. A
+      paragraph opened by any lone label (the first prototype) masked EIC
+      only through the instructions' own "an SSN", and a sentence ending in "SSN"
+      opened paragraphs into the next line item. Require the numbered head.
+    - Without the nothing-beside rule the paragraph masked Form 540's
+      dependents' relationship fields.
+    - In test fixtures, a run on the text line right after a line holding
+      "SSN" is masked by page text alone, and a run on the same row as a
+      prose "SSN" is carried by it: keep a line between. Keep each drawn
+      line clear of the run beside it, or pdfplumber interleaves their
+      glyphs.
+
+  Gaps #77 leaves, each leaking on main as well:
+  - Typed text in an empty SSN box (a 1095-C "N/A") ends a column.
+  - A column whose first entry prints past the heading's 14-height reach
+    (rows 1 to 3 empty) never starts.
+  - A column whose later rows print 2 points off the first stops there.
 
 - **AA88 (P2, M): Mask an SSN drawn over its own label.**
   When an SSN prints on its label's own baseline, as a misaligned overlay or
