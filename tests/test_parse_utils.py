@@ -486,6 +486,9 @@ MASKED = f"XXX-XX-{LAST4}"
 ROUTING = "".join(("021", "000", "021"))
 
 
+_SECOND = "".join(("000", "00", "1111"))   # a second synthetic SSN
+
+
 def _ssn(sep: str) -> str:
     """A synthetic SSN in one spelling, built at runtime (see the header)."""
     return sep.join(("000", "00", LAST4))
@@ -1009,6 +1012,30 @@ class TestMaskingByPosition:
         assert _ssn("") in mask_ssn(raw)
         assert _ssn("") not in out and f"JANE SITTER {MASKED}" in out
 
+    @pytest.mark.parametrize("items", [
+        # One label, the taxpayer's value, then the spouse's after a word.
+        [(36, 100, 8, f"SSN: {_ssn('')}"), (150, 100, 8, f"Spouse {_SECOND}")],
+        # A dependents row with each relationship after its number.
+        [(36, 100, 7, "SSN"), (60, 100, 9, f"{_ssn('')} Son"), (160, 100, 9, f"{_SECOND} Daughter")],
+    ])
+    def test_a_row_label_reaches_each_value_after_the_first(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out
+
+    @pytest.mark.parametrize("items", [
+        # Form 2441 Part II: the first person's number just under the heading,
+        # the next a row further down than "just under" reaches.
+        [(300, 100, 7, "social security number"), (300, 110, 9, _ssn("")), (300, 134, 9, _SECOND)],
+        # FTB 3506 Part II: "(See instructions)" printed under the heading.
+        [(250, 408, 7, "social security number (SSN)"), (266, 416, 7, "(See instructions)"),
+         (240, 437, 10, _ssn("")), (240, 458, 10, _SECOND)],
+    ])
+    def test_a_heading_governs_its_column_past_its_first_entry(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out
+
     @pytest.mark.parametrize("glyph", ["\u2022", "|"])   # a bullet the font cannot map, and a rule
     def test_a_row_label_governs_each_value_across_its_row(self, tmp_path, glyph):
         """Form 540's dependents: "SSN. See instructions." heads a row of
@@ -1031,12 +1058,20 @@ class TestMaskingByPosition:
          (36, 110, 9, "XXX-XX-6789"), (120, 110, 9, ROUTING)],
         # An account number below a box whose label holds its own value.
         [(36, 60, 8, "RECIPIENT'S TIN"), (36, 70, 9, "XXX-XX-6789"), (36, 120, 8, "Account"), (80, 120, 8, ROUTING)],
+        # Beside a TIN label whose value prints under it (page text masks the
+        # row's copy as a same-line value; the page's other copy is kept), and
+        # after a TIN's masked value with only a rule between.
+        [(36, 100, 7, "RECIPIENT'S TIN"), (110, 100, 7, f"Account Number {ROUTING}"), (36, 110, 9, "XXX-XX-6789"),
+         (300, 400, 9, f"1099-DIV Account {ROUTING}")],
+        [(330, 90, 7, "Account number"), (36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (320, 100, 8, "|"),
+         (330, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
         # Beyond each reach, with nothing printed between: far along the row
         # (a raised baseline, so page text puts it on another line), and far
         # down the column (a row elsewhere between, so not the next line).
         [(36, 100, 7, "SSN"), (300, 96, 9, ROUTING)],
-        [(330, 205, 7, "(SSN or EIN)"), (36, 300, 9, "Part II"), (330, 420, 9, ROUTING),
-         (400, 700, 20, "Your SSN")],   # a taller label elsewhere widens no other label's reach
+        [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
+         (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
     ])
     def test_a_label_governs_only_its_own_box(self, tmp_path, items):
         raw, out = self._read(tmp_path, items)
@@ -1052,10 +1087,12 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        assert len(calls) == 250, "each of 100 rows, each label twice and each run check the budget"
+        # 100 rows, 50 labels in each of two passes, 50 runs, and the 240
+        # label-and-run pairs the column search weighs.
+        assert len(calls) == 490, "every loop checks the budget"
 
         def expired():
-            if len(calls) > 260:
+            if len(calls) > 500:
                 raise TimeoutError
             calls.append(1)
         with pytest.raises(TimeoutError):
@@ -1109,6 +1146,21 @@ class TestMaskingByPosition:
             "(3) SSN", "XXX", "XX", LAST4, None, "Son"]
         assert mask_row_runs(["0 0 0", "0 0", " ".join(LAST4)], {comb}) == ["X X X", "X X", " ".join(LAST4)]
         assert mask_row_runs(["000", "00", LAST4 + "5"], {comb}) == ["000", "00", LAST4 + "5"]
+
+    def test_a_row_the_table_cuts_short_still_masks_each_whole_nine(self):
+        """Form 1040-SR's dependents: the table holds three dependents and the
+        start of a fourth, whose last group falls outside it."""
+        from agents.lib.secure_fs import mask_row_runs, prepare_runs
+        comb = " ".join(_ssn("") + _SECOND + _ssn("") + _SECOND)
+        runs = prepare_runs({comb})
+        assert {_ssn(""), _SECOND} <= set(runs.spelling)
+        row = mask_row_runs(["(2) SSN", "000", "00", LAST4, "000", "00", _SECOND[5:], "000", "00", LAST4, "000", "00"], runs)
+        assert row == ["(2) SSN", "XXX", "XX", LAST4, "XXX", "XX", _SECOND[5:], "XXX", "XX", LAST4, "000", "00"]
+
+    def test_a_glyph_stretched_across_the_page_costs_one_page_of_strips(self):
+        from agents.lib.parse_utils import _STRIPS, _strips
+        index = _strips([{"text": "x", "x0": -1e9, "x1": 1e9, "top": 0.0, "bottom": 1.0}])
+        assert set(index) == set(range(_STRIPS + 1))
 
     def test_tables_mask_a_run_split_across_cells(self, tmp_path):
         from agents.lib.parse_utils import extract_tables

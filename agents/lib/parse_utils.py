@@ -9,7 +9,7 @@ import bisect
 import csv
 import functools
 import json
-import re
+import math
 import sys
 import time
 import zipfile
@@ -18,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
-    identifier_spans, is_reparse_point, mask_row_runs, mask_runs, mask_ssn, mask_table, names_an_identifier, redact)
+    identifier_spans, is_reparse_point, mask_row_runs, mask_runs, mask_ssn, mask_table, names_an_identifier,
+    prepare_runs, redact)
 from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
@@ -447,15 +448,16 @@ def _word_rows(words: list[dict]) -> list[list[dict]]:
 # a form-code row or a margin glyph can land between the label's line and the
 # value's (Form 540's header SSN, W-2 and 1099 copies), so every PDF route also
 # masks by position. Distances are in the label's own height; the filled
-# official forms put a value at most 9.1 heights right of its label, 1.8 left
-# of it below, and a Form 2441 provider 12.3 down its column.
-_BESIDE = 12.0   # how far right of its label, on its row, its value may start
+# official forms put a value at most 9.1 heights right of its label, the next
+# dependent 14.4 beyond the last (Form 540), 1.8 to one side below it, and a
+# Form 2441 provider 12.3 down its column.
+_BESIDE = 12.0   # how far right of its label, on its row, its first value may start
+_CHAIN = 20.0    # how far beyond one value on that row the next may start
 _UNDER = 2.5     # how far below its label a boxed value may print
 _ASIDE = 2.0     # how far outside the label's span that value may start
 _COLUMN = 14.0   # how far down its column a heading label governs
 _BIN = 20.0      # the width of the strips a page's words are indexed in
-# A glyph the font maps to no character extracts as its id: a mark, not a word.
-_GLYPH = re.compile(r"\(cid:\d+\)")
+_STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
 
 
 def _row_text(row: list[dict]) -> tuple[str, list[int]]:
@@ -479,7 +481,7 @@ def _box(words: list[dict]) -> dict:
 def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
     """The page's identifier labels (box, carries), runs still to mask (text,
     box), identifiers spelled another way (box), and the ids of every word
-    any identifier covers."""
+    an identifier or a label's note covers: none of them ends a column."""
     labels: list[tuple[dict, bool]] = []
     values: list[tuple[str, dict]] = []
     spelled: list[dict] = []
@@ -487,7 +489,7 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
     for row in _word_rows(words):
         tick()
         text, starts = _row_text(row)
-        found_labels, found_values, found_spelled = identifier_spans(text)
+        found_labels, found_values, found_spelled, notes = identifier_spans(text)
         labels += [(_box(_covered(row, starts, low, high)), carries) for low, high, carries in found_labels]
         for low, high in found_values:
             cover = _covered(row, starts, low, high)
@@ -497,63 +499,9 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
             cover = _covered(row, starts, low, high)
             covered.update(id(w) for w in cover)
             spelled.append(_box(cover))
+        for low, high in notes:
+            covered.update(id(w) for w in _covered(row, starts, low, high))
     return labels, values, spelled, covered
-
-
-def _on_row(items: list, tops: list, tallest: float, label: dict) -> list:
-    """The `items` (sorted by top) whose box shares the label's row."""
-    window = items[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
-    return [item for item in window if item[0]["bottom"] > label["top"] and item[0]["x0"] >= label["x1"] - 1]
-
-
-def _sorted_by_top(boxes: list) -> tuple[list, list, float]:
-    items = sorted(boxes, key=lambda item: item[0]["top"])
-    return (items, [box["top"] for box, _ in items],
-            max((box["bottom"] - box["top"] for box, _ in items), default=0.0))
-
-
-def _beside(labels: list, values: list, spelled: list, printed: list[dict], tick) -> set[str]:
-    """Each label's values on its row: the first identifier to its right, in
-    any spelling and within reach, and each one after it with no other word
-    printed between (Form 540's dependents, a glyph between two of them). A
-    word ends the label's reach (an account number's own label, an address);
-    a value already masked or hyphenated counts as one of the identifiers."""
-    items = _sorted_by_top([(box, raw) for raw, box in values] + [(box, None) for box in spelled])
-    words = _sorted_by_top([(w, None) for w in printed
-                            if any(c.isalnum() for c in w["text"]) and not _GLYPH.fullmatch(w["text"])])
-    runs: set[str] = set()
-    for label, _ in labels:
-        tick()
-        row = sorted(_on_row(*items, label), key=lambda item: item[0]["x0"])
-        if not row or row[0][0]["x0"] - label["x1"] > _BESIDE * (label["bottom"] - label["top"]):
-            continue
-        between = sorted(box["x0"] for box, _ in _on_row(*words, label))
-        chain = row[:1]
-        for item in row[1:]:
-            if bisect.bisect_left(between, chain[-1][0]["x1"] - 1) < bisect.bisect_left(between, item[0]["x0"]):
-                break
-            chain.append(item)
-        runs.update(raw for _, raw in chain if raw is not None)
-    return runs
-
-
-def _strips(words: list[dict]) -> dict[int, list]:
-    """The words indexed by the vertical strips of the page they cross."""
-    index: dict[int, list] = {}
-    for w in words:
-        for strip in range(int(w["x0"] // _BIN), int(w["x1"] // _BIN) + 1):
-            index.setdefault(strip, []).append(w)
-    return index
-
-
-def _over(index: dict, box: dict) -> list[dict]:
-    """The indexed words printed above `box` and overlapping its span."""
-    seen: dict[int, dict] = {}
-    for strip in range(int(box["x0"] // _BIN), int(box["x1"] // _BIN) + 1):
-        for w in index.get(strip, ()):
-            if w["x1"] > box["x0"] and w["x0"] < box["x1"] and w["bottom"] <= box["top"] + 1:
-                seen[id(w)] = w
-    return list(seen.values())
 
 
 def _is_under(box: dict, label: dict, height: float) -> bool:
@@ -562,38 +510,108 @@ def _is_under(box: dict, label: dict, height: float) -> bool:
             and -1 <= box["top"] - label["bottom"] <= _UNDER * height)
 
 
-def _under(labels: list, values: list, spelled: list, printed: list[dict], tick) -> set[str]:
-    """Runs under a label with no value on its row: just below it, or down
-    the column of a label with no identifier just below it (a heading, not a
-    box's label), with nothing printed between but other identifiers and the
-    entries typed in the column's boxes, which print larger than the form's
-    own labels (Form 2441's providers, one of them "Tax-Exempt")."""
-    free = sorted(((label, label["bottom"] - label["top"]) for label, carries in labels if not carries),
-                  key=lambda item: item[0]["bottom"])
-    bottoms = [label["bottom"] for label, _ in free]
-    tallest = max((height for _, height in free), default=0.0)
-    boxes = sorted([box for _, box in values] + spelled, key=lambda box: box["top"])
-    tops = [box["top"] for box in boxes]
-    heading = []
-    for label, height in free:
+def _just_under(labels: list, items: list, tick) -> list:
+    """For each label, the identifiers (box, run text or None if spelled
+    otherwise) printed just under it."""
+    items = sorted(items, key=lambda item: item[0]["top"])
+    tops = [box["top"] for box, _ in items]
+    out = []
+    for label, _ in labels:
         tick()
-        below = boxes[bisect.bisect_left(tops, label["bottom"] - 1):bisect.bisect_right(tops, label["bottom"] + _UNDER * height)]
-        heading.append(not any(_is_under(box, label, height) for box in below))
+        height = label["bottom"] - label["top"]
+        window = items[bisect.bisect_left(tops, label["bottom"] - 1):bisect.bisect_right(tops, label["bottom"] + _UNDER * height)]
+        out.append([item for item in window if _is_under(item[0], label, height)])
+    return out
+
+
+def _beside(labels: list, items: list, under: list, tick) -> set[str]:
+    """Each label's values on its row: the first identifier to its right
+    within reach, then each one within reach of the one before (Form 540's
+    dependents, "Spouse" or a glyph between). A label whose value prints
+    under it has none on its row; one whose first value is already masked or
+    hyphenated governs nothing after it (an account number further along)."""
+    items = sorted(items, key=lambda item: item[0]["top"])
+    tops = [box["top"] for box, _ in items]
+    tallest = max((box["bottom"] - box["top"] for box, _ in items), default=0.0)
+    runs: set[str] = set()
+    for (label, _), below in zip(labels, under):
+        tick()
+        height = label["bottom"] - label["top"]
+        window = items[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
+        row = sorted((item for item in window if item[0]["bottom"] > label["top"] and item[0]["x0"] >= label["x1"] - 1),
+                     key=lambda item: item[0]["x0"])
+        if below or not row or row[0][1] is None:
+            continue
+        reach = label
+        for box, raw in row:
+            if box["x0"] - reach["x1"] > (_BESIDE if reach is label else _CHAIN) * height:
+                break
+            if raw is not None:
+                runs.add(raw)
+            reach = box
+    return runs
+
+
+def _strips(words: list[dict]) -> dict[int, list]:
+    """The words indexed by the vertical strips of the page they cross."""
+    index: dict[int, list] = {}
+    for w in words:
+        for strip in range(max(int(w["x0"] // _BIN), 0), min(int(w["x1"] // _BIN), _STRIPS) + 1):
+            index.setdefault(strip, []).append(w)
+    return index
+
+
+def _over(index: dict, box: dict) -> list[dict]:
+    """The indexed words printed above `box` and overlapping its span."""
+    seen: dict[int, dict] = {}
+    for strip in range(max(int(box["x0"] // _BIN), 0), min(int(box["x1"] // _BIN), _STRIPS) + 1):
+        for w in index.get(strip, ()):
+            if w["x1"] > box["x0"] and w["x0"] < box["x1"] and w["bottom"] <= box["top"] + 1:
+                seen[id(w)] = w
+    return list(seen.values())
+
+
+def _by_height(labels: list) -> list:
+    """Labels in classes of height within a factor of two, each sorted by
+    bottom, so one tall label widens only its own class's reach."""
+    classes: dict[int, list] = {}
+    for k, (label, _) in enumerate(labels):
+        height = label["bottom"] - label["top"]
+        classes.setdefault(int(math.log2(max(height, 1.0))), []).append((label["bottom"], k, height))
+    return [(sorted(members), max(h for _, _, h in members)) for members in classes.values()]
+
+
+def _under(labels: list, values: list, under: list, printed: list[dict], tick) -> set[str]:
+    """Runs under a label with no value on its row: just below it, or down
+    its column with nothing printed between but other identifiers, notes on
+    the label, and the entries typed in the column's boxes, which print
+    larger than the form's own labels (Form 2441's providers, one of them
+    "Tax-Exempt"). A label whose own value just under it is already masked
+    or hyphenated is a box's label, and heads no column."""
+    free = [k for k, (_, carries) in enumerate(labels) if not carries]
+    heads = {k for k in free if all(raw is not None for _, raw in under[k])}
+    classes = _by_height([labels[k] for k in free])
     index = _strips(printed)
     runs = set()
     for raw, box in values:
         tick()
-        above = _over(index, box)
-        first = bisect.bisect_left(bottoms, box["top"] - _COLUMN * tallest)
-        for k in range(first, bisect.bisect_right(bottoms, box["top"] + 1)):
-            label, height = free[k]
-            if _is_under(box, label, height):
-                runs.add(raw)
-                break
-            ceiling = max((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), default=float("-inf"))
-            if (heading[k] and box["top"] > label["bottom"] >= ceiling - 1 and box["top"] - label["bottom"] <= _COLUMN * height
-                    and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height):
-                runs.add(raw)
+        above = sorted(_over(index, box), key=lambda w: -w["bottom"])
+        for members, tallest in classes:
+            first = bisect.bisect_left(members, (box["top"] - _COLUMN * tallest,))
+            for _, j, height in members[first:bisect.bisect_right(members, (box["top"] + 1, float("inf")))]:
+                tick()
+                k = free[j]
+                label = labels[k][0]
+                if _is_under(box, label, height):
+                    runs.add(raw)
+                    break
+                ceiling = next((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), float("-inf"))
+                if (k in heads and box["top"] > label["bottom"] >= ceiling - 1
+                        and box["top"] - label["bottom"] <= _COLUMN * height
+                        and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height):
+                    runs.add(raw)
+                    break
+            if raw in runs:
                 break
     return runs
 
@@ -605,8 +623,22 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
     labels, values, spelled, covered = _page_identifiers(words, tick)
     if not labels or not values:
         return set()
+    items = [(box, raw) for raw, box in values] + [(box, None) for box in spelled]
+    under = _just_under(labels, items, tick)
     printed = [w for w in words if id(w) not in covered]
-    return _beside(labels, values, spelled, printed, tick) | _under(labels, values, spelled, printed, tick)
+    return _beside(labels, items, under, tick) | _under(labels, values, under, printed, tick)
+
+
+def _mask_table_runs(table: list, runs, tick) -> list:
+    """The runs a page's labels govern, masked in each cell of a table and
+    across each row's cells."""
+    out = []
+    for row in table:
+        tick()
+        if isinstance(row, list):
+            row = mask_row_runs([mask_runs(cell, runs) if isinstance(cell, str) else cell for cell in row], runs)
+        out.append(row)
+    return out
 
 
 def _masked_words(words: list[dict], tick=lambda: None) -> list[dict]:
@@ -711,9 +743,8 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                runs = _governed_runs(pdf.pages[i].extract_words(), budget.tick)
-                result[i] = [[mask_row_runs([mask_runs(cell, runs) if isinstance(cell, str) else cell for cell in row], runs)
-                              if isinstance(row, list) else row for row in mask_table(table)] for table in tables]
+                runs = prepare_runs(_governed_runs(pdf.pages[i].extract_words(), budget.tick))
+                result[i] = [_mask_table_runs(mask_table(table), runs, budget.tick) for table in tables]
     budget.tick()
     return result
 

@@ -69,6 +69,7 @@ import sys
 import shutil
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 # Run as a SCRIPT PATH (`python3 agents/lib/secure_fs.py`) a module is not
 # inside its package, so nothing imports `agents.lib` and the
@@ -322,28 +323,49 @@ _ID_SPELLED = re.compile(
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
-def identifier_spans(row: str) -> tuple[list, list, list]:
+def identifier_spans(row: str) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
-    identifier-shaped run still to mask, and an identifier spelled another
-    way (`_ID_SPELLED`): `[(start, end, carries)]`, `[(start, end)]` and
-    `[(start, end)]`, `carries` saying whether a value follows the label on
-    its row. A reader that knows where the row sits on the page decides which
-    label governs which run; `mask_runs` masks them. Linear in the row."""
+    identifier-shaped run still to mask, an identifier spelled another way
+    (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
+    printed under FTB 3506's SSN heading): `[(start, end, carries)]` and three
+    `[(start, end)]` lists, `carries` saying whether a value follows the label
+    on its row. A reader that knows where the row sits on the page decides
+    which label governs which run; `mask_runs` masks them."""
     last = max((m.start() for m in _ID_ANY_VALUE.finditer(row)), default=-1)
     labels = [(m.start(), m.end(), last >= m.end()) for m in _ID_LABEL_RE.finditer(row)]
     values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
-    return labels, values, [(m.start(), m.end()) for m in _ID_SPELLED.finditer(row)]
+    return (labels, values, [(m.start(), m.end()) for m in _ID_SPELLED.finditer(row)],
+            [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
 
 
+_LABEL_NOTE = re.compile(r"\(see instructions\)", re.IGNORECASE)
 _DIGIT_GROUPS = re.compile(r"[0-9]+(?:[^\S\n]+[0-9]+)*")
 
 
-def _run_spans(text: str, runs) -> list:
+class Runs(NamedTuple):
+    """Runs prepared once to mask many strings: each run's digits, their
+    lengths longest first, and the spelling `mask_ssn` writes for them."""
+    lengths: tuple
+    spelling: dict
+
+
+def prepare_runs(runs) -> Runs:
+    """A comb row is one run (Form 1040's dependents) whose each nine is an
+    SSN of its own, so each nine is a run too: a table can cut the row."""
+    spelling: dict[str, str] = {}
+    for raw in sorted(runs, key=len, reverse=True):
+        digits = re.sub(r"[^0-9]", "", raw)
+        spelling.setdefault(digits, _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw)))
+        if len(digits) > 9 and len(digits) % 9 == 0:
+            for i in range(0, len(digits), 9):
+                spelling.setdefault(digits[i:i + 9], f"XXX-XX-{digits[i + 5:i + 9]}")
+    return Runs(tuple(sorted({len(digits) for digits in spelling}, reverse=True)), spelling)
+
+
+def _run_spans(text: str, runs: Runs) -> list:
     """Where the digits of `runs` print in `text`, however they are spaced:
     `(start, end, digits)`, each starting and ending on a group of digits'
     edge, the longest run first at each place. One pass over the text."""
-    wanted = {re.sub(r"[^0-9]", "", raw) for raw in runs}
-    lengths = sorted({len(digits) for digits in wanted}, reverse=True)
     found = []
     for sequence in _DIGIT_GROUPS.finditer(text):
         groups = [(sequence.start() + m.start(), sequence.start() + m.end())
@@ -356,8 +378,8 @@ def _run_spans(text: str, runs) -> list:
         k = 0
         while k < len(groups):
             start = edges[k]
-            stop = next((group for length in lengths if (group := group_at.get(start + length)) is not None
-                         and digits[start:start + length] in wanted), None)
+            stop = next((group for length in runs.lengths if (group := group_at.get(start + length)) is not None
+                         and digits[start:start + length] in runs.spelling), None)
             if stop is None:
                 k += 1
                 continue
@@ -367,15 +389,14 @@ def _run_spans(text: str, runs) -> list:
 
 
 def mask_runs(text: str, runs) -> str:
-    """Mask each of `runs`, identifier-shaped text a layout reader found in
-    an identifier label's box, wherever its digits occur in `text` however
-    they are spaced, in the spelling `mask_ssn` writes."""
-    spelling: dict[str, str] = {}
-    for raw in sorted(runs, key=len, reverse=True):
-        spelling.setdefault(re.sub(r"[^0-9]", "", raw), _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw)))
+    """Mask each of `runs` (run texts, or `prepare_runs` of them),
+    identifier-shaped text a layout reader found in an identifier label's
+    box, wherever its digits occur in `text` however they are spaced, in the
+    spelling `mask_ssn` writes."""
+    runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     out, last = [], 0
     for start, end, digits in _run_spans(text, runs):
-        out += [text[last:start], spelling[digits]]
+        out += [text[last:start], runs.spelling[digits]]
         last = end
     return "".join(out) + text[last:]
 
@@ -385,6 +406,7 @@ def mask_row_runs(cells: list, runs) -> list:
     1040's comb boxes come out of a table as "000 | 00 | 1234". Each digit is
     masked in place, a whole nine keeping its last four, so every cell keeps
     its own text around them."""
+    runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     texts = [cell if isinstance(cell, str) else "" for cell in cells]
     chars = list(" ".join(texts))
     for start, end, _ in _run_spans("".join(chars), runs):
