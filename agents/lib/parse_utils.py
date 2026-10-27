@@ -10,6 +10,7 @@ import csv
 import functools
 import json
 import math
+import re
 import sys
 import time
 import zipfile
@@ -450,14 +451,18 @@ def _word_rows(words: list[dict]) -> list[list[dict]]:
 # masks by position. Distances are in the label's own height; the filled
 # official forms put a value at most 9.1 heights right of its label, the next
 # dependent 14.4 beyond the last (Form 540), 1.8 to one side below it, and a
-# Form 2441 provider 12.3 down its column.
+# Form 2441 provider 12.3 down its column. A dot leader printed right after a
+# label carries it across the row (FTB 3532's line 3: 42 heights of dots), so
+# its first value is measured from the leader's end.
 _BESIDE = 12.0   # how far right of its label, on its row, its first value may start
 _CHAIN = 20.0    # how far beyond one value on that row the next may start
 _UNDER = 2.5     # how far below its label a boxed value may print
 _ASIDE = 2.0     # how far outside the label's span that value may start
 _COLUMN = 14.0   # how far down its column a heading label governs
+_DOTS = 2.0      # how far from its label, and from each other, a leader's dots may print (Schedule 1's first: 1.5)
 _BIN = 20.0      # the width of the strips a page's words are indexed in
 _STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
+_LEADER = re.compile(r"[.\u2026]+")   # a word printed as dots alone
 
 
 def _row_text(row: list[dict]) -> tuple[str, list[int]]:
@@ -478,12 +483,23 @@ def _box(words: list[dict]) -> dict:
             "top": min(w["top"] for w in words), "bottom": max(w["bottom"] for w in words)}
 
 
+def _leader_end(label: dict, row: list[dict], k: int) -> float:
+    """Where the dot leader starting at `row[k]`, right after `label`, ends;
+    the label's own end if there is none."""
+    end = label["x1"]
+    while (k < len(row) and _LEADER.fullmatch(row[k]["text"])
+           and row[k]["x0"] - end <= _DOTS * (label["bottom"] - label["top"])):
+        end = row[k]["x1"]
+        k += 1
+    return end
+
+
 def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
-    """The page's identifier labels (box, carries), runs still to mask (text,
-    box), identifiers spelled another way (box, masked by the page itself),
-    and the ids of every word an identifier or a label's note covers: none
-    of them ends a column."""
-    labels: list[tuple[dict, bool]] = []
+    """The page's identifier labels (box, carries, where its row's reach
+    starts), runs still to mask (text, box), identifiers spelled another way
+    (box, masked by the page itself), and the ids of every word an
+    identifier or a label's note covers: none of them ends a column."""
+    labels: list[tuple[dict, bool, float]] = []
     values: list[tuple[str, dict]] = []
     spelled: list[tuple[dict, bool]] = []
     covered: set[int] = set()
@@ -491,7 +507,15 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
         tick()
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
-        labels += [(_box(_covered(row, starts, low, high)), carries) for low, high, carries in found_labels]
+        leaders: dict[tuple, float] = {}   # labels in one word ("SSN/ITIN") share its leader
+        for low, high, carries in found_labels:
+            tick()
+            box = _box(_covered(row, starts, low, high))
+            k = bisect.bisect_left(starts, high)
+            key = (k, box["x1"], box["bottom"] - box["top"])
+            if key not in leaders:
+                leaders[key] = _leader_end(box, row, k)
+            labels.append((box, carries, leaders[key]))
         for low, high in found_values:
             cover = _covered(row, starts, low, high)
             covered.update(id(w) for w in cover)
@@ -517,7 +541,7 @@ def _just_under(labels: list, items: list, tick) -> list:
     items = sorted(items, key=lambda item: item[0]["top"])
     tops = [item[0]["top"] for item in items]
     out = []
-    for label, _ in labels:
+    for label, *_ in labels:
         tick()
         height = label["bottom"] - label["top"]
         window = items[bisect.bisect_left(tops, label["bottom"] - 1):bisect.bisect_right(tops, label["bottom"] + _UNDER * height)]
@@ -537,7 +561,7 @@ def _beside(labels: list, items: list, under: list, tick) -> set[str]:
     tops = [item[0]["top"] for item in items]
     tallest = max((item[0]["bottom"] - item[0]["top"] for item in items), default=0.0)
     runs: set[str] = set()
-    for (label, _), below in zip(labels, under):
+    for (label, _, start), below in zip(labels, under):
         tick()
         height = label["bottom"] - label["top"]
         window = items[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
@@ -545,13 +569,13 @@ def _beside(labels: list, items: list, under: list, tick) -> set[str]:
                      key=lambda item: item[0]["x0"])
         if below or not row or row[0][2]:
             continue
-        reach = label
+        reach, limit = start, _BESIDE
         for box, raw, _ in row:
-            if box["x0"] - reach["x1"] > (_BESIDE if reach is label else _CHAIN) * height:
+            if box["x0"] - reach > limit * height:
                 break
             if raw is not None:
                 runs.add(raw)
-            reach = box
+            reach, limit = box["x1"], _CHAIN
     return runs
 
 
@@ -578,7 +602,7 @@ def _by_height(labels: list) -> list:
     """Labels in classes of height within a factor of two, each sorted by
     bottom, so one tall label widens only its own class's reach."""
     classes: dict[int, list] = {}
-    for k, (label, _) in enumerate(labels):
+    for k, (label, *_) in enumerate(labels):
         height = label["bottom"] - label["top"]
         classes.setdefault(int(math.log2(max(height, 1.0))), []).append((label["bottom"], k, height))
     return [(sorted(members), max(h for _, _, h in members)) for members in classes.values()]
@@ -593,7 +617,7 @@ def _under(labels: list, values: list, under: list, printed: list[dict], tick) -
     itself is a box's label on a statement, and heads no column; a filer's
     hyphens in the first entry do not end it (Form 2441's qualifying
     persons)."""
-    free = [k for k, (_, carries) in enumerate(labels) if not carries]
+    free = [k for k, (_, carries, _) in enumerate(labels) if not carries]
     heads = {k for k in free if not any(masked for _, _, masked in under[k])}
     classes = _by_height([labels[k] for k in free])
     index = _strips(printed)

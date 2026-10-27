@@ -987,6 +987,21 @@ class TestMaskingByPosition:
         assert _ssn(" ") in mask_ssn(raw)
         assert _ssn(" ") not in out and MASKED in out
 
+    @pytest.mark.parametrize("items", [
+        # FTB 3532 line 3: the qualifying person's "SSN", one word of dots
+        # far longer than a label's reach, the value on a raised baseline.
+        [(47, 549, 9, "SSN " + "." * 150), (470, 545.8, 10, _ssn(""))],
+        [(47, 549, 9, "SSN " + "\u2026" * 40), (470, 545.8, 10, _ssn(""))],   # an ellipsis character
+        # Schedule 1 line 19b: "Recipient's SSN", then dots every 12 points,
+        # the first 1.5 heights after the label.
+        [(64.8, 194.4, 9, "Recipient's SSN"), *[(144 + 12 * k, 194.4, 9, ".") for k in range(22)],
+         (404.7, 193.6, 9, _ssn(""))],
+    ])
+    def test_a_value_past_its_labels_dot_leader(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _ssn("") in mask_ssn(raw)
+        assert _ssn("") not in out and MASKED in out
+
     def test_a_column_of_values_under_its_heading(self, tmp_path):
         """Form 2441's care providers: "(SSN or EIN)" heads a column whose
         cells sit a provider's name-and-address row apart."""
@@ -1076,6 +1091,10 @@ class TestMaskingByPosition:
         # (a raised baseline, so page text puts it on another line), and far
         # down the column (a row elsewhere between, so not the next line).
         [(36, 100, 7, "SSN"), (300, 96, 9, ROUTING)],
+        [(36, 100, 7, "SSN " + "." * 40), (235, 96, 9, ROUTING)],          # 15 heights past a leader's end
+        [(36, 100, 7, "SSN"), (69, 100, 7, "." * 120), (330, 96, 9, ROUTING)],      # dots 2.7 heights from the label
+        [(36, 100, 7, "SSN of"), (63, 100, 7, "." * 120), (330, 96, 9, ROUTING)],   # a leader after other words
+        [(36, 100, 7, "SSN"), (200, 100, 7, "." * 40), (300, 96, 9, ROUTING)],       # dots far from the label
         [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
          (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
     ])
@@ -1083,6 +1102,18 @@ class TestMaskingByPosition:
         raw, out = self._read(tmp_path, items)
         assert _ssn("") not in out
         assert ROUTING in out or " ".join(("94105", "1234")) in out
+
+    def test_a_word_of_many_labels_walks_its_leader_once(self, monkeypatch):
+        """Labels in one word ("SSN/ITIN") share the leader after it: one
+        walk, not one per label, or a crafted word costs labels times dots."""
+        from agents.lib import parse_utils
+        calls, walk = [], parse_utils._leader_end
+        monkeypatch.setattr(parse_utils, "_leader_end", lambda *args: calls.append(1) or walk(*args))
+        word = {"text": "/".join(["SSN"] * 50), "x0": 0.0, "x1": 14.0, "top": 100.0, "bottom": 107.0}
+        dots = [{"text": ".", "x0": 16.0 + 4 * k, "x1": 18.0 + 4 * k, "top": 100.0, "bottom": 107.0} for k in range(200)]
+        labels = parse_utils._page_identifiers([word, *dots], lambda: None)[0]
+        assert len(labels) == 50 and {start for *_, start in labels} == {dots[-1]["x1"]}
+        assert len(calls) == 1
 
     def test_the_pass_checks_the_time_budget_as_it_reads(self):
         """A crafted page is refused when its time runs out, not after."""
@@ -1093,9 +1124,9 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        # 100 rows, 50 labels in each of two passes, 50 runs, and the 240
+        # 100 rows, 50 labels in each of three passes, 50 runs, and the 240
         # label-and-run pairs the column search weighs.
-        assert len(calls) == 490, "every loop checks the budget"
+        assert len(calls) == 540, "every loop checks the budget"
 
         def expired():
             if len(calls) > 500:
