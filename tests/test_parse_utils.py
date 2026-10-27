@@ -1055,6 +1055,64 @@ class TestMaskingByPosition:
         assert _SECOND in mask_ssn(raw)
         assert _ssn("") not in out and _SECOND not in out
 
+    @pytest.mark.parametrize("pitch", [36, 21], ids=["1095-B rows, 5.1 heights", "IT-201 dependents, 3"])
+    def test_a_column_runs_on_to_each_entry_lined_up_with_its_first(self, tmp_path, pitch):
+        """Entries down the whole page, far past a heading's own reach and
+        past a column's reach of its first, each lined up with the first
+        (IT-201's first dependent prints 0.2 points right of the rest). Each
+        is its own number: a run governed once is masked wherever the page
+        prints it."""
+        values = ["".join(("000", "00", str(1000 + k))) for k in range(700 // pitch)]
+        raw, out = self._read(tmp_path, [(238, 20, 7, "SSN"), *[(218 - 0.2 * (k > 0), 38.1 + pitch * k, 9, value)
+                                                                for k, value in enumerate(values)]])
+        assert values[-1] in mask_ssn(raw)
+        assert not any(value in out for value in values)
+
+    @pytest.mark.parametrize("between", [
+        [(300, 337.6 + 36 * k, 9, "01/15/2020") for k in (1, 2, 3)],    # a date of birth in the next column
+        [(218, 337.6 + 36 * k, 9, "XXX-XX-1111") for k in (1, 2, 3)],   # entries the page masked itself
+    ], ids=["dates of birth", "masked by the page"])
+    def test_a_column_runs_on_past_rows_without_a_number(self, tmp_path, between):
+        """Form 1095-C's covered individuals: a person with no SSN gets a
+        date of birth instead, so three rows leave the column's box empty,
+        or hold entries the page masked itself, and its next entry prints
+        19 heights below the last."""
+        raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")), *between,
+                                         (218, 337.6 + 36 * 4, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw)
+        assert _SECOND not in out
+
+    def test_a_column_runs_on_past_a_page_of_rows_without_a_number(self, tmp_path):
+        """A Form 1095-C page's thirteen rows, the eleven between the first
+        and the last given a date of birth for a person with no SSN."""
+        raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")),
+                                         *[(300, 337.6 + 36 * k, 9, "01/15/2020") for k in range(1, 12)],
+                                         (218, 337.6 + 36 * 12, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw)
+        assert _SECOND not in out
+
+    @pytest.mark.parametrize("first", [218, 215, 212], ids=["left", "centred (Form 1095-B's)", "right"])
+    def test_a_column_runs_on_under_a_filers_hyphens(self, tmp_path, first):
+        """The first entry typed with hyphens, a later one without: the two
+        share only a left edge, a centre or a right edge, as the boxes align
+        what is typed in them, the hyphens adding 3 points a side."""
+        raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (first, 337.6, 9, _ssn("-")),
+                                         (218, 337.6 + 36 * 4, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw)
+        assert _SECOND not in out
+
+    @pytest.mark.parametrize("head, overlay", [("(2) Social security", " " * 5), ("(2) Identifying", "")],
+                             ids=["TY2024 1040", "1040-NR"])
+    def test_a_heading_wrapped_over_two_rows(self, tmp_path, head, overlay):
+        """The dependents' heading prints its last word on a row of its own,
+        and the TY2024 Form 1040 draws spaces over it, splitting "number"
+        into "num b e r"; a comb field of nine digits under it."""
+        comb = [(268.3 + 9.7 * i, 379.6, 9, digit) for i, digit in enumerate(_ssn(""))]
+        raw, out = self._read(tmp_path, [(281.8, 359.8, 7, head), (297.6, 368.2, 7, "number"),
+                                         (309.6, 368.0, 7, overlay), *comb])
+        assert " ".join(_ssn("")) in mask_ssn(raw)
+        assert " ".join(_ssn("")) not in out
+
     @pytest.mark.parametrize("glyph", ["\u2022", "|"])   # a bullet the font cannot map, and a rule
     def test_a_row_label_governs_each_value_across_its_row(self, tmp_path, glyph):
         """Form 540's dependents: "SSN. See instructions." heads a row of
@@ -1095,6 +1153,39 @@ class TestMaskingByPosition:
         [(36, 100, 7, "SSN"), (69, 100, 7, "." * 120), (330, 96, 9, ROUTING)],      # dots 2.7 heights from the label
         [(36, 100, 7, "SSN of"), (63, 100, 7, "." * 120), (330, 96, 9, ROUTING)],   # a leader after other words
         [(36, 100, 7, "SSN"), (200, 100, 7, "." * 40), (300, 96, 9, ROUTING)],       # dots far from the label
+        # A column's entry after the form prints across it, within the
+        # heading's own reach or far past it.
+        [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")), (220, 360, 7, "Part II"), (218, 380, 9, ROUTING)],
+        [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")), (220, 600, 7, "Part III"), (218, 640, 9, ROUTING)],
+        # A statement's column, its first entry masked by the page: no column
+        # of the filer's to run on past the heading's reach.
+        [(238, 319.5, 7, "SSN"), (218, 360, 9, "XXX-XX-1111"), (218, 600, 9, ROUTING)],
+        # IT-201's header SSN box, then a column of amounts 3 points left of
+        # its value: a box's value lines up with no column under it.
+        [(328, 39, 7, "Social Security number"), (311.5, 51, 9, _ssn("")),
+         *[(308.5, 75 + 12 * k, 9, "".join(("021", "000", f"{k:03d}"))) for k in range(8)], (308.5, 171, 9, ROUTING)],
+        # A statement's TIN box, then far below, lined up with its value, an
+        # account number under a heading printed larger than the label, and
+        # one beside its own label with nothing printed above it.
+        [(320, 60, 6, "RECIPIENT\u2019S TIN"), (320, 70, 9, _ssn("")), (36, 300, 8, "Summary of accounts"),
+         (320, 300, 8, "Account number"), (36, 312, 9, "Brokerage account"), (320, 312, 9, ROUTING)],
+        [(320, 60, 6, "RECIPIENT\u2019S TIN"), (320, 70, 9, _ssn("")), (200, 480, 6, "Account number:"),
+         (320, 480, 9, ROUTING)],
+        # A statement's box: the page's masked number, the run under it its
+        # account's; numbers lined up far below are no column of the filer's.
+        [(238, 319.5, 7, "SSN"), (218, 330, 9, "XXX-XX-1111"), (218, 341, 9, _ssn("")), (218, 600, 9, ROUTING)],
+        # A heading's second row that is more than the label's end, is not
+        # under it, or finishes a heading that is no identifier label; and a
+        # number 17 heights under a wrapped heading, past a reach measured in
+        # one row's height.
+        [(36, 100, 7, "(2) Social security"), (36, 109, 7, "number of children"), (36, 120, 9, ROUTING)],
+        # Form 1099-B's instructions end a sentence there: the period is the pattern's own refusal.
+        [(36, 100, 7, "other applicable identifying"), (36, 109, 7, "number."), (36, 120, 9, ROUTING)],
+        [(36, 100, 7, "(2) Social security"), (200, 109, 7, "number"), (200, 120, 9, ROUTING)],   # right of it
+        [(200, 100, 7, "(2) Social security"), (36, 109, 7, "number"), (36, 120, 9, ROUTING)],    # left of it
+        [(36, 100, 7, "(2) Social security"), (36, 130, 7, "number"), (36, 141, 9, ROUTING)],     # rows apart
+        [(36, 100, 7, "(3) Account"), (36, 109, 7, "number"), (36, 120, 9, ROUTING)],             # no label
+        [(36, 100, 7, "(2) Social security"), (36, 109, 7, "number"), (36, 240, 9, ROUTING)],     # far below
         [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
          (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
     ])
@@ -1102,6 +1193,53 @@ class TestMaskingByPosition:
         raw, out = self._read(tmp_path, items)
         assert _ssn("") not in out
         assert ROUTING in out or " ".join(("94105", "1234")) in out
+
+    def test_a_long_heading_phrase_is_read_once_and_only_at_its_end(self, monkeypatch):
+        """One phrase of 2,000 words over 500 phrases of one word: reading
+        the whole phrase for each would cost their product."""
+        from agents.lib import parse_utils
+        texts, reads, read = [], [], parse_utils._row_text
+        monkeypatch.setattr(parse_utils, "identifier_spans", lambda text: texts.append(text) or ([], [], [], []))
+        monkeypatch.setattr(parse_utils, "_row_text", lambda row: reads.append(len(row)) or read(row))
+        upper = [{"text": "word", "x0": 4.0 * k, "x1": 4.0 * k + 3, "top": 100.0, "bottom": 107.0} for k in range(2000)]
+        lower = [{"text": "number", "x0": 16.0 * k, "x1": 16.0 * k + 3, "top": 108.0, "bottom": 115.0} for k in range(500)]
+        parse_utils._wrapped_labels([upper, lower], lambda: None)
+        assert reads.count(2000) == 1 and len(texts) == 500
+        assert max(len(text) for text in texts) <= 100, "the phrase's end, not its 2,000 words"
+
+    def test_a_heading_lower_down_takes_its_column_over(self):
+        """A column has no reach to end it, so the next lined up with it
+        replaces it: a strip holds no more columns than it has places to
+        line up, however long the page."""
+        from agents.lib.parse_utils import _lined_columns, _lines_up, _start_column
+        columns, lined = {}, {}
+        entry = {"x0": 100.0, "x1": 145.0, "top": 10.0, "bottom": 19.0}
+        _start_column(columns, lined, 0, entry, 7.0)
+        _start_column(columns, lined, 1, {**entry, "x0": 110.0, "x1": 155.0}, 7.0)    # 10 points right: its own
+        _start_column(columns, lined, 2, {**entry, "x0": 97.0, "top": 200.0, "bottom": 209.0}, 7.0)   # its right edge
+        assert sorted(columns) == [1, 2] and not any(0 in found for found in lined.values())
+        assert [k for k, _, column in _lined_columns(columns, lined, entry) if _lines_up(entry, column)] == [2]
+
+    @pytest.mark.parametrize("edges", [(200.0, 225.0), (285.0, 305.0), (237.5, 267.5)], ids=["left", "right", "centre"])
+    def test_a_column_is_found_by_the_edge_its_entries_share(self, edges):
+        """A narrower entry shares one place with the column's first: its
+        left edge, right edge or centre, each in a strip of its own here."""
+        from agents.lib.parse_utils import _lined_columns, _start_column
+        columns, lined = {}, {}
+        _start_column(columns, lined, 0, {"x0": 200.0, "x1": 305.0, "top": 10.0, "bottom": 19.0}, 7.0)
+        entry = {"x0": edges[0], "x1": edges[1], "top": 200.0, "bottom": 209.0}
+        assert [k for k, *_ in _lined_columns(columns, lined, entry)] == [0]
+
+    def test_a_column_out_of_reach_of_its_last_entry_is_dropped(self):
+        """Entries come top to bottom, so a column past its reach of one is
+        past it for every later entry: it leaves the lookup for good."""
+        from agents.lib.parse_utils import _RUN, _lined_columns, _start_column
+        columns, lined = {}, {}
+        _start_column(columns, lined, 0, {"x0": 100.0, "x1": 145.0, "top": 10.0, "bottom": 19.0}, 7.0)
+        near = {"x0": 100.0, "x1": 145.0, "top": 19.0 + _RUN * 7, "bottom": 28.0 + _RUN * 7}
+        assert [k for k, *_ in _lined_columns(columns, lined, near)] == [0]
+        far = {**near, "top": near["top"] + 1, "bottom": near["bottom"] + 1}
+        assert _lined_columns(columns, lined, far) == [] and columns == {} and not any(lined.values())
 
     def test_a_word_of_many_labels_walks_its_leader_once(self, monkeypatch):
         """Labels in one word ("SSN/ITIN") share the leader after it: one
@@ -1124,9 +1262,10 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        # 100 rows, 50 labels in each of three passes, 50 runs, and the 240
+        # 100 rows, 50 labels in each of three passes, the 99 pairs of rows
+        # and 99 phrases the wrapped-heading pass reads, 50 runs, and the 240
         # label-and-run pairs the column search weighs.
-        assert len(calls) == 540, "every loop checks the budget"
+        assert len(calls) == 738, "every loop checks the budget"
 
         def expired():
             if len(calls) > 500:
