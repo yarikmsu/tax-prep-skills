@@ -1057,13 +1057,14 @@ class TestMaskingByPosition:
 
     @pytest.mark.parametrize("pitch", [36, 21], ids=["1095-B rows, 5.1 heights", "IT-201 dependents, 3"])
     def test_a_column_runs_on_to_each_entry_lined_up_with_its_first(self, tmp_path, pitch):
-        """Eight entries run far past a heading's own reach, each lined up
-        with the first (IT-201's first dependent prints 0.2 points right of
-        the rest). Each is its own number: a run governed once is masked
-        wherever the page prints it."""
-        values = ["".join(("000", "00", str(1000 + k))) for k in range(8)]
-        raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), *[(218 - 0.2 * (k > 0), 337.6 + pitch * k, 9, value)
-                                                                   for k, value in enumerate(values)]])
+        """Entries down the whole page, far past a heading's own reach and
+        past a column's reach of its first, each lined up with the first
+        (IT-201's first dependent prints 0.2 points right of the rest). Each
+        is its own number: a run governed once is masked wherever the page
+        prints it."""
+        values = ["".join(("000", "00", str(1000 + k))) for k in range(700 // pitch)]
+        raw, out = self._read(tmp_path, [(238, 20, 7, "SSN"), *[(218 - 0.2 * (k > 0), 38.1 + pitch * k, 9, value)
+                                                                for k, value in enumerate(values)]])
         assert values[-1] in mask_ssn(raw)
         assert not any(value in out for value in values)
 
@@ -1078,6 +1079,15 @@ class TestMaskingByPosition:
         19 heights below the last."""
         raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")), *between,
                                          (218, 337.6 + 36 * 4, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw)
+        assert _SECOND not in out
+
+    def test_a_column_runs_on_past_a_page_of_rows_without_a_number(self, tmp_path):
+        """A Form 1095-C page's thirteen rows, the eleven between the first
+        and the last given a date of birth for a person with no SSN."""
+        raw, out = self._read(tmp_path, [(238, 319.5, 7, "SSN"), (218, 337.6, 9, _ssn("")),
+                                         *[(300, 337.6 + 36 * k, 9, "01/15/2020") for k in range(1, 12)],
+                                         (218, 337.6 + 36 * 12, 9, _SECOND)])
         assert _SECOND in mask_ssn(raw)
         assert _SECOND not in out
 
@@ -1154,6 +1164,13 @@ class TestMaskingByPosition:
         # its value: a box's value lines up with no column under it.
         [(328, 39, 7, "Social Security number"), (311.5, 51, 9, _ssn("")),
          *[(308.5, 75 + 12 * k, 9, "".join(("021", "000", f"{k:03d}"))) for k in range(8)], (308.5, 171, 9, ROUTING)],
+        # A statement's TIN box, then far below, lined up with its value, an
+        # account number under a heading printed larger than the label, and
+        # one beside its own label with nothing printed above it.
+        [(320, 60, 6, "RECIPIENT\u2019S TIN"), (320, 70, 9, _ssn("")), (36, 300, 8, "Summary of accounts"),
+         (320, 300, 8, "Account number"), (36, 312, 9, "Brokerage account"), (320, 312, 9, ROUTING)],
+        [(320, 60, 6, "RECIPIENT\u2019S TIN"), (320, 70, 9, _ssn("")), (200, 480, 6, "Account number:"),
+         (320, 480, 9, ROUTING)],
         # A statement's box: the page's masked number, the run under it its
         # account's; numbers lined up far below are no column of the filer's.
         [(238, 319.5, 7, "SSN"), (218, 330, 9, "XXX-XX-1111"), (218, 341, 9, _ssn("")), (218, 600, 9, ROUTING)],
@@ -1199,7 +1216,7 @@ class TestMaskingByPosition:
         entry = {"x0": 100.0, "x1": 145.0, "top": 10.0, "bottom": 19.0}
         _start_column(columns, lined, 0, entry, 7.0)
         _start_column(columns, lined, 1, {**entry, "x0": 110.0, "x1": 155.0}, 7.0)    # 10 points right: its own
-        _start_column(columns, lined, 2, {**entry, "x0": 97.0, "top": 500.0, "bottom": 509.0}, 7.0)   # its right edge
+        _start_column(columns, lined, 2, {**entry, "x0": 97.0, "top": 200.0, "bottom": 209.0}, 7.0)   # its right edge
         assert sorted(columns) == [1, 2] and not any(0 in found for found in lined.values())
         assert [k for k, _, column in _lined_columns(columns, lined, entry) if _lines_up(entry, column)] == [2]
 
@@ -1210,8 +1227,19 @@ class TestMaskingByPosition:
         from agents.lib.parse_utils import _lined_columns, _start_column
         columns, lined = {}, {}
         _start_column(columns, lined, 0, {"x0": 200.0, "x1": 305.0, "top": 10.0, "bottom": 19.0}, 7.0)
-        entry = {"x0": edges[0], "x1": edges[1], "top": 500.0, "bottom": 509.0}
+        entry = {"x0": edges[0], "x1": edges[1], "top": 200.0, "bottom": 209.0}
         assert [k for k, *_ in _lined_columns(columns, lined, entry)] == [0]
+
+    def test_a_column_out_of_reach_of_its_last_entry_is_dropped(self):
+        """Entries come top to bottom, so a column past its reach of one is
+        past it for every later entry: it leaves the lookup for good."""
+        from agents.lib.parse_utils import _RUN, _lined_columns, _start_column
+        columns, lined = {}, {}
+        _start_column(columns, lined, 0, {"x0": 100.0, "x1": 145.0, "top": 10.0, "bottom": 19.0}, 7.0)
+        near = {"x0": 100.0, "x1": 145.0, "top": 19.0 + _RUN * 7, "bottom": 28.0 + _RUN * 7}
+        assert [k for k, *_ in _lined_columns(columns, lined, near)] == [0]
+        far = {**near, "top": near["top"] + 1, "bottom": near["bottom"] + 1}
+        assert _lined_columns(columns, lined, far) == [] and columns == {} and not any(lined.values())
 
     def test_a_word_of_many_labels_walks_its_leader_once(self, monkeypatch):
         """Labels in one word ("SSN/ITIN") share the leader after it: one
