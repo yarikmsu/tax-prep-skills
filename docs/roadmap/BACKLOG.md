@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA87** — mask an identifier by the label box it sits in on the page: on Form 540 an SSN typed without hyphens is returned whole. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
+| **1. California filers: ready now** | **AA89** — mask the identifiers AA87's reaches miss: every filled FTB 3532 returns its head-of-household qualifying person's SSN. **AA88** — mask an SSN drawn over its own label. AA87 shipped in #74. | The remaining smaller California items wait on a publication (tier 2); the larger designs in tier 3 were approved on 2026-10-25. |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | **AA44** — the prior-return import's last readers: Form 540 Side 4's lines 98-99 by position, and page-1 identity and dependent proposals. Its first delivery shipped in #69, the carryover tables in #70; AA45 shipped in #71. | The owner chose reading by position (2026-10-26); a tax software's own PDF still needs a first real report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -200,23 +200,35 @@ Trigger and range behavior is documented in
   contracts can be reviewed; do not derive them from the announced inflation
   percentage or substitute TY2025 values. Found by the same review.
 
-- **AA87 (P1, M): Mask an identifier by its position on the PDF page.**
-  `mask_ssn` reads extracted text, where a label governs its own row and the
-  row printed right after it (or after a known continuation row). A
-  hyphenated, dotted or slashed SSN is masked anywhere; one typed bare or with
-  spaces is masked only under a label. On flattened official
-  forms filled with synthetic values, something else lands between the label
-  and its value, and the number comes back whole:
-  - CA Form 540 and 540NR, which every current user files: a stray margin glyph
-    on page 1, and rotated sidebar text before the header SSN on every other page.
-  - Form 1116 page 1: a rotated column label reorders the lines.
-  - Several W-2, W-2G and 1099-INT copies (a form-code row, a legend or VOID
-    between label and value), 1040-V and the 1040-ES vouchers.
-  - Form 2441's wrapped labels, Schedule H, and Form 1040-NR's dependents.
-  - The W-9's comb, which prints en dashes between its groups.
-  Decide each identifier-shaped run by the label box it sits in on the page
-  (each word's box on the page), not by row order, and test it against every official form `/tax-parse`,
-  `/tax-verify` and the import read. Found by AA86's review.
+- **AA89 (P1, M): Mask the identifiers AA87's reaches miss.**
+  AA87's positional pass governs a value beside its label within 12 label
+  heights, under it within 2.5, and down a heading's column within 14. #74's
+  third review found official forms that print an SSN past those reaches,
+  each leaking on main as well:
+  - FTB 3532 line 3, the head-of-household qualifying person, after a dot
+    leader 45 heights long. Every filled 3532 leaks, and California filers
+    come first.
+  - Form 1095-A Part II, whose "SSN" label prints right of its values.
+  - Form 1095-B and 1095-C from row 3, and IT-201's dependents 6 and 7, whose
+    rows run past 14 heights.
+  - Schedule EIC line 2, whose label sits several lines above and left.
+  - Form 8332, whose label prints under its value.
+  - A TY2024 Form 1040, whose dependents' heading extracts as "num b e r".
+
+  A dot leader carries a label's reach to the row's end. A table's rows run
+  as far as its rules do. Test each against the filled form.
+
+- **AA88 (P2, M): Mask an SSN drawn over its own label.**
+  When an SSN prints on its label's own baseline, as a misaligned overlay or
+  a substitute form can draw it, pdfplumber merges its digits into the label's
+  words ("Y0ou0r so0cial1 sec2uri3ty n4umb5er"): the label no longer reads as
+  one, and the value is no identifier-shaped run, so neither `mask_ssn` nor
+  AA87's positional rule masks it. Overlays on Form 1040 page 1 drawn at or
+  above the label's baseline returned the synthetic SSN whole in 64 of 150
+  cases. Filling the official field cannot do it: the field box sits about
+  10pt below the label. Decide by characters, not words: a digit whose box
+  overlaps an identifier label's letters is that label's value. Found by #70's
+  second review.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
@@ -532,6 +544,8 @@ merge.
 | AA47 | #44, #45, #46, #47, #60, #64, #66 | A first-sale NFT form (box 11c) and a date moved into a later year still refuse, and the collectible 28% rate stays unmodeled. |
 | AA49 | #51, #67 | A stale import whose own figures still agree with each other can offset an equity over-merge of the same size; closing it needs each ledgered 1099-DA linked to its broker form's ID. |
 | AA45 | #71 | A filing-year plan whose return records the owner's IRA flows or Dec 31 value refuses; future CA years wait on AA84; refundable credits are not repriced. |
+| AA86 | #73 | — |
+| AA87 | #74 | Identifiers past its reaches (FTB 3532, Forms 1095-A/B/C, Schedule EIC, Form 8332, IT-201's dependents 6 and 7) are AA89, and an SSN drawn over its own label is AA88; a page that masks its first dependent and prints the next in full still leaks. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
 | AA26 | old #201 | the scan call for a bounded command naming archive outside `archive/YYYY` has no test; the `git` and `rg` tests pin less than their names |
