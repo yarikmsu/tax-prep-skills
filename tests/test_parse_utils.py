@@ -1070,6 +1070,8 @@ class TestMaskingByPosition:
         [(330, 90, 7, "Account number"), (36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (320, 100, 8, "|"),
          (330, 100, 8, ROUTING)],
         [(36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: ***-**-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: xxx-xx-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
         # Beyond each reach, with nothing printed between: far along the row
         # (a raised baseline, so page text puts it on another line), and far
         # down the column (a row elsewhere between, so not the next line).

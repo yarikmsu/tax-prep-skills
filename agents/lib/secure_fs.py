@@ -317,7 +317,8 @@ def _mask_under_labels(text: str) -> str:
 
 # An identifier already spelled so `mask_ssn` handles it without a label, or
 # one that is no SSN: hyphenated or masked, or an EIN. A positional reader
-# needs them only to know a label's value is there.
+# needs them to know a label's value is there, and, where the page masked one
+# itself (a statement showing last fours), where that label's reach ends.
 _ID_SPELLED = re.compile(
     rf"{_ID_DELIMITED.pattern}|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)"
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
