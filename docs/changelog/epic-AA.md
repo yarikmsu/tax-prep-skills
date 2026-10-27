@@ -4046,3 +4046,31 @@ Two review rounds reshaped the column rule:
 
 Text typed into an empty SSN box ends a column, as on main. A 2,790-PDF sweep
 against main found new masks only on SSNs and stress copies.
+
+
+## AA89 (part 3) — captions, signature lines and instruction paragraphs
+
+The remaining layouts now mask by geometry: Form 1095-A Part II starts a
+column at its lettered caption, Form 8332 reads a signature-line identifier
+just above its otherwise empty label, and Schedule EIC line 2 carries the
+numbered question's beside reach down its flush instruction paragraph.
+Paragraphs start only at numeric questions; a mid-sentence identifier mention
+cannot open one or claim a signature line above it. An identifier already
+beside a label, including a raised baseline, prevents either extension.
+
+Lettered columns can find their first entry after empty rows, within the same
+64-height reach used between later entries. Unlettered labels keep their
+14-height initial reach. Explicit empty-box entries (N/A, Applied for,
+Tax-Exempt) do not obstruct the column, including multiword entries. Alignment
+allows two points at the forms' seven-point label height but preserves the
+three-point separation of IT-201's header box and amount column.
+
+Review caught lettered captions opening paragraphs, mid-sentence labels
+claiming numbers above them, split placeholder words ending a column, and
+repeated phrase and suffix reads on a crafted word with many labels. New
+numbered identifier heads also stop overlapping paragraph walks. Each has a
+regression. The official-layout fixture records the blank IRS forms' own
+words and field rectangles, with source URLs and zero-based page numbers;
+eleven constructed values occupy the five covered-individual fields, three
+custodial-parent fields and three child fields. All are governed, and none of
+the forms' printed numbers is. Text, words and tables use the shared rule.

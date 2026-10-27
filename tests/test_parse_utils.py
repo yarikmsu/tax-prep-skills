@@ -1002,6 +1002,85 @@ class TestMaskingByPosition:
         assert _ssn("") in mask_ssn(raw)
         assert _ssn("") not in out and MASKED in out
 
+    @pytest.mark.parametrize("caption", ["B.", "(b)", "2", "12b"])
+    def test_a_lettered_caption_heads_the_whole_phrase(self, tmp_path, caption):
+        # 1095-A Part II: the number is under B., left of "SSN".
+        raw, out = self._read(tmp_path, [(250, 100, 7, f"{caption} Covered individual SSN"),
+                                         (36, 110, 5, "Part II"), (36, 122, 9, "Covered person"), (250, 122, 9, _ssn("")),
+                                         (36, 250, 9, "Another person"), (252, 250, 9, _SECOND)])
+        assert _ssn("") in mask_ssn(raw) and _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out
+
+    def test_a_signature_line_value_above_its_lone_label(self, tmp_path):
+        # 8332: the value overlaps "Custodial", not the final "SSN".
+        raw, out = self._read(tmp_path, [(300, 100, 10, _ssn("")), (36, 108, 5, "Signature"),
+                                         (300, 115, 7, "Custodial parent's SSN")])
+        assert _ssn("") in mask_ssn(raw)
+        assert _ssn("") not in out and MASKED in out
+
+    def test_a_numbered_question_lends_its_reach_to_its_instructions(self, tmp_path):
+        # EIC: ten lines of instructions between the heading and the boxes.
+        lines = ["If the child was born", "and died during the year,", "you do not need an SSN.",
+                 "Instead attach a copy", "of a birth certificate", "and enter the information",
+                 "required in these boxes", "for each qualifying child", "after reading the rules", "then enter the child information in the boxes beside this line"]
+        raw, out = self._read(tmp_path, [(47, 100, 7, "2 Child's SSN"),
+                                         *[(57, 112 + k * 10, 7, text) for k, text in enumerate(lines)],
+                                         (300, 201, 9, _ssn("")), (420, 201, 9, _SECOND),
+                                         (47, 230, 7, "3 Child's year of birth"), (300, 231, 9, ROUTING)])
+        assert _ssn("") in mask_ssn(raw) and _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out and ROUTING in out
+
+    @pytest.mark.parametrize("placeholder", ["N/A", "NA", "Tax-Exempt", "Tax Exempt", "Applied for"])
+    def test_a_placeholder_in_an_empty_box_does_not_end_a_column(self, tmp_path, placeholder):
+        raw, out = self._read(tmp_path, [(238, 100, 7, "(b) SSN"), (218, 120, 9, _ssn("")),
+                                         (218, 160, 9, placeholder), (218, 240, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw) and _SECOND not in out and placeholder in out
+
+    def test_a_lettered_column_starts_after_empty_rows(self, tmp_path):
+        raw, out = self._read(tmp_path, [(238, 100, 7, "(b) SSN"),
+                                         *[(300, 120 + 36 * k, 9, "01/15/2020") for k in range(3)],
+                                         (218, 228, 9, _ssn(""))])
+        assert _ssn("") in mask_ssn(raw) and _ssn("") not in out
+
+    @pytest.mark.parametrize("shift", [-2, 2])
+    def test_a_column_tolerates_a_two_point_alignment_change(self, tmp_path, shift):
+        raw, out = self._read(tmp_path, [(238, 100, 7, "SSN"), (218, 120, 9, _ssn("")),
+                                         (218 + shift, 300, 9, _SECOND)])
+        assert _SECOND in mask_ssn(raw) and _SECOND not in out
+
+    @pytest.mark.parametrize("caption", ["B.", "(b)"])
+    def test_a_lettered_column_heading_opens_no_paragraph(self, tmp_path, caption):
+        _, out = self._read(tmp_path, [(47, 100, 7, f"{caption} SSN"), (57, 112, 7, "instructions"),
+                                        (57, 122, 7, "continue here"), (57, 132, 7, "on this line"),
+                                        (160, 132, 9, ROUTING)])
+        assert ROUTING in out
+
+    @pytest.mark.parametrize("items", [
+        # A filled next question still terminates the preceding paragraph.
+        [(47, 100, 7, "2 SSN"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue"),
+         (57, 132, 7, "3 SSN"), (200, 130, 9, _ssn("")), (57, 142, 7, "Other"),
+         (57, 152, 7, "field"), (160, 152, 9, ROUTING)],
+        # A late first entry cannot cross a larger account/section heading.
+        [(238, 100, 7, "(b) SSN"), (218, 300, 9, "Account number"), (218, 312, 9, ROUTING)],
+        # A mid-sentence mention of SSN labels no signature line above it.
+        [(36, 100, 9, ROUTING), (36, 115, 7, "Use your SSN when filing")],
+        # Parenthesized words are not form letters or line numbers.
+        [(250, 100, 7, "(Preparer) PTIN or SSN"), (250, 140, 9, ROUTING), (36, 125, 7, "Firm name")],
+        # IT-201's unlettered preparer caption must not reach left to its EIN.
+        [(250, 100, 7, "Preparer's PTIN or SSN"), (250, 140, 9, ROUTING), (36, 125, 7, "Firm name")],
+        # Not lone: a raised-baseline number already sits beside the label.
+        [(300, 100, 9, ROUTING), (300, 115, 7, "Custodial parent's SSN"), (450, 111, 9, _ssn(""))],
+        # A prose sentence ending in SSN must not open a paragraph.
+        [(47, 100, 7, "Please enter an SSN"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue here"),
+         (57, 132, 7, "on this line"), (300, 132, 9, ROUTING)],
+        # The label already has a value, so relationship fields are not SSNs.
+        [(47, 100, 7, "2 Child's SSN"), (200, 98, 9, _ssn("")),
+         (57, 112, 7, "Relationship"), (57, 122, 7, "to taxpayer"), (300, 122, 9, ROUTING)],
+    ])
+    def test_new_reaches_preserve_numbers_outside_the_labels_box(self, tmp_path, items):
+        _, out = self._read(tmp_path, items)
+        assert ROUTING in out
+
     def test_a_column_of_values_under_its_heading(self, tmp_path):
         """Form 2441's care providers: "(SSN or EIN)" heads a column whose
         cells sit a provider's name-and-address row apart."""
@@ -1253,6 +1332,36 @@ class TestMaskingByPosition:
         assert len(labels) == 50 and {start for *_, start in labels} == {dots[-1]["x1"]}
         assert len(calls) == 1
 
+    def test_a_word_of_many_labels_does_not_copy_each_remaining_suffix(self, monkeypatch):
+        from agents.lib import parse_utils
+        copied, read = [], parse_utils._row_text
+
+        class Measured(str):
+            def __getitem__(self, key):
+                value = super().__getitem__(key)
+                if isinstance(key, slice):
+                    copied.append(len(value))
+                return value
+
+        def measured(row):
+            text, starts = read(row)
+            return Measured(text), starts
+
+        monkeypatch.setattr(parse_utils, "_row_text", measured)
+        text = "/".join(["SSN"] * 1000)
+        word = {"text": text, "x0": 36.0, "x1": 50.0, "top": 100.0, "bottom": 107.0}
+        assert len(parse_utils._page_identifiers([word], lambda: None)[0]) == 1000
+        assert sum(copied) <= len(text) * 4, "work must grow with the word, not its labels times its length"
+
+    def test_repeated_numbered_heads_do_not_walk_overlapping_paragraphs(self):
+        from agents.lib.parse_utils import _page_identifiers, _paragraph_labels
+        words = [{"text": "2 SSN", "x0": 36.0, "x1": 68.0, "top": 20.0 + 10 * k, "bottom": 27.0 + 10 * k}
+                 for k in range(100)]
+        labels = _page_identifiers(words, lambda: None)[0]
+        visits = []
+        assert _paragraph_labels(words, labels, lambda: visits.append(1)) == []
+        assert len(visits) <= 2 * len(labels)
+
     def test_the_pass_checks_the_time_budget_as_it_reads(self):
         """A crafted page is refused when its time runs out, not after."""
         from agents.lib.parse_utils import _governed_runs
@@ -1262,10 +1371,9 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        # 100 rows, 50 labels in each of three passes, the 99 pairs of rows
-        # and 99 phrases the wrapped-heading pass reads, 50 runs, and the 240
-        # label-and-run pairs the column search weighs.
-        assert len(calls) == 738, "every loop checks the budget"
+        # The original passes make 738 visits. Additional geometry passes
+        # must retain those checks and refuse while reading a crafted page.
+        assert len(calls) >= 738, "every loop checks the budget"
 
         def expired():
             if len(calls) > 500:

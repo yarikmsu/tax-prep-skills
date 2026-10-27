@@ -462,13 +462,16 @@ _CHAIN = 20.0    # how far beyond one value on that row the next may start
 _UNDER = 2.5     # how far below its label a boxed value may print
 _ASIDE = 2.0     # how far outside the label's span that value may start
 _COLUMN = 14.0   # how far below its heading label a column's first entry may print
-_LINED = 0.25    # how far off its first entry's edges or centre a column's entry may print (IT-201's dependents: 0.02)
+_LINED = 0.35    # how far off its first entry's edges or centre a column's entry may print (IT-201's dependents: 0.02)
 _RUN = 64.0      # how far below a column's last entry its next may print (a 1095-C page's 13 rows: 60.4)
 _DOTS = 2.0      # how far from its label, and from each other, a leader's dots may print (Schedule 1's first: 1.5)
 _BIN = 20.0      # the width of the strips a page's words are indexed in
 _STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
 _LEADER = re.compile(r"[.\u2026]+")   # a word printed as dots alone
 _WRAP = 64       # characters of a heading phrase's end read ("individual taxpayer identification": 34)
+_CAPTION = re.compile(r"^(?:\((?:[a-z]|[0-9]+[a-z]?)\)|[a-z]\.|[0-9]+[a-z]?)(?:\s|$)", re.I)
+_NUMBERED = re.compile(r"^(?:\([0-9]+[a-z]?\)|[0-9]+[a-z]?)(?:\s|$)", re.I)
+_EMPTY_ENTRY = re.compile(r"^(?:N/?A|Applied for|Tax[- ]Exempt)$", re.I)
 _ABUT = 0.05     # points apart at most for words a hidden glyph split (TY2024 1040's "num b e r")
 
 
@@ -569,10 +572,29 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
         tick()
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
+        row_top = min(w["top"] for w in row)
+        word_ends = [start + len(w["text"].rstrip(" .:)")) for start, w in zip(starts, row)]
+        phrases = _phrases(row)
+        phrase_of: dict[int, tuple[list[dict], str]] = {}
+        for phrase in phrases:
+            tick()
+            phrase_text = _row_text(phrase)[0]
+            phrase_of.update((id(w), (phrase, phrase_text)) for w in phrase)
         leaders: dict[tuple, float] = {}   # labels in one word ("SSN/ITIN") share its leader
         for low, high, carries in found_labels:
             tick()
-            box = _box(_covered(row, starts, low, high))
+            cover = _covered(row, starts, low, high)
+            box = _box(cover)
+            phrase, phrase_text = phrase_of[id(cover[0])]
+            last = bisect.bisect_left(starts, high) - 1
+            ends_phrase = cover[-1] is phrase[-1] and high >= word_ends[last]
+            box["row_top"] = row_top
+            box["phrase_end"] = ends_phrase
+            box["phrase_x0"] = phrase[0]["x0"]
+            box["numbered"] = bool(_NUMBERED.match(phrase_text)) and phrase is phrases[0] and ends_phrase
+            box["caption"] = bool(_CAPTION.match(phrase_text)) and ends_phrase and box["x0"] - phrase[0]["x0"] <= _BESIDE * (box["bottom"] - box["top"])
+            if box["caption"]:
+                box["x0"] = phrase[0]["x0"]
             k = bisect.bisect_left(starts, high)
             key = (k, box["x1"], box["bottom"] - box["top"])
             if key not in leaders:
@@ -764,7 +786,9 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
     IT-201's page 3 header is 3 points off its amounts."""
     free = [k for k, (_, carries, _) in enumerate(labels) if not carries]
     heads = {k for k in free if not any(masked for _, _, masked in under[k])}
-    classes = _by_height([labels[k] for k in free])
+    classes = [(reach, members, tallest, group) for caption, reach in ((False, _COLUMN), (True, _RUN))
+               for group in [[k for k in free if bool(labels[k][0].get("caption")) == caption]]
+               for members, tallest in _by_height([labels[k] for k in group])]
     index = _strips(printed)
     columns: dict[int, tuple] = {}     # a column's last entry's bottom, label height, first entry's edges and centre
     lined: dict[int, set[int]] = {}    # the columns an entry with an edge or centre in each strip may line up with
@@ -774,8 +798,8 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
         if masked:
             continue
         above = sorted(_over(index, box), key=lambda w: -w["bottom"])
-        window = [(free[j], height, None) for members, tallest in classes
-                  for _, j, height in members[bisect.bisect_left(members, (box["top"] - _COLUMN * tallest,)):
+        window = [(group[j], height, None) for reach, members, tallest, group in classes
+                  for _, j, height in members[bisect.bisect_left(members, (box["top"] - reach * tallest,)):
                                               bisect.bisect_right(members, (box["top"] + 1, float("inf")))]]
         for k, height, column in window + _lined_columns(columns, lined, box):
             tick()
@@ -784,8 +808,8 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
                 governed = _lines_up(box, column) and _in_column(box, above, label, height, strict=True)
             else:   # a spelled entry is masked already, and counts only toward a column it starts
                 governed = ((raw is not None and _is_under(box, label, height))
-                            or (k in heads and box["top"] - label["bottom"] <= _COLUMN * height
-                                and _in_column(box, above, label, height)))
+                            or (k in heads and box["top"] - label["bottom"] <= (_RUN if label.get("caption") else _COLUMN) * height
+                                and _in_column(box, above, label, height, strict=box["top"] - label["bottom"] > _COLUMN * height)))
             if governed:
                 if raw is not None:
                     runs.add(raw)
@@ -797,6 +821,69 @@ def _under(labels: list, items: list, under: list, printed: list[dict], tick) ->
     return runs
 
 
+def _lone_labels(labels: list, items: list, under: list, tick) -> list:
+    """Free labels with no identifier below or beside, including raised values."""
+    out = []
+    ordered = sorted(items, key=lambda item: item[0]["top"])
+    tops = [item[0]["top"] for item in ordered]
+    tallest = max((b["bottom"] - b["top"] for b, *_ in items), default=0.0)
+    for entry, below in zip(labels, under):
+        tick()
+        label, carries, _ = entry
+        near = ordered[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
+        if not carries and not below and not any(b["bottom"] > label["top"] and b["x0"] >= label["x1"] - 1 for b, *_ in near):
+            out.append(entry)
+    return out
+
+
+def _above(labels: list, items: list, tick) -> set[str]:
+    """A signature line's number just above its otherwise empty label."""
+    out = set()
+    ordered = sorted(items, key=lambda item: item[0]["bottom"])
+    bottoms = [item[0]["bottom"] for item in ordered]
+    for label, *_ in labels:
+        tick()
+        if not label.get("phrase_end"):
+            continue
+        height = label["bottom"] - label["top"]
+        for box, raw, _ in ordered[bisect.bisect_left(bottoms, label["top"] - height):bisect.bisect_right(bottoms, label["top"])]:
+            tick()
+            if raw is not None and box["x1"] > label.get("phrase_x0", label["x0"]) and box["x0"] < label["x1"]:
+                out.add(raw)
+    return out
+
+
+def _paragraph_labels(words: list[dict], labels: list, tick, boundaries: list | None = None) -> list:
+    """A numbered identifier question lends only its beside reach to the
+    indented, flush instruction lines below it, stopping at the next item."""
+    rows = _word_rows(words)
+    tops = [min(w["top"] for w in row) for row in rows]
+    out = []
+    numbered_rows = {label.get("row_top", label["top"]) for label, *_ in (labels if boundaries is None else boundaries) if label.get("numbered")}
+    for label, *_ in labels:
+        tick()
+        if not label.get("numbered"):
+            continue
+        height = label["bottom"] - label["top"]
+        last, left = label["bottom"], None
+        for j in range(bisect.bisect_right(tops, label["top"]), len(rows)):
+            tick()
+            if tops[j] in numbered_rows:
+                break
+            phrase = _phrases(rows[j])[0]
+            box = _box(phrase)
+            x = box["x0"]
+            if box["top"] - last > height or (left is None and not 0 <= x - label["phrase_x0"] <= 2 * height) or (left is not None and abs(x - left) > 1):
+                break
+            text = _row_text(phrase)[0]
+            _, values, spelled, _ = identifier_spans(text)
+            if values or spelled:
+                break
+            out.append((box, False, box["x1"]))
+            left, last = x, box["bottom"]
+    return out
+
+
 def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
     """The text of each identifier-shaped run the page prints in an
     identifier label's box, whatever order the page's text puts them in.
@@ -806,8 +893,17 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
         return set()
     items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
     under = _just_under(labels, items, tick)
+    for row in _word_rows(words):
+        tick()
+        for phrase in _phrases(row):
+            tick()
+            if _EMPTY_ENTRY.fullmatch(_row_text(phrase)[0]):
+                covered.update(id(w) for w in phrase)
     printed = [w for w in words if id(w) not in covered]
-    return _beside(labels, items, under, tick) | _under(labels, items, under, printed, tick)
+    lone = _lone_labels(labels, items, under, tick)
+    extra = _paragraph_labels(words, lone, tick, boundaries=labels)
+    return (_beside(labels + extra, items, under + [[] for _ in extra], tick)
+            | _under(labels, items, under, printed, tick) | _above(lone, items, tick))
 
 
 def _mask_table_runs(table: list, runs, tick) -> list:
