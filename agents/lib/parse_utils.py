@@ -480,11 +480,12 @@ def _box(words: list[dict]) -> dict:
 
 def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
     """The page's identifier labels (box, carries), runs still to mask (text,
-    box), identifiers spelled another way (box), and the ids of every word
-    an identifier or a label's note covers: none of them ends a column."""
+    box), identifiers spelled another way (box, masked by the page itself),
+    and the ids of every word an identifier or a label's note covers: none
+    of them ends a column."""
     labels: list[tuple[dict, bool]] = []
     values: list[tuple[str, dict]] = []
-    spelled: list[dict] = []
+    spelled: list[tuple[dict, bool]] = []
     covered: set[int] = set()
     for row in _word_rows(words):
         tick()
@@ -495,10 +496,10 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
             cover = _covered(row, starts, low, high)
             covered.update(id(w) for w in cover)
             values.append((text[low:high], _box(cover)))
-        for low, high in found_spelled:
+        for low, high, masked in found_spelled:
             cover = _covered(row, starts, low, high)
             covered.update(id(w) for w in cover)
-            spelled.append(_box(cover))
+            spelled.append((_box(cover), masked))
         for low, high in notes:
             covered.update(id(w) for w in _covered(row, starts, low, high))
     return labels, values, spelled, covered
@@ -512,9 +513,9 @@ def _is_under(box: dict, label: dict, height: float) -> bool:
 
 def _just_under(labels: list, items: list, tick) -> list:
     """For each label, the identifiers (box, run text or None if spelled
-    otherwise) printed just under it."""
+    otherwise, masked by the page) printed just under it."""
     items = sorted(items, key=lambda item: item[0]["top"])
-    tops = [box["top"] for box, _ in items]
+    tops = [item[0]["top"] for item in items]
     out = []
     for label, _ in labels:
         tick()
@@ -528,11 +529,13 @@ def _beside(labels: list, items: list, under: list, tick) -> set[str]:
     """Each label's values on its row: the first identifier to its right
     within reach, then each one within reach of the one before (Form 540's
     dependents, "Spouse" or a glyph between). A label whose value prints
-    under it has none on its row; one whose first value is already masked or
-    hyphenated governs nothing after it (an account number further along)."""
+    under it has none on its row; one whose first value the page masked
+    itself shows last fours only, and governs nothing after it (a broker's
+    account number further along). A filer's hyphens say nothing about the
+    next value."""
     items = sorted(items, key=lambda item: item[0]["top"])
-    tops = [box["top"] for box, _ in items]
-    tallest = max((box["bottom"] - box["top"] for box, _ in items), default=0.0)
+    tops = [item[0]["top"] for item in items]
+    tallest = max((item[0]["bottom"] - item[0]["top"] for item in items), default=0.0)
     runs: set[str] = set()
     for (label, _), below in zip(labels, under):
         tick()
@@ -540,10 +543,10 @@ def _beside(labels: list, items: list, under: list, tick) -> set[str]:
         window = items[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
         row = sorted((item for item in window if item[0]["bottom"] > label["top"] and item[0]["x0"] >= label["x1"] - 1),
                      key=lambda item: item[0]["x0"])
-        if below or not row or row[0][1] is None:
+        if below or not row or row[0][2]:
             continue
         reach = label
-        for box, raw in row:
+        for box, raw, _ in row:
             if box["x0"] - reach["x1"] > (_BESIDE if reach is label else _CHAIN) * height:
                 break
             if raw is not None:
@@ -586,10 +589,12 @@ def _under(labels: list, values: list, under: list, printed: list[dict], tick) -
     its column with nothing printed between but other identifiers, notes on
     the label, and the entries typed in the column's boxes, which print
     larger than the form's own labels (Form 2441's providers, one of them
-    "Tax-Exempt"). A label whose own value just under it is already masked
-    or hyphenated is a box's label, and heads no column."""
+    "Tax-Exempt"). A label whose own value just under it the page masked
+    itself is a box's label on a statement, and heads no column; a filer's
+    hyphens in the first entry do not end it (Form 2441's qualifying
+    persons)."""
     free = [k for k, (_, carries) in enumerate(labels) if not carries]
-    heads = {k for k in free if all(raw is not None for _, raw in under[k])}
+    heads = {k for k in free if not any(masked for _, _, masked in under[k])}
     classes = _by_height([labels[k] for k in free])
     index = _strips(printed)
     runs = set()
@@ -623,7 +628,7 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
     labels, values, spelled, covered = _page_identifiers(words, tick)
     if not labels or not values:
         return set()
-    items = [(box, raw) for raw, box in values] + [(box, None) for box in spelled]
+    items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
     under = _just_under(labels, items, tick)
     printed = [w for w in words if id(w) not in covered]
     return _beside(labels, items, under, tick) | _under(labels, values, under, printed, tick)

@@ -1017,6 +1017,8 @@ class TestMaskingByPosition:
         [(36, 100, 8, f"SSN: {_ssn('')}"), (150, 100, 8, f"Spouse {_SECOND}")],
         # A dependents row with each relationship after its number.
         [(36, 100, 7, "SSN"), (60, 100, 9, f"{_ssn('')} Son"), (160, 100, 9, f"{_SECOND} Daughter")],
+        # Form 540's dependents, the first typed with hyphens (the field takes eleven characters).
+        [(78, 144, 7, "SSN. See"), (136, 146, 10, _ssn("-")), (287, 146, 10, _SECOND), (78, 152, 7, "instructions.")],
     ])
     def test_a_row_label_reaches_each_value_after_the_first(self, tmp_path, items):
         raw, out = self._read(tmp_path, items)
@@ -1027,6 +1029,8 @@ class TestMaskingByPosition:
         # Form 2441 Part II: the first person's number just under the heading,
         # the next a row further down than "just under" reaches.
         [(300, 100, 7, "social security number"), (300, 110, 9, _ssn("")), (300, 134, 9, _SECOND)],
+        # The first person's number typed with hyphens: still a heading's column.
+        [(300, 100, 7, "social security number"), (300, 110, 9, _ssn("-")), (300, 134, 9, _SECOND)],
         # FTB 3506 Part II: "(See instructions)" printed under the heading.
         [(250, 408, 7, "social security number (SSN)"), (266, 416, 7, "(See instructions)"),
          (240, 437, 10, _ssn("")), (240, 458, 10, _SECOND)],

@@ -327,14 +327,16 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
     identifier-shaped run still to mask, an identifier spelled another way
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
-    printed under FTB 3506's SSN heading): `[(start, end, carries)]` and three
-    `[(start, end)]` lists, `carries` saying whether a value follows the label
-    on its row. A reader that knows where the row sits on the page decides
-    which label governs which run; `mask_runs` masks them."""
+    printed under FTB 3506's SSN heading): `[(start, end, carries)]`,
+    `[(start, end)]`, `[(start, end, masked)]` and `[(start, end)]`.
+    `carries` says whether a value follows the label on its row, `masked`
+    whether the page masked that identifier itself (`XXX-XX-1234`). A reader
+    that knows where the row sits on the page decides which label governs
+    which run; `mask_runs` masks them."""
     last = max((m.start() for m in _ID_ANY_VALUE.finditer(row)), default=-1)
     labels = [(m.start(), m.end(), last >= m.end()) for m in _ID_LABEL_RE.finditer(row)]
     values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
-    return (labels, values, [(m.start(), m.end()) for m in _ID_SPELLED.finditer(row)],
+    return (labels, values, [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
             [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
 
 
