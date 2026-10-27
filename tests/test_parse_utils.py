@@ -990,6 +990,7 @@ class TestMaskingByPosition:
     @pytest.mark.parametrize("leader", [
         [(47, 549, 9, "SSN " + "." * 150)],                                      # FTB 3532: one word of dots
         [(47, 549, 9, "SSN")] + [(70 + 12 * k, 549, 9, ".") for k in range(32)],   # spaced, as the IRS prints them
+        [(47, 549, 9, "SSN " + "\u2026" * 40)],                                  # an ellipsis character
     ])
     def test_a_value_past_its_labels_dot_leader(self, tmp_path, leader):
         """FTB 3532 line 3: the qualifying person's "SSN", a dot leader far
@@ -1087,7 +1088,8 @@ class TestMaskingByPosition:
         # (a raised baseline, so page text puts it on another line), and far
         # down the column (a row elsewhere between, so not the next line).
         [(36, 100, 7, "SSN"), (300, 96, 9, ROUTING)],
-        [(36, 100, 7, "SSN " + "." * 40), (300, 96, 9, ROUTING)],          # far past a short leader's end
+        [(36, 100, 7, "SSN " + "." * 40), (235, 96, 9, ROUTING)],          # 15 heights past a leader's end
+        [(36, 100, 7, "SSN"), (69, 100, 7, "." * 120), (330, 96, 9, ROUTING)],      # dots 2.7 heights from the label
         [(36, 100, 7, "SSN of"), (63, 100, 7, "." * 120), (330, 96, 9, ROUTING)],   # a leader after other words
         [(36, 100, 7, "SSN"), (200, 100, 7, "." * 40), (300, 96, 9, ROUTING)],       # dots far from the label
         [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
