@@ -486,6 +486,9 @@ MASKED = f"XXX-XX-{LAST4}"
 ROUTING = "".join(("021", "000", "021"))
 
 
+_SECOND = "".join(("000", "00", "1111"))   # a second synthetic SSN
+
+
 def _ssn(sep: str) -> str:
     """A synthetic SSN in one spelling, built at runtime (see the header)."""
     return sep.join(("000", "00", LAST4))
@@ -932,6 +935,266 @@ def _raw_pdf(path):
             if found := page.extract_tables():
                 tables[i] = found
     return text, tables
+
+
+def _draw(path, items):
+    """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
+    order given, which is the order pdfplumber meets them in the stream."""
+    from reportlab.pdfgen import canvas
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, top, size, text, *angle in items:
+        page.saveState()
+        page.setFont("Helvetica", size)
+        page.translate(x, 792 - top - size)
+        page.rotate(angle[0] if angle else 0)
+        page.drawString(0, 0, text)
+        page.restoreState()
+    page.save()
+    return path
+
+
+class TestMaskingByPosition:
+    """Page TEXT puts a row between a label and its value whenever something
+    else is printed there: a rotated sidebar, a form-code row, a margin glyph.
+    Each case below leaks under `mask_ssn` alone, which the first assertion
+    shows on the library's own read, and is masked because the PDF routes
+    also ask which label each run sits beside or under on the page."""
+
+    @staticmethod
+    def _read(tmp_path, items):
+        import pdfplumber
+        from agents.lib.parse_utils import extract_pdf_text
+        pdf = _draw(tmp_path / "form.pdf", items)
+        with pdfplumber.open(str(pdf)) as document:
+            raw = document.pages[0].extract_text()
+        return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
+
+    @pytest.mark.parametrize("between", [
+        [(570, 108, 5, "R")],                         # Form 540: a margin glyph
+        [(420, 108, 5, "22222")],                     # a W-2 copy's form code, in the value's column
+    ])
+    def test_a_value_just_under_its_label(self, tmp_path, between):
+        items = between + [(380, 100, 7, "Spouse's/RDP's SSN or ITIN"), (380, 114, 10, f"JOHN DOE {_ssn('')}")]
+        raw, out = self._read(tmp_path, items)
+        assert _ssn("") in mask_ssn(raw), "the fixture does not separate label and value"
+        assert _ssn("") not in out and f"JOHN DOE {MASKED}" in out
+
+    def test_a_value_beside_its_label_on_a_raised_baseline(self, tmp_path):
+        """Form 540's header from page 2: the value prints right of
+        "Your SSN or ITIN:", its baseline a few points higher."""
+        raw, out = self._read(tmp_path, [(36, 52, 9, "Special Credits", 90), (247, 55, 10, "Your SSN or ITIN:"),
+                                         (310, 49, 10, _ssn(" "))])
+        assert _ssn(" ") in mask_ssn(raw)
+        assert _ssn(" ") not in out and MASKED in out
+
+    def test_a_column_of_values_under_its_heading(self, tmp_path):
+        """Form 2441's care providers: "(SSN or EIN)" heads a column whose
+        cells sit a provider's name-and-address row apart."""
+        other = "".join(("000", "00", "1111"))
+        raw, out = self._read(tmp_path, [(318, 197, 7, "(c) Identifying number"), (330, 205, 7, "(SSN or EIN)"),
+                                         (56, 242, 9, "KID CARE CENTER"), (319, 242, 9, _ssn("")),
+                                         (56, 266, 9, "JANE SITTER"), (319, 266, 9, other)])
+        assert _ssn("") not in out and other not in out
+        assert f"{MASKED}" in out and "XXX-XX-1111" in out
+
+    @pytest.mark.parametrize("first, size", [
+        ("-".join(("00", "0555999")), 9),            # an EIN, hyphenated as the forms print one
+        ("-".join(("00", "0555999")), 7),            # ... printed no larger than the heading
+        ("-".join(("000", "00", "1111")), 9),       # an SSN masked in text already
+        ("Tax-Exempt", 9), ("Applied for", 9),      # entries the instructions allow in place of a number
+    ])
+    def test_a_column_reads_past_other_providers_entries(self, tmp_path, first, size):
+        """Form 2441: the first provider's column (c) holds something other
+        than a bare run; the next provider's SSN is still under the heading."""
+        raw, out = self._read(tmp_path, [(318, 197, 7, "(c) Identifying number"), (330, 205, 7, "(SSN or EIN)"),
+                                         (56, 242, 9, "KID CARE CENTER"), (319, 242, size, first),
+                                         (56, 266, 9, "JANE SITTER"), (319, 266, 9, _ssn(""))])
+        assert _ssn("") in mask_ssn(raw)
+        assert _ssn("") not in out and f"JANE SITTER {MASKED}" in out
+
+    @pytest.mark.parametrize("items", [
+        # One label, the taxpayer's value, then the spouse's after a word.
+        [(36, 100, 8, f"SSN: {_ssn('')}"), (150, 100, 8, f"Spouse {_SECOND}")],
+        # A dependents row with each relationship after its number.
+        [(36, 100, 7, "SSN"), (60, 100, 9, f"{_ssn('')} Son"), (160, 100, 9, f"{_SECOND} Daughter")],
+        # Form 540's dependents, the first typed with hyphens (the field takes eleven characters).
+        [(78, 144, 7, "SSN. See"), (136, 146, 10, _ssn("-")), (287, 146, 10, _SECOND), (78, 152, 7, "instructions.")],
+    ])
+    def test_a_row_label_reaches_each_value_after_the_first(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out
+
+    @pytest.mark.parametrize("items", [
+        # Form 2441 Part II: the first person's number just under the heading,
+        # the next a row further down than "just under" reaches.
+        [(300, 100, 7, "social security number"), (300, 110, 9, _ssn("")), (300, 134, 9, _SECOND)],
+        # The first person's number typed with hyphens: still a heading's column.
+        [(300, 100, 7, "social security number"), (300, 110, 9, _ssn("-")), (300, 134, 9, _SECOND)],
+        # FTB 3506 Part II: "(See instructions)" printed under the heading.
+        [(250, 408, 7, "social security number (SSN)"), (266, 416, 7, "(See instructions)"),
+         (240, 437, 10, _ssn("")), (240, 458, 10, _SECOND)],
+    ])
+    def test_a_heading_governs_its_column_past_its_first_entry(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _SECOND in mask_ssn(raw)
+        assert _ssn("") not in out and _SECOND not in out
+
+    @pytest.mark.parametrize("glyph", ["\u2022", "|"])   # a bullet the font cannot map, and a rule
+    def test_a_row_label_governs_each_value_across_its_row(self, tmp_path, glyph):
+        """Form 540's dependents: "SSN. See instructions." heads a row of
+        numbers in columns, a glyph between each."""
+        raw, out = self._read(tmp_path, [(78, 144, 7, "SSN. See"), (121, 145, 10, glyph), (136, 146, 10, _ssn(" ")),
+                                         (272, 145, 10, glyph), (287, 146, 10, " ".join(("000", "00", "1111"))),
+                                         (78, 152, 7, "instructions.")])
+        assert " ".join(("000", "00", "1111")) in mask_ssn(raw)
+        assert _ssn(" ") not in out and " ".join(("000", "00", "1111")) not in out
+        assert MASKED in out and "XXX-XX-1111" in out
+
+    @pytest.mark.parametrize("items", [
+        # A TIN carrying its value, masked or bare, then an account number after its own label.
+        [(36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (330, 100, 8, f"Account Number: {ROUTING}")],
+        [(36, 100, 8, f"Recipient's TIN: {_ssn('')}"), (330, 100, 8, f"Account Number: {ROUTING}")],
+        # A ZIP+4 typed with a space on the TIN's row.
+        [(36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (250, 100, 8, "SAN FRANCISCO CA " + " ".join(("94105", "1234")))],
+        # The next box's account number, beside a value-less TIN label's box.
+        [(36, 100, 7, "RECIPIENT'S TIN"), (120, 100, 7, "Account no."), (570, 105, 5, "R"),
+         (36, 110, 9, "XXX-XX-6789"), (120, 110, 9, ROUTING)],
+        # An account number below a box whose label holds its own value.
+        [(36, 60, 8, "RECIPIENT'S TIN"), (36, 70, 9, "XXX-XX-6789"), (36, 120, 8, "Account"), (80, 120, 8, ROUTING)],
+        # Beside a TIN label whose value prints under it (page text masks the
+        # row's copy as a same-line value; the page's other copy is kept), and
+        # after a TIN's masked value with only a rule between.
+        [(36, 100, 7, "RECIPIENT'S TIN"), (110, 100, 7, f"Account Number {ROUTING}"), (36, 110, 9, "XXX-XX-6789"),
+         (300, 400, 9, f"1099-DIV Account {ROUTING}")],
+        [(330, 90, 7, "Account number"), (36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (320, 100, 8, "|"),
+         (330, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: XXX-XX-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: ***-**-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
+        [(36, 100, 8, "Recipient's TIN: xxx-xx-6789"), (160, 100, 8, "|"), (170, 100, 8, ROUTING)],
+        # Beyond each reach, with nothing printed between: far along the row
+        # (a raised baseline, so page text puts it on another line), and far
+        # down the column (a row elsewhere between, so not the next line).
+        [(36, 100, 7, "SSN"), (300, 96, 9, ROUTING)],
+        [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
+         (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
+    ])
+    def test_a_label_governs_only_its_own_box(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
+        assert _ssn("") not in out
+        assert ROUTING in out or " ".join(("94105", "1234")) in out
+
+    def test_the_pass_checks_the_time_budget_as_it_reads(self):
+        """A crafted page is refused when its time runs out, not after."""
+        from agents.lib.parse_utils import _governed_runs
+        words = []
+        for box in range(50):   # 50 boxes: a label row, and its value's row under it
+            words += [{"text": "SSN", "x0": 36.0, "x1": 50.0, "top": 20.0 * box, "bottom": 20.0 * box + 7},
+                      {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
+        calls = []
+        assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
+        # 100 rows, 50 labels in each of two passes, 50 runs, and the 240
+        # label-and-run pairs the column search weighs.
+        assert len(calls) == 490, "every loop checks the budget"
+
+        def expired():
+            if len(calls) > 500:
+                raise TimeoutError
+            calls.append(1)
+        with pytest.raises(TimeoutError):
+            _governed_runs(words, expired)
+
+    def test_a_number_elsewhere_on_the_page_survives(self, tmp_path):
+        """The employer's EIN in the box below and left of the SSN's, an
+        amount down the SSN column after other text, a routing number far
+        from any label: none sits beside or under the label."""
+        cents = " ".join(("850", "00", "2026"))
+        raw, out = self._read(tmp_path, [(150, 38, 7, "a Employee's social security number"),
+                                         (155, 50, 9, _ssn("")), (20, 58, 9, ROUTING),
+                                         (40, 66, 7, "b Employer identification number (EIN)"),
+                                         (40, 74, 9, ROUTING), (150, 120, 7, "1 Wages, tips, other compensation"),
+                                         (155, 132, 9, cents), (400, 300, 9, f"Routing {ROUTING}")])
+        assert MASKED in out
+        assert out.count(ROUTING) == 3 and cents in out
+
+    def test_a_label_carrying_its_value_governs_nothing_under_it(self, tmp_path):
+        raw, out = self._read(tmp_path, [(100, 100, 9, f"SSN {_ssn('-')}"), (100, 112, 9, f"Account {ROUTING}")])
+        assert f"SSN {MASKED}" in out and f"Account {ROUTING}" in out
+        raw, out = self._read(tmp_path, [(100, 100, 9, f"SSN {_ssn('-')}"), (100, 160, 9, ROUTING)])
+        assert out.endswith(ROUTING), "a column under a label with its value is not that label's"
+
+    def test_words_and_tables_are_masked_by_position_too(self, tmp_path):
+        from agents.lib.parse_utils import extract_pdf_words, extract_tables
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Table
+        pdf = _draw(tmp_path / "words.pdf", [(570, 108, 5, "R"), (380, 100, 7, "Spouse's SSN"),
+                                             (380, 114, 10, f"JOHN DOE {_ssn('')}")])
+        words = extract_pdf_words(str(pdf), workspace=str(tmp_path))[0]
+        assert _ssn("") not in " ".join(w["text"] for w in words)
+        assert f"JOHN DOE {MASKED}" in [w["text"] for w in words]
+        doc = tmp_path / "table.pdf"
+        # The label prints above the table, outside every cell.
+        from reportlab.platypus import Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        SimpleDocTemplate(str(doc), pagesize=letter).build([
+            Paragraph("Your social security number", getSampleStyleSheet()["Normal"]), Spacer(1, 2),
+            Table([[_ssn(""), "Wages"], ["Acme", "100.00"]], hAlign="LEFT",
+                  style=[("GRID", (0, 0), (-1, -1), 0.5, "black")])])
+        tables = extract_tables(str(doc), workspace=str(tmp_path))
+        cells = [cell for table in tables.get(0, []) for row in table for cell in row]
+        assert _ssn("") not in cells and MASKED in cells
+
+    def test_a_run_split_across_table_cells_is_masked_in_place(self):
+        """Form 1040's comb boxes come out of a table as one cell per group."""
+        from agents.lib.secure_fs import mask_row_runs
+        comb = " ".join(_ssn(""))
+        assert mask_row_runs(["(3) SSN", "000", "00", LAST4, None, "Son"], {comb}) == [
+            "(3) SSN", "XXX", "XX", LAST4, None, "Son"]
+        assert mask_row_runs(["0 0 0", "0 0", " ".join(LAST4)], {comb}) == ["X X X", "X X", " ".join(LAST4)]
+        assert mask_row_runs(["000", "00", LAST4 + "5"], {comb}) == ["000", "00", LAST4 + "5"]
+
+    def test_a_row_the_table_cuts_short_still_masks_each_whole_nine(self):
+        """Form 1040-SR's dependents: the table holds three dependents and the
+        start of a fourth, whose last group falls outside it."""
+        from agents.lib.secure_fs import mask_row_runs, prepare_runs
+        comb = " ".join(_ssn("") + _SECOND + _ssn("") + _SECOND)
+        runs = prepare_runs({comb})
+        assert {_ssn(""), _SECOND} <= set(runs.spelling)
+        row = mask_row_runs(["(2) SSN", "000", "00", LAST4, "000", "00", _SECOND[5:], "000", "00", LAST4, "000", "00"], runs)
+        assert row == ["(2) SSN", "XXX", "XX", LAST4, "XXX", "XX", _SECOND[5:], "XXX", "XX", LAST4, "000", "00"]
+
+    def test_a_glyph_stretched_across_the_page_costs_one_page_of_strips(self):
+        from agents.lib.parse_utils import _STRIPS, _strips
+        index = _strips([{"text": "x", "x0": -1e9, "x1": 1e9, "top": 0.0, "bottom": 1.0}])
+        assert set(index) == set(range(_STRIPS + 1))
+
+    def test_tables_mask_a_run_split_across_cells(self, tmp_path):
+        from agents.lib.parse_utils import extract_tables
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table
+        doc = tmp_path / "split.pdf"
+        SimpleDocTemplate(str(doc), pagesize=letter).build([
+            Paragraph("Your social security number", getSampleStyleSheet()["Normal"]), Spacer(1, 2),
+            Table([["000", "00", LAST4, "Wages"], ["Acme", "", "", "100.00"]], hAlign="LEFT",
+                  style=[("GRID", (0, 0), (-1, -1), 0.5, "black")])])
+        cells = [cell for table in extract_tables(str(doc), workspace=str(tmp_path)).get(0, [])
+                 for row in table for cell in row]
+        assert cells[:3] == ["XXX", "XX", LAST4]
+
+    def test_the_longest_run_is_masked_first(self):
+        """Form 1040's comb row is one run of every dependent; the first
+        dependent alone is a run too, and must not split the row."""
+        from agents.lib.secure_fs import mask_runs
+        second = "".join(("000", "00", "1111"))
+        row = " ".join(_ssn("") + second)
+        assert mask_runs(row, {row, " ".join(_ssn(""))}) == f"{MASKED} XXX-XX-1111"
+
+    def test_mask_runs_masks_a_run_however_it_is_spaced(self):
+        from agents.lib.secure_fs import mask_runs
+        comb = " ".join(_ssn(""))
+        assert mask_runs(f"A {_ssn('')} B {_ssn(' ')} C {comb}", {_ssn(" ")}) == f"A {MASKED} B {MASKED} C {MASKED}"
+        assert mask_runs(f"1{_ssn('')}", {_ssn("")}) == f"1{_ssn('')}"
 
 
 class TestEveryExtractionRouteMasks:

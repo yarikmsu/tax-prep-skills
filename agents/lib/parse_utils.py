@@ -5,9 +5,11 @@ Used by /tax-parse subagents to extract text and tables from source documents.
 Wraps pdfplumber with error handling and provides consistent interfaces.
 """
 
+import bisect
 import csv
 import functools
 import json
+import math
 import sys
 import time
 import zipfile
@@ -16,7 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
-    is_reparse_point, mask_ssn, mask_table, names_an_identifier, redact)
+    identifier_spans, is_reparse_point, mask_row_runs, mask_runs, mask_ssn, mask_table, names_an_identifier,
+    prepare_runs, redact)
 from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
@@ -415,7 +418,8 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
             text = pdf.pages[i].extract_text() or ""
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
-            result[i] = mask_ssn(text)
+            runs = _governed_runs(pdf.pages[i].extract_words(), budget.tick)
+            result[i] = mask_runs(mask_ssn(text), runs)
     budget.tick()
     return result
 
@@ -439,14 +443,218 @@ def _word_rows(words: list[dict]) -> list[list[dict]]:
     return [sorted(row, key=lambda w: w["x0"]) for row in rows]
 
 
-def _masked_words(words: list[dict]) -> list[dict]:
+# A label governs the value printed beside it on its row or just under it in
+# its column: the box a form prints. Page text loses that. A rotated sidebar,
+# a form-code row or a margin glyph can land between the label's line and the
+# value's (Form 540's header SSN, W-2 and 1099 copies), so every PDF route also
+# masks by position. Distances are in the label's own height; the filled
+# official forms put a value at most 9.1 heights right of its label, the next
+# dependent 14.4 beyond the last (Form 540), 1.8 to one side below it, and a
+# Form 2441 provider 12.3 down its column.
+_BESIDE = 12.0   # how far right of its label, on its row, its first value may start
+_CHAIN = 20.0    # how far beyond one value on that row the next may start
+_UNDER = 2.5     # how far below its label a boxed value may print
+_ASIDE = 2.0     # how far outside the label's span that value may start
+_COLUMN = 14.0   # how far down its column a heading label governs
+_BIN = 20.0      # the width of the strips a page's words are indexed in
+_STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
+
+
+def _row_text(row: list[dict]) -> tuple[str, list[int]]:
+    """The row's text as page text joins it, and where each word starts in it."""
+    starts, offset = [], 0
+    for word in row:
+        starts.append(offset)
+        offset += len(word["text"]) + 1
+    return " ".join(word["text"] for word in row), starts
+
+
+def _covered(row: list[dict], starts: list[int], start: int, end: int) -> list[dict]:
+    return row[max(bisect.bisect_right(starts, start) - 1, 0):bisect.bisect_left(starts, end)]
+
+
+def _box(words: list[dict]) -> dict:
+    return {"x0": min(w["x0"] for w in words), "x1": max(w["x1"] for w in words),
+            "top": min(w["top"] for w in words), "bottom": max(w["bottom"] for w in words)}
+
+
+def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
+    """The page's identifier labels (box, carries), runs still to mask (text,
+    box), identifiers spelled another way (box, masked by the page itself),
+    and the ids of every word an identifier or a label's note covers: none
+    of them ends a column."""
+    labels: list[tuple[dict, bool]] = []
+    values: list[tuple[str, dict]] = []
+    spelled: list[tuple[dict, bool]] = []
+    covered: set[int] = set()
+    for row in _word_rows(words):
+        tick()
+        text, starts = _row_text(row)
+        found_labels, found_values, found_spelled, notes = identifier_spans(text)
+        labels += [(_box(_covered(row, starts, low, high)), carries) for low, high, carries in found_labels]
+        for low, high in found_values:
+            cover = _covered(row, starts, low, high)
+            covered.update(id(w) for w in cover)
+            values.append((text[low:high], _box(cover)))
+        for low, high, masked in found_spelled:
+            cover = _covered(row, starts, low, high)
+            covered.update(id(w) for w in cover)
+            spelled.append((_box(cover), masked))
+        for low, high in notes:
+            covered.update(id(w) for w in _covered(row, starts, low, high))
+    return labels, values, spelled, covered
+
+
+def _is_under(box: dict, label: dict, height: float) -> bool:
+    """`box` prints just under `label`, in the box the label heads."""
+    return (box["x1"] >= label["x0"] - _ASIDE * height and box["x0"] <= label["x1"] + _ASIDE * height
+            and -1 <= box["top"] - label["bottom"] <= _UNDER * height)
+
+
+def _just_under(labels: list, items: list, tick) -> list:
+    """For each label, the identifiers (box, run text or None if spelled
+    otherwise, masked by the page) printed just under it."""
+    items = sorted(items, key=lambda item: item[0]["top"])
+    tops = [item[0]["top"] for item in items]
+    out = []
+    for label, _ in labels:
+        tick()
+        height = label["bottom"] - label["top"]
+        window = items[bisect.bisect_left(tops, label["bottom"] - 1):bisect.bisect_right(tops, label["bottom"] + _UNDER * height)]
+        out.append([item for item in window if _is_under(item[0], label, height)])
+    return out
+
+
+def _beside(labels: list, items: list, under: list, tick) -> set[str]:
+    """Each label's values on its row: the first identifier to its right
+    within reach, then each one within reach of the one before (Form 540's
+    dependents, "Spouse" or a glyph between). A label whose value prints
+    under it has none on its row; one whose first value the page masked
+    itself shows last fours only, and governs nothing after it (a broker's
+    account number further along). A filer's hyphens say nothing about the
+    next value."""
+    items = sorted(items, key=lambda item: item[0]["top"])
+    tops = [item[0]["top"] for item in items]
+    tallest = max((item[0]["bottom"] - item[0]["top"] for item in items), default=0.0)
+    runs: set[str] = set()
+    for (label, _), below in zip(labels, under):
+        tick()
+        height = label["bottom"] - label["top"]
+        window = items[bisect.bisect_left(tops, label["top"] - tallest):bisect.bisect_left(tops, label["bottom"])]
+        row = sorted((item for item in window if item[0]["bottom"] > label["top"] and item[0]["x0"] >= label["x1"] - 1),
+                     key=lambda item: item[0]["x0"])
+        if below or not row or row[0][2]:
+            continue
+        reach = label
+        for box, raw, _ in row:
+            if box["x0"] - reach["x1"] > (_BESIDE if reach is label else _CHAIN) * height:
+                break
+            if raw is not None:
+                runs.add(raw)
+            reach = box
+    return runs
+
+
+def _strips(words: list[dict]) -> dict[int, list]:
+    """The words indexed by the vertical strips of the page they cross."""
+    index: dict[int, list] = {}
+    for w in words:
+        for strip in range(max(int(w["x0"] // _BIN), 0), min(int(w["x1"] // _BIN), _STRIPS) + 1):
+            index.setdefault(strip, []).append(w)
+    return index
+
+
+def _over(index: dict, box: dict) -> list[dict]:
+    """The indexed words printed above `box` and overlapping its span."""
+    seen: dict[int, dict] = {}
+    for strip in range(max(int(box["x0"] // _BIN), 0), min(int(box["x1"] // _BIN), _STRIPS) + 1):
+        for w in index.get(strip, ()):
+            if w["x1"] > box["x0"] and w["x0"] < box["x1"] and w["bottom"] <= box["top"] + 1:
+                seen[id(w)] = w
+    return list(seen.values())
+
+
+def _by_height(labels: list) -> list:
+    """Labels in classes of height within a factor of two, each sorted by
+    bottom, so one tall label widens only its own class's reach."""
+    classes: dict[int, list] = {}
+    for k, (label, _) in enumerate(labels):
+        height = label["bottom"] - label["top"]
+        classes.setdefault(int(math.log2(max(height, 1.0))), []).append((label["bottom"], k, height))
+    return [(sorted(members), max(h for _, _, h in members)) for members in classes.values()]
+
+
+def _under(labels: list, values: list, under: list, printed: list[dict], tick) -> set[str]:
+    """Runs under a label with no value on its row: just below it, or down
+    its column with nothing printed between but other identifiers, notes on
+    the label, and the entries typed in the column's boxes, which print
+    larger than the form's own labels (Form 2441's providers, one of them
+    "Tax-Exempt"). A label whose own value just under it the page masked
+    itself is a box's label on a statement, and heads no column; a filer's
+    hyphens in the first entry do not end it (Form 2441's qualifying
+    persons)."""
+    free = [k for k, (_, carries) in enumerate(labels) if not carries]
+    heads = {k for k in free if not any(masked for _, _, masked in under[k])}
+    classes = _by_height([labels[k] for k in free])
+    index = _strips(printed)
+    runs = set()
+    for raw, box in values:
+        tick()
+        above = sorted(_over(index, box), key=lambda w: -w["bottom"])
+        for members, tallest in classes:
+            first = bisect.bisect_left(members, (box["top"] - _COLUMN * tallest,))
+            for _, j, height in members[first:bisect.bisect_right(members, (box["top"] + 1, float("inf")))]:
+                tick()
+                k = free[j]
+                label = labels[k][0]
+                if _is_under(box, label, height):
+                    runs.add(raw)
+                    break
+                ceiling = next((w["bottom"] for w in above if w["bottom"] - w["top"] <= height + 1), float("-inf"))
+                if (k in heads and box["top"] > label["bottom"] >= ceiling - 1
+                        and box["top"] - label["bottom"] <= _COLUMN * height
+                        and box["x1"] > label["x0"] - height and box["x0"] < label["x1"] + height):
+                    runs.add(raw)
+                    break
+            if raw in runs:
+                break
+    return runs
+
+
+def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
+    """The text of each identifier-shaped run the page prints in an
+    identifier label's box, whatever order the page's text puts them in.
+    `tick` is the caller's time budget, checked as the page is read."""
+    labels, values, spelled, covered = _page_identifiers(words, tick)
+    if not labels or not values:
+        return set()
+    items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
+    under = _just_under(labels, items, tick)
+    printed = [w for w in words if id(w) not in covered]
+    return _beside(labels, items, under, tick) | _under(labels, values, under, printed, tick)
+
+
+def _mask_table_runs(table: list, runs, tick) -> list:
+    """The runs a page's labels govern, masked in each cell of a table and
+    across each row's cells."""
+    out = []
+    for row in table:
+        tick()
+        if isinstance(row, list):
+            row = mask_row_runs([mask_runs(cell, runs) if isinstance(cell, str) else cell for cell in row], runs)
+        out.append(row)
+    return out
+
+
+def _masked_words(words: list[dict], tick=lambda: None) -> list[dict]:
     """`mask_ssn` over the page's rows, top to bottom, so a label governs the
-    row printed under it whatever order the content stream drew them in. A
-    row the masker changes comes back as ONE word spanning it, holding the
-    masked row: no position inside it can come back without the identifier."""
+    row printed under it whatever order the content stream drew them in, then
+    the runs a label governs by position. A row the masker changes comes back
+    as ONE word spanning it, holding the masked row: no position inside it
+    can come back without the identifier."""
     rows = _word_rows(words)
     texts = [" ".join(word["text"] for word in row) for row in rows]
-    masked = mask_ssn("\n".join(texts)).split("\n")
+    masked = mask_runs(mask_ssn("\n".join(texts)), _governed_runs(words, tick)).split("\n")
     if len(masked) != len(rows):
         raise RuntimeError("masking changed the page's row count")
     out = []
@@ -493,7 +701,7 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
             budget.tick()
             for word in words:
                 budget.charge_cell(word["text"])
-            result[i] = _masked_words(words)
+            result[i] = _masked_words(words, budget.tick)
     budget.tick()
     return result
 
@@ -540,7 +748,8 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                result[i] = [mask_table(table) for table in tables]
+                runs = prepare_runs(_governed_runs(pdf.pages[i].extract_words(), budget.tick))
+                result[i] = [_mask_table_runs(mask_table(table), runs, budget.tick) for table in tables]
     budget.tick()
     return result
 
