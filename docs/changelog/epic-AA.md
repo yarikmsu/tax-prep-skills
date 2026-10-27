@@ -4006,3 +4006,43 @@ The reaches leave headroom over the farthest value on the filled forms: 9.1
 label heights beside, 1.8 aside and 12.3 down a column. Extraction costs
 about 5% more. Identifiers outside these
 reaches went to AA89, and an SSN drawn over its own label to AA88.
+
+## AA89 (part) — an SSN past its label's dot leader (#76)
+
+FTB 3532 line 3 prints the head-of-household qualifying person's "SSN"
+label, a dot leader 42 label heights long, then the value. Schedule 1 line
+19b prints "Recipient's SSN" and dots spaced on a 12-point grid. AA87
+measured a row label's reach from the label's own end, so neither value was
+the label's, and every filled FTB 3532 returned the SSN whole. A dot leader
+printed right after an identifier label now carries the label's row reach to
+the leader's end: one word of dots or ellipses, or dots no more than 2 label
+heights apart. Review found the first version quadratic when one word holds
+many labels ("SSN/SSN/…"). Each row now walks a leader once per start word
+and label box, and the tests pin the gap at Schedule 1's 1.5 heights.
+
+## AA89 (part) — columns past their heading's reach, and wrapped headings (#77)
+
+AA87 masked a column's entries down to 14 label heights below its heading.
+Form 1095-B and 1095-C print a covered individual's SSN every 5 heights for
+13 rows a page, and IT-201 its dependents every 3, so rows from the third
+(dependents 6 and 7) came back whole. Past its heading's reach a column now
+runs from entry to entry: each lined up with the first entry by an edge or
+the centre, within 64 heights of the last (a whole 1095-C page of rows), and
+with no word at all printed across it between. The TY2024 Form 1040 and Form
+1040-NR wrap their dependents' heading onto two rows, and the 1040 draws
+spaces over "number" so that it extracts as "num b e r". A label that starts
+in one row's phrase and ends a lower phrase holding nothing else is now one
+label, and words that abut are one word.
+
+Two review rounds reshaped the column rule:
+- **Round 1:** a 14-height reach from entry to entry broke at two 1095-C
+  rows given a date of birth instead of an SSN. Lining up by edges only
+  missed a hyphenated first entry in 1095-B's centred box.
+- **Round 2:** with no reach at all, a statement's account number or CUSIP
+  column lined up with its TIN far below was masked, under a heading printed
+  larger than the label or beside its own label. A crafted page of many
+  columns also cost 11 times main. The chain now requires an empty column
+  and a reach, and a column out of reach leaves the lookup for good.
+
+Text typed into an empty SSN box ends a column, as on main. A 2,790-PDF sweep
+against main found new masks only on SSNs and stress copies.
