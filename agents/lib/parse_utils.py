@@ -459,10 +459,10 @@ _CHAIN = 20.0    # how far beyond one value on that row the next may start
 _UNDER = 2.5     # how far below its label a boxed value may print
 _ASIDE = 2.0     # how far outside the label's span that value may start
 _COLUMN = 14.0   # how far down its column a heading label governs
-_DOTS = 2.0      # how far apart a leader's dots may print (Forms 1040 and 8812: 1.1 to 1.2)
+_DOTS = 2.0      # how far from its label, and from each other, a leader's dots may print (Forms 1040, 8812: 1.1 to 1.2)
 _BIN = 20.0      # the width of the strips a page's words are indexed in
 _STRIPS = int(14400 // _BIN)   # a PDF page is at most 14,400 points wide
-_LEADER = re.compile(r"[.\u2026]+")
+_LEADER = re.compile(r"[.\u2026]+")   # a word printed as dots alone
 
 
 def _row_text(row: list[dict]) -> tuple[str, list[int]]:
@@ -484,8 +484,8 @@ def _box(words: list[dict]) -> dict:
 
 
 def _leader_end(label: dict, row: list[dict], k: int) -> float:
-    """Where the dot leader printed right after `label`, from `row[k]` on,
-    ends, or the label's own end if none is."""
+    """Where the dot leader starting at `row[k]`, right after `label`, ends;
+    the label's own end if there is none."""
     end = label["x1"]
     while (k < len(row) and _LEADER.fullmatch(row[k]["text"])
            and row[k]["x0"] - end <= _DOTS * (label["bottom"] - label["top"])):
@@ -507,9 +507,15 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
         tick()
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
+        leaders: dict[tuple, float] = {}   # labels in one word ("SSN/ITIN") share its leader
         for low, high, carries in found_labels:
+            tick()
             box = _box(_covered(row, starts, low, high))
-            labels.append((box, carries, _leader_end(box, row, bisect.bisect_left(starts, high))))
+            k = bisect.bisect_left(starts, high)
+            key = (k, box["x1"], box["bottom"] - box["top"])
+            if key not in leaders:
+                leaders[key] = _leader_end(box, row, k)
+            labels.append((box, carries, leaders[key]))
         for low, high in found_values:
             cover = _covered(row, starts, low, high)
             covered.update(id(w) for w in cover)

@@ -1088,7 +1088,7 @@ class TestMaskingByPosition:
         # down the column (a row elsewhere between, so not the next line).
         [(36, 100, 7, "SSN"), (300, 96, 9, ROUTING)],
         [(36, 100, 7, "SSN " + "." * 40), (300, 96, 9, ROUTING)],          # far past a short leader's end
-        [(36, 100, 7, "SSN of"), (70, 100, 7, "." * 120), (330, 96, 9, ROUTING)],   # a leader after other words
+        [(36, 100, 7, "SSN of"), (63, 100, 7, "." * 120), (330, 96, 9, ROUTING)],   # a leader after other words
         [(36, 100, 7, "SSN"), (200, 100, 7, "." * 40), (300, 96, 9, ROUTING)],       # dots far from the label
         [(330, 205, 4.5, "(SSN or EIN)"), (36, 240, 9, "Part II"), (330, 278, 9, ROUTING),
          (400, 700, 7, "Your SSN")],   # a taller label elsewhere widens no other label's reach
@@ -1107,9 +1107,9 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        # 100 rows, 50 labels in each of two passes, 50 runs, and the 240
+        # 100 rows, 50 labels in each of three passes, 50 runs, and the 240
         # label-and-run pairs the column search weighs.
-        assert len(calls) == 490, "every loop checks the budget"
+        assert len(calls) == 540, "every loop checks the budget"
 
         def expired():
             if len(calls) > 500:
