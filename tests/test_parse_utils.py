@@ -987,15 +987,18 @@ class TestMaskingByPosition:
         assert _ssn(" ") in mask_ssn(raw)
         assert _ssn(" ") not in out and MASKED in out
 
-    @pytest.mark.parametrize("leader", [
-        [(47, 549, 9, "SSN " + "." * 150)],                                      # FTB 3532: one word of dots
-        [(47, 549, 9, "SSN")] + [(70 + 12 * k, 549, 9, ".") for k in range(32)],   # spaced, as the IRS prints them
-        [(47, 549, 9, "SSN " + "\u2026" * 40)],                                  # an ellipsis character
+    @pytest.mark.parametrize("items", [
+        # FTB 3532 line 3: the qualifying person's "SSN", one word of dots
+        # far longer than a label's reach, the value on a raised baseline.
+        [(47, 549, 9, "SSN " + "." * 150), (470, 545.8, 10, _ssn(""))],
+        [(47, 549, 9, "SSN " + "\u2026" * 40), (470, 545.8, 10, _ssn(""))],   # an ellipsis character
+        # Schedule 1 line 19b: "Recipient's SSN", then dots every 12 points,
+        # the first 1.5 heights after the label.
+        [(64.8, 194.4, 9, "Recipient's SSN"), *[(144 + 12 * k, 194.4, 9, ".") for k in range(22)],
+         (404.7, 193.6, 9, _ssn(""))],
     ])
-    def test_a_value_past_its_labels_dot_leader(self, tmp_path, leader):
-        """FTB 3532 line 3: the qualifying person's "SSN", a dot leader far
-        longer than a label's reach, then the value on a raised baseline."""
-        raw, out = self._read(tmp_path, [*leader, (470, 545.8, 10, _ssn(""))])
+    def test_a_value_past_its_labels_dot_leader(self, tmp_path, items):
+        raw, out = self._read(tmp_path, items)
         assert _ssn("") in mask_ssn(raw)
         assert _ssn("") not in out and MASKED in out
 
@@ -1099,6 +1102,18 @@ class TestMaskingByPosition:
         raw, out = self._read(tmp_path, items)
         assert _ssn("") not in out
         assert ROUTING in out or " ".join(("94105", "1234")) in out
+
+    def test_a_word_of_many_labels_walks_its_leader_once(self, monkeypatch):
+        """Labels in one word ("SSN/ITIN") share the leader after it: one
+        walk, not one per label, or a crafted word costs labels times dots."""
+        from agents.lib import parse_utils
+        calls, walk = [], parse_utils._leader_end
+        monkeypatch.setattr(parse_utils, "_leader_end", lambda *args: calls.append(1) or walk(*args))
+        word = {"text": "/".join(["SSN"] * 50), "x0": 0.0, "x1": 14.0, "top": 100.0, "bottom": 107.0}
+        dots = [{"text": ".", "x0": 16.0 + 4 * k, "x1": 18.0 + 4 * k, "top": 100.0, "bottom": 107.0} for k in range(200)]
+        labels = parse_utils._page_identifiers([word, *dots], lambda: None)[0]
+        assert len(labels) == 50 and {start for *_, start in labels} == {dots[-1]["x1"]}
+        assert len(calls) == 1
 
     def test_the_pass_checks_the_time_budget_as_it_reads(self):
         """A crafted page is refused when its time runs out, not after."""
