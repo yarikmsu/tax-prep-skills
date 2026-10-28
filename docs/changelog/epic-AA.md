@@ -4103,19 +4103,45 @@ fields above and one preparer number on NY IT-370, and unmasks nothing. Form
 
 ## AA88 — identifiers drawn over their own labels (#81)
 
-The PDF routes now recover identifier labels from the non-digit character
-layer and find digit glyphs whose boxes overlap the labels' letters. The whole
-nine-digit group is replaced with X in a fresh derived page before text, word
-or table extraction. Ambiguous interleaved text keeps no last four; values
-already governed by the existing positional rules retain their usual masked
-last-four spelling. The source character dictionaries, PDF bytes and table
-rules remain intact.
+Every PDF route now reads identifier labels from the page's letters alone and
+reads the digits, with the glyphs printed between them, as words of their own,
+split where pdfplumber splits words. A word that crosses a label's letters
+takes every SSN `identifier_spans` finds in it, as in any page's text, off a
+fresh derived page before text, word or table extraction, so the label reads
+whole again and governs its own box. Any other digits interleaved with a
+label on its line, which pdfplumber garbles into its words already, leave
+with them, and so do the words running on from them past the label when
+together they hold nine digits no SSN accounts for, however spaced: a split
+SSN. Nothing is refused. A value the positional rules already mask is left
+to them and keeps its last four. The source page's characters, the PDF's bytes and its table
+rules are not touched.
 
-A grid of 150 font/offset combinations covers overlays on and around a label's
-baseline. Additional tests protect business identifiers, wage figures, nearby
-routing numbers and table extraction. Review caught nearby numeric runs being
-joined and repeated label words being indexed quadratically. A distinct spacing gap separates a nearby number; an ambiguous overlapping
-run refuses instead of deleting a financial amount. Protection of an already
-governed value is bound to its glyph location, so a normal copy cannot exempt
-an overlapping copy with the same digits. Words are indexed once, and a bounded
-per-page spatial index refuses before exceeding its allocation budget.
+Review, one adversarial reviewer, an automated security review over six
+rounds, and a sweep of 114 official blank forms filled with realistic values
+and shifted 2 to 8 points:
+
+- An overlay spelled "000-00-0000" leaked in 114 of 144 placements: its
+  hyphens stayed with the letters and split the label's words. Any one glyph
+  but a letter, digit or space, printed between an overlay's digits, in their
+  size, on their baseline and not over either, is now the overlay's; seven
+  spellings, dashes and underscores among them, leak in none of 1,008.
+- Any other digits touching a label refused the whole call: a payee copy's
+  truncated TIN, a ZIP, a date, an amount set tight under its label, and
+  official forms shifted 4 points refused on dozens of pages. Digits on a
+  label's line, as pdfplumber chains lines, now leave with the overlay;
+  digits grazing it from the next line print on a line of their own. The
+  shifted forms refuse no page in 2,934; fields shifted 4 points or more onto
+  a label lose the values that land on it, the safe direction, and forms
+  unshifted or shifted sideways lose nothing.
+- Splitting runs at their widest gap read digits where pdfplumber does not,
+  so sub-tolerance gaps between an SSN's groups read as no SSN while the page
+  printed it, and an SSN split wider than a word, or touching its label only
+  through a year after it, printed whole. Words now split at pdfplumber's
+  tolerance, a crossing word takes its SSN, and a label's nine digits with
+  the words running on past it are its SSN.
+- Writing X over the overlay kept the label broken, so its own value printed
+  beside it was never masked. The overlay's glyphs now leave the page.
+- A label's phrase may end "or other TIN", as AA89's captions read it.
+
+An overlay on the lower row of a wrapped heading, and one rotated off the
+row, still print whole, as on main: AA91.
