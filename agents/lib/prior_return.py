@@ -809,6 +809,7 @@ def _ca_payment_lines(words: list, wanted: set[str], page: int, source_digest: s
         return min(distances) / 2 if distances else 1.5 * (label['bottom'] - label['top'])
 
     cents_left = min(c['x0'] for group in marker_bins.values() for c in group)
+    column_cents = [c for group in marker_bins.values() for c in group if c['x0'] > edge]
     last = max(_mid(w, 'top', 'bottom') + 1.5 * (w['bottom'] - w['top']) for w in labels.values())
     for w in words:
         if (w['x0'] > edge + 2 and w['x1'] < cents_left and _mid(w, 'top', 'bottom') < last
@@ -833,6 +834,15 @@ def _ca_payment_lines(words: list, wanted: set[str], page: int, source_digest: s
         if value is not None:
             if value < 0:
                 raise _Unreadable('a payment is negative')
+            # The label band can reach into the next box: an official box sits
+            # above its margin label, so a figure typed high in line 99's box
+            # is nearer 98's label. The printed cents say whose box it is: at
+            # least half the figure's height in its own cents row, and none of
+            # it in another's; a figure between two rows is asked about.
+            if (not all(min(w['bottom'], cents[0]['bottom']) - max(w['top'], cents[0]['top'])
+                        >= (w['bottom'] - w['top']) / 2 for w in cell)
+                    or any(_overlaps(w, c) for w in cell for c in column_cents if c is not cents[0])):
+                raise _Unreadable("a payment figure is not printed in its own line's box")
             out[n] = {'value': value, 'provenance': {'sha256': source_digest, 'page': page,
                                                     'form': '540', 'line': n}}
     return out
@@ -899,7 +909,7 @@ def _identity_page(words: list, page: int, source_digest: str) -> dict:
                 add(owner + '.last_name', surname)
                 if middle:
                     add(owner + '.middle_name', middle)
-                found = ids(top, bottom, social['x0'] - 22, max(w['x1'] for w in visible if abs(w['top'] - head['top']) < 3) + 22)
+                found = ids(top, bottom, social['x0'] - 40, max(w['x1'] for w in visible if abs(w['top'] - head['top']) < 3) + 22)
                 if len(found) == 1:
                     add(owner + '.ssn_last4', found[0])
         except _Unreadable:
@@ -1421,6 +1431,28 @@ def _check_owner_identity(seed: dict, owners: dict, current: dict) -> None:
             raise ImportError("A Form 8606 page prints a different SSN than the person it is assigned to")
 
 
+def _check_page_one_identity(seed: dict, current: dict) -> None:
+    """Form 1040 page 1 prints whose return this is. A primary SSN other than
+    the current primary's is someone else's return; a spouse's other than the
+    current spouse's is a joint return with someone else, whose carryforwards
+    need allocating by hand. No current spouse is a filer no longer married."""
+    proposals = seed.get("identity_proposals", {})
+    for owner in ("primary", "spouse"):
+        printed = proposals.get(f"{owner}.ssn_last4", {}).get("value")
+        if printed is None:
+            continue
+        person = current.get(owner)
+        last4 = person.get("ssn_last4") if isinstance(person, dict) else None
+        digits = re.search(r"(\d{4})$", last4) if isinstance(last4, str) else None
+        if not digits:
+            if owner == "primary":
+                raise ImportError("Form 1040 page 1 prints the filer's SSN; record the current primary's "
+                                  "ssn_last4 to confirm whose return this is")
+            continue
+        if printed != f"XXX-XX-{digits[1]}":
+            raise ImportError(f"Form 1040 page 1 prints a different SSN than the current {owner}'s")
+
+
 def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     """Confirm exact figures, ownership and unanswered questions; log only ids."""
     from agents.lib.workspace import resolve_under_workspace
@@ -1464,7 +1496,9 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
         if reported != allowable:
             raise ImportError("Schedule D line 21 does not match its allowable loss for the confirmed filing status")
     _check_ira_owners(seed, decisions["ira_owners"], decisions["filing_status"])
-    _check_owner_identity(seed, decisions["ira_owners"], _read(workspace / "taxpayer_profile.json"))
+    current = _read(workspace / "taxpayer_profile.json")
+    _check_owner_identity(seed, decisions["ira_owners"], current)
+    _check_page_one_identity(seed, current)
     verify_source(workspace, result)
     profile["filing_status"] = decisions["filing_status"]
     seed["review"] = {"seed_sha256": digest(seed), "profile_sha256": digest(profile),

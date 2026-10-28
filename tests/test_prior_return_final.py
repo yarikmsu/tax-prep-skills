@@ -11,6 +11,7 @@ import pytest
 from agents.lib import prior_return as P
 from agents.lib.rollover import CurrentState, compute_diff, load_prior
 from tests.test_prior_return import workspace as workspace
+from tests.test_prior_return import write_json
 
 FIXTURES = Path(__file__).parent / 'fixtures/prior_return'
 FINAL = json.loads((FIXTURES / 'final_readers_2025.json').read_text(encoding='utf-8'))
@@ -33,7 +34,9 @@ def seed(edit=None):
     return P.extract_seed(pages, 2025, 'a' * 64, words)
 
 
-def pending(workspace, monkeypatch):
+def pending(workspace, monkeypatch, current=None):
+    write_json(workspace / 'taxpayer_profile.json', current or {
+        'tax_year': 2026, 'filing_status': 'MFJ', 'primary': {'ssn_last4': '6789'}, 'spouse': {'ssn_last4': 'XXX-XX-1111'}})
     pages, words = document()
     monkeypatch.setattr(P, 'extract_pdf_text', lambda *a, **kw: pages)
     monkeypatch.setattr(P, 'extract_pdf_words', lambda *a, **kw: words)
@@ -99,7 +102,7 @@ def test_page_one_proposals_have_masked_identifiers_and_no_eligibility_guesses()
     values = {k: r['value'] for k, r in parsed['identity_proposals'].items()}
     assert values['primary.first_name'] == 'JOHN' and values['primary.middle_name'] == 'A'
     assert values['spouse.last_name'] == 'EXAMPLE'
-    assert values['primary.ssn_last4'] == 'XXX-XX-6789'
+    assert values['primary.ssn_last4'] == 'XXX-XX-6789' and values['spouse.ssn_last4'] == 'XXX-XX-1111'
     assert values['address'] == {'street': '100 SAMPLE ST Apt 12', 'city': 'TESTVILLE', 'state': 'CA', 'zip': '90000'}
     assert len(values['dependents']) == 2
     assert [p['ssn_last4'] for p in values['dependents']] == ['XXX-XX-2222', 'XXX-XX-3333']
@@ -241,3 +244,72 @@ def test_stale_position_metadata_cannot_truncate_a_malformed_masked_token():
         for w in words[0]:
             w['text'] = w['text'].replace('XXX-XX-6789', 'XXX-XX-67895')
     assert 'primary.ssn_last4' not in seed(edit)['identity_proposals']
+
+
+@pytest.mark.parametrize('raised', [6.5, 10, 12])
+def test_a_refund_typed_high_in_its_box_is_never_read_as_applied(raised):
+    """Line 98 blank, the whole overpayment refunded on line 99 and typed high
+    in its box, nearer 98's margin label than its own: read by the label it
+    would become next year's estimated payments, which 97 = 98 + 99 cannot
+    catch. Its own printed cents place it; read nowhere else, it is asked."""
+    def edit(pages, words):
+        words[10] = [w for w in words[10] if w['text'] != '200']
+        for w in words[10]:
+            if w['text'] == '500':
+                w.update(text='700', top=w['top'] - raised, bottom=w['bottom'] - raised)
+        pages[10] = re.sub(r'\b200\b', '', re.sub(r'\b500\b', '700', pages[10]))
+    parsed = seed(edit)
+    assert parsed['fields'].get('ca_estimated_payments_applied', {}).get('value') != 700
+    assert 'ca_estimated_payments_applied' in parsed['unresolved']
+
+
+@pytest.mark.parametrize('change', ['negative', 'two_cents', 'crossing'])
+def test_a_payment_box_guard_leaves_the_line_a_question(change):
+    def edit(pages, words):
+        page = words[10]
+        figure = next(w for w in page if w['text'] == '200')
+        if change == 'negative':
+            figure['text'] = '-200'
+            pages[10] = re.sub(r'\b200\b', '-200', pages[10])
+        elif change == 'two_cents':
+            cents = min((w for w in page if w['text'] in {'.00', '00'} and w['x0'] > figure['x1']),
+                        key=lambda w: abs(w['top'] - figure['top']))
+            page.append({**cents, 'x0': cents['x0'] + 6, 'x1': cents['x1'] + 6})
+        else:
+            cents = min((w for w in page if w['text'] in {'.00', '00'} and w['x0'] > figure['x1']),
+                        key=lambda w: abs(w['top'] - figure['top']))
+            figure['x1'] = cents['x1'] + 2
+    parsed = seed(edit)
+    assert 'ca_estimated_payments_applied' not in parsed['fields']
+    assert 'ca_estimated_payments_applied' in parsed['unresolved']
+
+
+def test_the_import_reads_page_one_in_identity_layout(workspace, monkeypatch):
+    """Without it, page 1's masked rows hide every name and identifier, and
+    the proposals vanish while every other figure still reads."""
+    calls = []
+    pages, words = document()
+    monkeypatch.setattr(P, 'extract_pdf_text', lambda *a, **kw: pages)
+    monkeypatch.setattr(P, 'extract_pdf_words', lambda *a, **kw: calls.append(kw) or words)
+    P.import_pdf(workspace, 'documents/prior_return/synthetic.pdf', 2026)
+    assert calls and all(kw.get('identity_layout') is True for kw in calls)
+
+
+@pytest.mark.parametrize('current, message', [
+    ({'primary': {'ssn_last4': '0001'}, 'spouse': {'ssn_last4': '1111'}}, "different SSN than the current primary"),
+    ({'spouse': {'ssn_last4': '1111'}}, "record the current primary"),
+    ({'primary': {'ssn_last4': '6789'}, 'spouse': {'ssn_last4': '0002'}}, "different SSN than the current spouse"),
+])
+def test_page_one_says_whose_return_is_confirmed(workspace, monkeypatch, current, message):
+    """Another filer's return, or a joint return with another spouse, is
+    refused before its carryforwards reach this year's profile."""
+    archive, decisions = pending(workspace, monkeypatch, {'tax_year': 2026, 'filing_status': 'MFJ', **current})
+    with pytest.raises(P.ImportError, match=message):
+        P.confirm_import(workspace, 2025, decisions)
+
+
+def test_a_filer_no_longer_married_confirms_last_years_joint_return(workspace, monkeypatch):
+    archive, decisions = pending(workspace, monkeypatch, {'tax_year': 2026, 'filing_status': 'Single',
+                                                          'primary': {'ssn_last4': '6789'}})
+    P.confirm_import(workspace, 2025, decisions)
+    assert json.loads((archive / 'result.json').read_text(encoding='utf-8'))['meta']['imported_review'] == 'confirmed'

@@ -4147,7 +4147,7 @@ An overlay on the lower row of a wrapped heading, and one rotated off the
 row, still print whole, as on main: AA91.
 
 
-## AA44 — final payment and page-1 readers
+## AA44 — final payment and page-1 readers (#82)
 
 Form 540's detached line 98-99 values now belong to their printed right-margin
 box and cents column and reconcile with line 97. Missing labels, unassigned
@@ -4168,3 +4168,25 @@ interview, preserving this year's identity and eligibility inputs. Birth dates,
 residency, credit eligibility and continuation dependents are not guessed.
 The official-form fixture is filled and flattened with constructed identities;
 the first real software PDF still needs its report checked table by table.
+
+Review, an adversarial reviewer on the official TY2025 forms filled and
+flattened:
+
+- A line 99 refund typed 6.5 points or more high in its box was read as line
+  98, applied to next year's estimated tax: an official box sits above its
+  margin label, so the label band reached into it, and with line 98 blank
+  97 = 98 + 99 still held. A figure now needs half its height in its own
+  line's printed cents row and none in another's; one typed between two rows
+  is asked about. Shifted 0 to 12 points, no layout reads a refund as applied.
+- Page 1 says whose return it is, and nothing compared it with the current
+  profile: another filer's return confirmed and rolled its carryforwards into
+  this year. A primary SSN other than the current primary's now refuses, as
+  does one the profile has not recorded, and a spouse's other than a recorded
+  current spouse's; a filer no longer married confirms last year's joint
+  return.
+- The spouse's identifier box starts further left of "social" than the
+  primary's, so the spouse's last four was never proposed. It is.
+- The import's identity layout, a negative payment and the confirmation of
+  whose return it is now have cases that fail without them. Mutating the
+  repeated-cents or box-crossing guards alone fails nothing: the own-box rule
+  refuses those layouts too.
