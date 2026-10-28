@@ -222,6 +222,16 @@ Trigger and range behavior is documented in
   identification number"), and NY IT-213's six child "SSN or ITIN" boxes,
   not yet diagnosed. Neither is a document a California filer parses.
 
+- **AA91 (P3, M): Mask the overlays AA88's labels do not reach.**
+  #81 masks an SSN drawn over an identifier label's letters on one row. Two
+  overlays still print whole, as on main: one on the lower row of a wrapped
+  heading ("(2) Social security" over "number"), which `_wrapped_labels`
+  reads but `_overlaid_digits` does not, and one rotated off the row, whose
+  digits each start a row of their own. A fallback would hide any nine digits
+  drawn over any letters on their own line, label or not, but it indexes
+  every page's letters and must not reach a tightly set statement's CUSIPs
+  or account numbers on the next line; measure both before choosing it.
+
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 

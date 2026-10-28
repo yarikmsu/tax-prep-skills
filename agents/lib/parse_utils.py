@@ -68,6 +68,7 @@ MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024      # 1 GB of XML behind a workbook
 MAX_COMPRESSION_RATIO = 200                       # 100 KB expanding to 20 MB
 MAX_EXTRACTED_CHARS = 20 * 1024 * 1024            # 20 MB of returned text
 MAX_PAGES = 2000                                  # pages in one PDF
+MAX_OVERLAY_INDEX_ENTRIES = 100_000              # per-page spatial-index memory budget
 PARSE_TIME_BUDGET_SECONDS = 300                   # wall clock inside one call
 
 
@@ -378,6 +379,198 @@ def _validate_file_path(
     return p
 
 
+_WORD_GAP = 3   # pdfplumber's default x_tolerance: glyphs further apart than this begin a new word
+
+
+def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
+    """The ids of the glyphs an identifier spelled "000-00-0000" prints
+    between its own digits: any one glyph but a letter, digit or space, in
+    the digits' size, on their baseline, between them rather than over
+    either, and no further from either than half that size or its own width.
+    Left with the letters, an overlay's hyphens, dashes or slashes split its
+    label's words. A space stays there, since a label's own spaces share an
+    overlay's baseline whenever it is drawn in the label's size; so does a
+    label's own slash or apostrophe, which lands on an overlay's digit
+    rather than between two."""
+    lines: dict[tuple, list[dict]] = {}
+    for digit in sorted(digits, key=lambda d: d["x0"]):
+        lines.setdefault((round(digit["size"], 1), round(digit["bottom"], 1)), []).append(digit)
+    starts = {key: [d["x0"] for d in line] for key, line in lines.items()}
+    out = set()
+    for char in chars:
+        if len(char["text"]) != 1 or char["text"].isalnum() or char["text"].isspace():
+            continue
+        tick()
+        key = (round(char["size"], 1), round(char["bottom"], 1))
+        line = lines.get(key, [])
+        k = bisect.bisect_left(starts.get(key, []), char["x0"])
+        reach = max(char["x1"] - char["x0"], char["size"] / 2)
+        if (0 < k < len(line) and -0.5 <= char["x0"] - line[k - 1]["x1"] <= reach
+                and -0.5 <= line[k]["x0"] - char["x1"] <= reach):
+            out.add(id(char))
+    return out
+
+
+def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]:
+    """The ids of the digits, and the delimiters between them, of an SSN
+    drawn over its label's letters, which pdfplumber interleaves into words
+    no label pattern reads ("Y0ou0r so0cial"). Labels are read from the
+    letters alone; the digits and delimiters are read as words of their own,
+    split where pdfplumber splits them, and an SSN is what `identifier_spans`
+    finds there, as in any page's text. A word whose glyphs cross a label's
+    letters takes every SSN it holds, whole: its end can hang outside the
+    label. Any other digits interleaved with a label on its line go too, so
+    that it reads whole again: pdfplumber garbles them into its words
+    already. So do the words running on from them past it, when together
+    they hold nine digits no SSN accounts for, however spaced: the label's
+    SSN. Digits that only graze a label from the next line print apart from
+    it, read as any page's text is. A word in `protected` (its rounded box)
+    is one the positional rules already mask, keeping its last four. The
+    source page's characters are never modified."""
+    from pdfplumber.utils import extract_words
+
+    digits = [c for c in chars if c["text"] in "0123456789" and len(c["text"]) == 1]
+    if not digits:
+        return set()
+    delimiters = _spelled_with(digits, chars, tick)
+    letters = [c for c in chars if not any(d in "0123456789" for d in c["text"]) and id(c) not in delimiters]
+    index: dict[tuple[int, int], list[tuple[dict, int]]] = {}   # each label letter, with its label's number
+    indexed: set[int] = set()
+    indexed_words: set[int] = set()
+    entries = label = 0
+    for row in _word_rows(extract_words(letters, return_chars=True)):
+        tick()
+        text, starts = _row_text(row)
+        phrase_of: dict[int, tuple[list[dict], int]] = {}   # a word's phrase and where it ends in the row's text
+        read = 0
+        for phrase in _phrases(row):
+            read += len(phrase)
+            phrase_of.update((id(w), (phrase, starts[read - 1] + len(row[read - 1]["text"]))) for w in phrase)
+        for low, high, _ in identifier_spans(text)[0]:
+            tick()
+            label += 1
+            cover = _covered(row, starts, low, high)
+            phrase, phrase_end = phrase_of[id(cover[0])]
+            if _LABEL_TAIL.fullmatch(text, high, phrase_end):
+                cover = phrase
+            for word in cover:
+                if id(word) in indexed_words:
+                    continue
+                indexed_words.add(id(word))
+                for char in word["chars"]:
+                    tick()
+                    if id(char) in indexed or not char["text"].isalpha():
+                        continue
+                    indexed.add(id(char))
+                    for x in _strip_span(char["x0"], char["x1"]):
+                        for y in _strip_span(char["top"], char["bottom"]):
+                            tick()
+                            entries += 1
+                            if entries > MAX_OVERLAY_INDEX_ENTRIES:
+                                raise ParseBudgetError("Identifier overlap index exceeds its per-page budget; split or repair the PDF.")
+                            index.setdefault((x, y), []).append((char, label))
+    if not index:
+        return set()
+    lines = {id(c): n for n, line in enumerate(_word_rows(chars)) for c in line}
+    hidden: set[int] = set()
+    for row in _word_rows(digits + [c for c in chars if id(c) in delimiters]):
+        tick()
+        groups: list[list[dict]] = []   # the row's glyphs in pdfplumber's words
+        for glyph in row:
+            tick()
+            if groups and glyph["x0"] - groups[-1][-1]["x1"] <= _WORD_GAP:
+                groups[-1].append(glyph)
+            else:
+                groups.append([glyph])
+        spelled: list[str] = []   # the words' text, delimiters as "-"
+        owners: list[dict | None] = []   # the glyph behind each character
+        for group in groups:
+            if owners:
+                spelled.append(" ")
+                owners.append(None)
+            spelled += [glyph["text"] if glyph["text"].isdigit() else "-" for glyph in group]
+            owners += group
+        text = "".join(spelled)
+        _, values, delimited, _ = identifier_spans(text)
+        ssns = [[glyph for glyph in owners[low:high] if glyph is not None]
+                for low, high in values + [(low, high) for low, high, _ in delimited if text[low + 3:low + 4] == "-"]]
+        accounted = {id(glyph): n for n, run in enumerate(ssns) for glyph in run}   # each glyph's SSN
+        unread: dict[int, list[int]] = {}   # the words interleaved with each label's letters, by position
+        for at, group in enumerate(groups):
+            tick()
+            numerals = [glyph for glyph in group if glyph["text"].isdigit()]
+            bounds = _box(numerals or group)
+            crossed = _labels_crossed(group, index, lines, tick)
+            if not crossed or tuple(round(bounds[k], 3) for k in ("x0", "x1", "top", "bottom")) in protected:
+                continue
+            for n in {accounted[id(glyph)] for glyph in group if id(glyph) in accounted}:
+                hidden.update(id(glyph) for glyph in ssns[n])   # every SSN the word holds, whole
+            for label in (label for label, interleaved in crossed.items() if interleaved):
+                unread.setdefault(label, []).append(at)
+        for crossing in unread.values():
+            tick()
+            low, high = min(crossing), max(crossing)   # and the words run on from them, off the label too
+            while low and _run_on(groups[low - 1], groups[low]):
+                low -= 1
+            while high + 1 < len(groups) and _run_on(groups[high], groups[high + 1]):
+                high += 1
+            numerals = [glyph for group in groups[low:high + 1] for glyph in group
+                         if glyph["text"].isdigit() and id(glyph) not in accounted]
+            if len(numerals) == 9:   # one label's nine digits, however spaced: its SSN
+                crossing = list(range(low, high + 1))
+            hidden.update(id(glyph) for at in crossing for glyph in groups[at])
+    return hidden
+
+
+def _run_on(left: list[dict], right: list[dict]) -> bool:
+    """Whether the right word runs on from the left: no further apart than
+    twice its glyphs are tall, as a misplaced SSN's groups print."""
+    return right[0]["x0"] - left[-1]["x1"] <= 2 * (right[0]["bottom"] - right[0]["top"])
+
+
+def _labels_crossed(glyphs: list[dict], index: dict, lines: dict[int, int], tick) -> dict[int, bool]:
+    """The numbers of the indexed labels whose letters the glyphs' boxes
+    cross, each with whether a crossing glyph shares that letter's line in
+    `lines` (the page's characters clustered as pdfplumber clusters them),
+    where pdfplumber interleaves the two into one word."""
+    out: dict[int, bool] = {}
+    for glyph in glyphs:
+        tick()
+        for x in _strip_span(glyph["x0"], glyph["x1"]):
+            for y in _strip_span(glyph["top"], glyph["bottom"]):
+                tick()
+                for char, label in index.get((x, y), ()):
+                    if (glyph["x0"] < char["x1"] and glyph["x1"] > char["x0"]
+                            and glyph["top"] < char["bottom"] and glyph["bottom"] > char["top"]):
+                        out[label] = out.get(label, False) or lines[id(glyph)] == lines[id(char)]
+    return out
+
+
+def _safe_pdf_page(page, tick):
+    """A fresh derived page without the digits of an identifier drawn over
+    its label, nor the delimiters between them, so the label reads whole
+    again and governs its own box. FilteredPage owns its objects mapping;
+    the source page and every non-character object (table rules) stay intact.
+    """
+    tick()
+    hidden = _overlaid_digits(page.chars, tick)
+    if not hidden:
+        return page
+    words = page.extract_words()
+    governed = prepare_runs(_governed_runs(words, tick)).spelling
+    protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
+                 for raw, box in _page_identifiers(words, tick)[1]
+                 if "".join(re.findall(r"[0-9]", raw)) in governed}
+    if protected:
+        hidden = _overlaid_digits(page.chars, tick, protected=protected)
+    if not hidden:
+        return page
+    safe = page.filter(lambda obj: True)
+    safe.objects["char"] = [c for c in page.chars if id(c) not in hidden]
+    tick()
+    return safe
+
+
 def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, str]:
     """Extract text from PDF, page by page.
 
@@ -416,10 +609,11 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            text = pdf.pages[i].extract_text() or ""
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            text = page.extract_text() or ""
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
-            runs = _governed_runs(pdf.pages[i].extract_words(), budget.tick)
+            runs = _governed_runs(page.extract_words(), budget.tick)
             result[i] = mask_runs(mask_ssn(text), runs)
     budget.tick()
     return result
@@ -976,7 +1170,8 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            words = pdf.pages[i].extract_words()
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            words = page.extract_words()
             budget.tick()
             for word in words:
                 budget.charge_cell(word["text"])
@@ -1020,14 +1215,15 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            tables = pdf.pages[i].extract_tables() or []
+            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            tables = page.extract_tables() or []
             # AFTER the extraction, and outside the `if`: a page that yields no
             # table is the one that charges nothing, and the last such page had
             # no check left after it at all.
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                runs = prepare_runs(_governed_runs(pdf.pages[i].extract_words(), budget.tick))
+                runs = prepare_runs(_governed_runs(page.extract_words(), budget.tick))
                 result[i] = [_mask_table_runs(mask_table(table), runs, budget.tick) for table in tables]
     budget.tick()
     return result
