@@ -1119,7 +1119,36 @@ def _mask_table_runs(table: list, runs, tick) -> list:
     return out
 
 
-def _masked_words(words: list[dict], tick=lambda: None) -> list[dict]:
+def _identity_identifiers(row: list[dict], safe: str) -> list[dict]:
+    """Positions of identifiers already masked in this row; never raw digits."""
+    text = ' '.join(w['text'] for w in row)
+    starts, offset = [], 0
+    for word in row:
+        starts.append(offset)
+        offset += len(word['text']) + 1
+    _, values, spelled, _ = identifier_spans(text)
+    allowed = set(re.findall(r'(?<![A-Za-z0-9])XXX-XX-[0-9]{4}(?![A-Za-z0-9])', safe))
+    out = {}
+    for low, high in values + [(a, b) for a, b, _ in spelled]:
+        positions = [low + m.start() for m in re.finditer(r'[0-9]', text[low:high])]
+        if len(positions) == 4 and text[low:high] in allowed:
+            chunks = [(low, high, text[low:high])]
+        elif positions and len(positions) % 9 == 0:
+            chunks = [(positions[i], positions[i + 8] + 1,
+                       'XXX-XX-' + ''.join(text[j] for j in positions[i + 5:i + 9]))
+                      for i in range(0, len(positions), 9)]
+        else:
+            continue
+        for left, right, masked in chunks:
+            if masked not in allowed:
+                continue
+            bounds = _box(_covered(row, starts, left, right))
+            key = (masked, *(round(float(bounds[k]), 1) for k in ('x0', 'x1', 'top', 'bottom')))
+            out[key] = dict(zip(('text', 'x0', 'x1', 'top', 'bottom'), key))
+    return list(out.values())
+
+
+def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool = False) -> list[dict]:
     """`mask_ssn` over the page's rows, top to bottom, so a label governs the
     row printed under it whatever order the content stream drew them in, then
     the runs a label governs by position. A row the masker changes comes back
@@ -1136,20 +1165,32 @@ def _masked_words(words: list[dict], tick=lambda: None) -> list[dict]:
             out += [{"text": w["text"], **{k: round(float(w[k]), 1) for k in ("x0", "x1", "top", "bottom")}}
                     for w in row]
         else:
-            out.append({"text": safe, "x0": round(float(min(w["x0"] for w in row)), 1),
-                        "x1": round(float(max(w["x1"] for w in row)), 1),
-                        "top": round(float(min(w["top"] for w in row)), 1),
-                        "bottom": round(float(max(w["bottom"] for w in row)), 1)})
+            box = {"text": safe, "x0": round(float(min(w["x0"] for w in row)), 1),
+                   "x1": round(float(max(w["x1"] for w in row)), 1),
+                   "top": round(float(min(w["top"] for w in row)), 1),
+                   "bottom": round(float(max(w["bottom"] for w in row)), 1)}
+            if identity_layout:
+                # A consumer may locate names, but gets no original numeric
+                # token from a changed row. Masked identifiers remain together
+                # in the aggregate row; no component can reconstruct a full ID.
+                box["masked_row"] = True
+                box["identity_identifiers"] = _identity_identifiers(row, safe)
+                out += [{"text": w["text"], **{k: round(float(w[k]), 1) for k in ("x0", "x1", "top", "bottom")}}
+                        for w in row if not any(c.isdigit() for c in w["text"])]
+            out.append(box)
     return out
 
 
-def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, list[dict]]:
+def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str | None = None, *,
+                      identity_layout: bool = False) -> dict[int, list[dict]]:
     """Extract each page's words with their positions, for a reader that finds
     a value by where the form prints it: the row of a line number and the
     column under a heading, which text order does not record.
 
     Returns a dict mapping page number (0-indexed) to words, each
     `{"text", "x0", "x1", "top", "bottom"}` in points from the page's top left.
+    With `identity_layout=True`, changed rows also carry safe nonnumeric word
+    positions and masked identifier boxes; original numeric tokens stay hidden.
     Raises as `extract_pdf_text` does.
     """
     _require_locked_parsers()
@@ -1175,7 +1216,12 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
             budget.tick()
             for word in words:
                 budget.charge_cell(word["text"])
-            result[i] = _masked_words(words, budget.tick)
+            result[i] = _masked_words(words, budget.tick, identity_layout=identity_layout)
+            if identity_layout:
+                for word in result[i]:
+                    budget.charge_cell(word["text"])
+                    for identifier in word.get("identity_identifiers", []):
+                        budget.charge_cell(identifier["text"])
     budget.tick()
     return result
 

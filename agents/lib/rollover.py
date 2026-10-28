@@ -1090,11 +1090,12 @@ def compute_diff(
 ) -> dict[str, list[Change]]:
     out: dict[str, list[Change]] = {}
     if prior.result.get("meta", {}).get("source") == "imported_prior_return" or "prior_return_import" in prior.result:
-        from agents.lib.prior_return import ImportError, imported_changes, validate_reviewed
+        from agents.lib.prior_return import ImportError, imported_changes, imported_identity_changes, validate_reviewed
         try:
             validate_reviewed(prior.result, prior.profile)
             if "carryforwards" in categories:
                 out["carryforwards"] = imported_changes(prior, current)
+            out.update({cat: changes for cat, changes in imported_identity_changes(prior, current).items() if cat in categories})
         except (ImportError, ValueError, TypeError, KeyError) as exc:
             raise RolloverError("Imported prior return must be reviewed and consistent before rollover") from exc
         # Imported identity/dependents are re-interviewed at setup: a masked
@@ -1327,6 +1328,10 @@ def _main(argv: list[str]) -> int:
     if args.cmd == "diff":
         if args.json:
             payload = {cat: [_change_to_dict(c) for c in changes] for cat, changes in diff.items()}
+            for cat in ("identity", "dependents"):
+                for record in payload.get(cat, []):
+                    if record["json_path"].startswith("prior_year.imported_"):
+                        record["prior_value"] = record["current_value"] = "Inspect the owner-only prior-return workpaper"
             print(json.dumps(payload, indent=2, default=str))
         else:
             for cat, changes in diff.items():
@@ -1340,6 +1345,9 @@ def _main(argv: list[str]) -> int:
                     # masked already (ssn_last4 holds XXX-XX-1234, which
                     # §1 requires and which redact() leaves alone). The
                     # json_path is a path and is redacted.
+                    if cat in {"identity", "dependents"} and c.json_path.startswith("prior_year.imported_"):
+                        print(f"  [{c.action_suggested}] {redact(c.json_path)}: inspect the owner-only prior-return workpaper")
+                        continue
                     print(f"  [{c.action_suggested}] {redact(c.json_path)}: "
                           f"{c.prior_value!r} (currently {c.current_value!r})"
                           f" — {c.reason}")
