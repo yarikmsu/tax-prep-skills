@@ -4048,7 +4048,7 @@ Text typed into an empty SSN box ends a column, as on main. A 2,790-PDF sweep
 against main found new masks only on SSNs and stress copies.
 
 
-## AA89 (part 3) — captions, signature lines and instruction paragraphs
+## AA89 (part 3) — captions, signature lines and instruction paragraphs (#80)
 
 The remaining layouts now mask by geometry: Form 1095-A Part II starts a
 column at its lettered caption, Form 8332 reads a signature-line identifier
@@ -4074,3 +4074,28 @@ words and field rectangles, with source URLs and zero-based page numbers;
 eleven constructed values occupy the five covered-individual fields, three
 custodial-parent fields and three child fields. All are governed, and none of
 the forms' printed numbers is. Text, words and tables use the shared rule.
+
+Review typed nine digits into every text field of 112 official blank IRS, FTB
+and NY forms, all at once, one at a time, and flattened through
+`extract_pdf_text`, against main:
+
+- Forms 1095-B and 1095-C head the column "(b) SSN or other TIN", so the
+  caption never ended its phrase and a first SSN under three rows of dates of
+  birth was still missed. "or other TIN" may now end a label's phrase.
+- Schedule EIC asks for "Died" in the box of a child born and died without an
+  SSN; the paragraph's reach stopped there, and the next children's SSNs
+  printed whole. A placeholder is now a step the row's reach takes.
+- Form 8332's signature-line field is 12 points tall: a value typed small at
+  its top ends 1.1 label heights above the label. The reach above is 1.5.
+- Three cases said to keep a routing number placed it past every reach, and
+  eight new budget checks went unread. Each rule, guard and check now has a
+  case that fails without it, on official text where the form exists.
+
+Kept fail-closed: a nine-digit run just above an SSN label whose own box is
+blank is masked, as a ZIP+4 over a 1099's empty TIN or a FEIN typed without
+its hyphen over FTB 593's empty individual row. Skipping a run with a heading
+of its own fixed both, but would leave an SSN under any printed word unmasked
+on a layout nobody checked; `secure_fs` already calls an unhyphenated EIN
+masked the safe direction. With every field filled, the sweep masks the eleven
+fields above and one preparer number on NY IT-370, and unmasks nothing. Form
+4506-C and NY IT-213 still leak, as on main: AA90.

@@ -1059,7 +1059,7 @@ class TestMaskingByPosition:
         # A filled next question still terminates the preceding paragraph.
         [(47, 100, 7, "2 SSN"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue"),
          (57, 132, 7, "3 SSN"), (200, 130, 9, _ssn("")), (57, 142, 7, "Other"),
-         (57, 152, 7, "field"), (160, 152, 9, ROUTING)],
+         (57, 152, 7, "field"), (130, 152, 9, ROUTING)],
         # A late first entry cannot cross a larger account/section heading.
         [(238, 100, 7, "(b) SSN"), (218, 300, 9, "Account number"), (218, 312, 9, ROUTING)],
         # A mid-sentence mention of SSN labels no signature line above it.
@@ -1070,12 +1070,39 @@ class TestMaskingByPosition:
         [(250, 100, 7, "Preparer's PTIN or SSN"), (250, 140, 9, ROUTING), (36, 125, 7, "Firm name")],
         # Not lone: a raised-baseline number already sits beside the label.
         [(300, 100, 9, ROUTING), (300, 115, 7, "Custodial parent's SSN"), (450, 111, 9, _ssn(""))],
+        # Not lone: the label's own value prints just under it.
+        [(300, 100, 9, ROUTING), (300, 115, 7, "SSN"), (300, 124, 9, _ssn(""))],
+        # A paragraph's lines are flush: an indented note ends it.
+        [(47, 100, 7, "2 Child's SSN"), (57, 112, 7, "Instructions"), (63, 122, 7, "indented note"),
+         (130, 122, 9, ROUTING)],
+        # A paragraph starts at or just right of its question, not left of it.
+        [(47, 100, 7, "2 Child's SSN"), (30, 112, 7, "Next item"), (30, 122, 7, "continues here"),
+         (130, 122, 9, ROUTING)],
+        # A paragraph ends at a gap wider than its question is tall,
+        [(47, 100, 7, "2 Child's SSN"), (57, 112, 7, "Instructions"), (57, 134, 7, "after a gap"),
+         (130, 134, 9, ROUTING)],
+        # at a line indented further than a question's two heights,
+        [(47, 100, 7, "2 Child's SSN"), (67, 112, 7, "Deep"), (67, 122, 7, "indent"), (130, 122, 9, ROUTING)],
+        # and at a line that holds a number of its own.
+        [(47, 100, 7, "2 Child's SSN"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue"),
+         (57, 132, 7, f"Box {_SECOND}"), (57, 142, 7, "more text"), (130, 142, 9, ROUTING)],
+        # Only a row's first phrase is a numbered question,
+        [(36, 100, 7, "Name"), (200, 100, 7, "2 Child's SSN"), (210, 112, 7, "Instructions"),
+         (210, 122, 7, "continue"), (280, 122, 9, ROUTING)],
+        # and only when the label ends it.
+        [(47, 100, 7, "2 SSN of the child"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue"),
+         (130, 122, 9, ROUTING)],
+        # A caption ends its phrase: 1095-C's "(c) DOB (if SSN or other" heads no column,
+        [(296, 100, 7, "(c) DOB (if SSN or other"), (500, 180, 7, "filler"), (296, 260, 9, ROUTING)],
+        # and starts at most 12 label heights left of the label.
+        [(36, 100, 7, "(b) Name of the covered individual and SSN"), (300, 112, 7, "filler"),
+         (36, 122, 9, ROUTING)],
         # A prose sentence ending in SSN must not open a paragraph.
         [(47, 100, 7, "Please enter an SSN"), (57, 112, 7, "Instructions"), (57, 122, 7, "continue here"),
-         (57, 132, 7, "on this line"), (300, 132, 9, ROUTING)],
+         (57, 132, 7, "on this line"), (130, 132, 9, ROUTING)],
         # The label already has a value, so relationship fields are not SSNs.
         [(47, 100, 7, "2 Child's SSN"), (200, 98, 9, _ssn("")),
-         (57, 112, 7, "Relationship"), (57, 122, 7, "to taxpayer"), (300, 122, 9, ROUTING)],
+         (57, 112, 7, "Relationship"), (57, 122, 7, "to taxpayer"), (130, 122, 9, ROUTING)],
     ])
     def test_new_reaches_preserve_numbers_outside_the_labels_box(self, tmp_path, items):
         _, out = self._read(tmp_path, items)
@@ -1371,9 +1398,12 @@ class TestMaskingByPosition:
                       {"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": 20.0 * box + 9, "bottom": 20.0 * box + 16}]
         calls = []
         assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
-        # The original passes make 738 visits. Additional geometry passes
-        # must retain those checks and refuse while reading a crafted page.
-        assert len(calls) >= 738, "every loop checks the budget"
+        # 100 rows, 50 labels in each of four passes, the 100 phrases the
+        # labels' pass reads, the 99 pairs of rows and 99 phrases the
+        # wrapped-heading pass reads, the 100 rows and 100 phrases searched
+        # for an empty box's placeholder, 50 runs, and the 240 label-and-run
+        # pairs the column search weighs.
+        assert len(calls) == 1088, "every loop checks the budget"
 
         def expired():
             if len(calls) > 500:
@@ -1381,6 +1411,27 @@ class TestMaskingByPosition:
             calls.append(1)
         with pytest.raises(TimeoutError):
             _governed_runs(words, expired)
+
+    def test_the_signature_and_paragraph_passes_check_the_budget(self):
+        """Signature lines over numbered questions, each with an instruction
+        line, reach the passes the page above never does."""
+        from agents.lib.parse_utils import _governed_runs
+        words = []
+        for box in range(20):   # a signature line's value, its lone numbered label, an instruction line
+            y = 40.0 * box + 20
+            words += [{"text": _ssn(""), "x0": 36.0, "x1": 76.0, "top": y, "bottom": y + 7},
+                      {"text": "2 SSN", "x0": 36.0, "x1": 60.0, "top": y + 9, "bottom": y + 16},
+                      {"text": "see", "x0": 40.0, "x1": 52.0, "top": y + 18, "bottom": y + 25}]
+        calls = []
+        assert _governed_runs(words, lambda: calls.append(1)) == {_ssn("")}
+        # 60 rows, 60 phrases and 20 labels the labels' pass reads, the 59
+        # pairs of rows and 59 phrases the wrapped-heading pass reads, 20
+        # labels looked under, the 20 labels and 20 instruction lines read
+        # beside, 20 runs and the 154 label-and-run pairs the column search
+        # weighs, 60 rows and 60 phrases searched for a placeholder, 20 lone
+        # labels, 20 labels and their 20 runs above, and 20 questions whose
+        # paragraphs walk 39 rows.
+        assert len(calls) == 731, "every loop checks the budget"
 
     def test_a_number_elsewhere_on_the_page_survives(self, tmp_path):
         """The employer's EIN in the box below and left of the SSN's, an

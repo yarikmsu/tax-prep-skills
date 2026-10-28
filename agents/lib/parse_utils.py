@@ -471,7 +471,8 @@ _LEADER = re.compile(r"[.\u2026]+")   # a word printed as dots alone
 _WRAP = 64       # characters of a heading phrase's end read ("individual taxpayer identification": 34)
 _CAPTION = re.compile(r"^(?:\((?:[a-z]|[0-9]+[a-z]?)\)|[a-z]\.|[0-9]+[a-z]?)(?:\s|$)", re.I)
 _NUMBERED = re.compile(r"^(?:\([0-9]+[a-z]?\)|[0-9]+[a-z]?)(?:\s|$)", re.I)
-_EMPTY_ENTRY = re.compile(r"^(?:N/?A|Applied for|Tax[- ]Exempt)$", re.I)
+_EMPTY_ENTRY = re.compile(r"^(?:N/?A|Applied for|Tax[- ]Exempt|Died)$", re.I)   # Schedule EIC line 2: "Died"
+_LABEL_TAIL = re.compile(r"[\s.:)]*(?:or\s+other\s+TIN[\s.:)]*)?", re.I)   # what may end a label's phrase after it (1095-B/C)
 _ABUT = 0.05     # points apart at most for words a hidden glyph split (TY2024 1040's "num b e r")
 
 
@@ -573,21 +574,21 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set]:
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
         row_top = min(w["top"] for w in row)
-        word_ends = [start + len(w["text"].rstrip(" .:)")) for start, w in zip(starts, row)]
         phrases = _phrases(row)
-        phrase_of: dict[int, tuple[list[dict], str]] = {}
+        phrase_of: dict[int, tuple[list[dict], str, int]] = {}   # a word's phrase, its text, and where it ends in the row's
+        read = 0
         for phrase in phrases:
             tick()
-            phrase_text = _row_text(phrase)[0]
-            phrase_of.update((id(w), (phrase, phrase_text)) for w in phrase)
+            read += len(phrase)
+            phrase_end = starts[read - 1] + len(row[read - 1]["text"])
+            phrase_of.update((id(w), (phrase, _row_text(phrase)[0], phrase_end)) for w in phrase)
         leaders: dict[tuple, float] = {}   # labels in one word ("SSN/ITIN") share its leader
         for low, high, carries in found_labels:
             tick()
             cover = _covered(row, starts, low, high)
             box = _box(cover)
-            phrase, phrase_text = phrase_of[id(cover[0])]
-            last = bisect.bisect_left(starts, high) - 1
-            ends_phrase = cover[-1] is phrase[-1] and high >= word_ends[last]
+            phrase, phrase_text, phrase_end = phrase_of[id(cover[0])]
+            ends_phrase = bool(_LABEL_TAIL.fullmatch(text, high, phrase_end))
             box["row_top"] = row_top
             box["phrase_end"] = ends_phrase
             box["phrase_x0"] = phrase[0]["x0"]
@@ -837,7 +838,11 @@ def _lone_labels(labels: list, items: list, under: list, tick) -> list:
 
 
 def _above(labels: list, items: list, tick) -> set[str]:
-    """A signature line's number just above its otherwise empty label."""
+    """A signature line's number just above its otherwise empty label, typed
+    anywhere in the line's field (Form 8332's is 12 points tall, its label's
+    7). Whatever else ends there is masked too, the safe direction: a ZIP+4
+    over a 1099's empty TIN, a FEIN typed without its hyphen over FTB 593's
+    empty individual row."""
     out = set()
     ordered = sorted(items, key=lambda item: item[0]["bottom"])
     bottoms = [item[0]["bottom"] for item in ordered]
@@ -846,7 +851,7 @@ def _above(labels: list, items: list, tick) -> set[str]:
         if not label.get("phrase_end"):
             continue
         height = label["bottom"] - label["top"]
-        for box, raw, _ in ordered[bisect.bisect_left(bottoms, label["top"] - height):bisect.bisect_right(bottoms, label["top"])]:
+        for box, raw, _ in ordered[bisect.bisect_left(bottoms, label["top"] - 1.5 * height):bisect.bisect_right(bottoms, label["top"])]:
             tick()
             if raw is not None and box["x1"] > label.get("phrase_x0", label["x0"]) and box["x0"] < label["x1"]:
                 out.add(raw)
@@ -893,16 +898,18 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
         return set()
     items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
     under = _just_under(labels, items, tick)
+    placeholders = []   # typed in an empty box: no column ends at one, and a row's reach steps over it
     for row in _word_rows(words):
         tick()
         for phrase in _phrases(row):
             tick()
             if _EMPTY_ENTRY.fullmatch(_row_text(phrase)[0]):
                 covered.update(id(w) for w in phrase)
+                placeholders.append((_box(phrase), None, False))
     printed = [w for w in words if id(w) not in covered]
     lone = _lone_labels(labels, items, under, tick)
     extra = _paragraph_labels(words, lone, tick, boundaries=labels)
-    return (_beside(labels + extra, items, under + [[] for _ in extra], tick)
+    return (_beside(labels + extra, items + placeholders, under + [[] for _ in extra], tick)
             | _under(labels, items, under, printed, tick) | _above(lone, items, tick))
 
 
