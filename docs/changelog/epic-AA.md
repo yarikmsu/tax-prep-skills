@@ -4145,3 +4145,26 @@ and shifted 2 to 8 points:
 
 An overlay on the lower row of a wrapped heading, and one rotated off the
 row, still print whole, as on main: AA91.
+
+
+## AA44 — final payment and page-1 readers
+
+Form 540's detached line 98-99 values now belong to their printed right-margin
+box and cents column and reconcile with line 97. Missing labels, unassigned
+figures and ambiguous cells remain questions. The existing strict text reader
+continues to handle complete labelled rows; conflicting text/position values
+refuse. Row indexes bound the positional search on crafted input.
+
+Form 1040 page 1 supplies provenance-bearing name, middle-initial, masked
+identifier, domestic address and dependent name/relationship proposals. The
+masked word route can preserve nonnumeric positions and already-masked ID
+boxes without exposing numeric source tokens. This keeps each child's ID in
+its own column, including blank neighbouring cells and orphan values.
+
+A conditional confirmed_identity manifest binds each fact to the existing
+seed/source review. Private reports show the facts; terminal/JSON previews
+hide them. Rollover carries reviewed proposals as evidence for the current
+interview, preserving this year's identity and eligibility inputs. Birth dates,
+residency, credit eligibility and continuation dependents are not guessed.
+The official-form fixture is filled and flattened with constructed identities;
+the first real software PDF still needs its report checked table by table.

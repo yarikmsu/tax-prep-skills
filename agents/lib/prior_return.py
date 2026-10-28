@@ -2,12 +2,14 @@
 """Reviewed, local-only import of official prior-return PDF form lines.
 
 An import is an archive SEED, never a computed return. Unreadable lines and
-unavailable worksheets remain questions. No source text, names, or unmasked
-identifiers are persisted. The review is bound to the entire seed and PDF.
+unavailable worksheets remain questions. No source text or unmasked identifiers
+are persisted. Identity proposals are private, owner-only source facts awaiting
+explicit review. The review is bound to the entire seed and PDF.
 """
 from __future__ import annotations
 
 import argparse
+import bisect
 import copy
 import hashlib
 import json
@@ -763,6 +765,206 @@ def _read_tables(schedule_b: list, schedule_p: list, first_pages: list, words: d
     return tables, marked, problems
 
 
+def _ca_payment_lines(words: list, wanted: set[str], page: int, source_digest: str) -> dict:
+    """The right-margin boxes and their printed cents; detached text stays in its box."""
+    marker_bins: dict[int, list] = {}
+    for w in words:
+        if w['text'] in {'.00', '00'}:
+            key = int(_mid(w, 'top', 'bottom') // 20)
+            marker_bins.setdefault(key, []).append(w)
+            if len(marker_bins[key]) > 4:
+                raise _Unreadable('too many cents markers on one row')
+    if not marker_bins:
+        raise _Unreadable('payment cents markers are absent')
+
+    def nearby(index, word):
+        key = int(_mid(word, 'top', 'bottom') // 20)
+        return [c for y in (key - 1, key, key + 1) for c in index.get(y, [])]
+
+    candidates = [w for w in words if w['text'] in wanted
+                  and any(c['x0'] - w['x1'] > 4 * (w['bottom'] - w['top']) and _overlaps(c, w)
+                          for c in nearby(marker_bins, w))]
+    if not candidates:
+        raise _Unreadable('payment line labels are absent')
+    edge = max(w['x1'] for w in candidates)
+    labels = {}
+    for n in wanted:
+        found = [w for w in candidates if w['text'] == n and abs(w['x1'] - edge) < 2]
+        if len(found) != 1:
+            raise _Unreadable('a payment line label is absent or repeated')
+        labels[n] = found[0]
+    margin_bins: dict[int, list] = {}
+    for w in words:
+        if w['text'].isdigit() and abs(w['x1'] - edge) < 2:
+            key = int(_mid(w, 'top', 'bottom') // 20)
+            margin_bins.setdefault(key, []).append(w)
+            if len(margin_bins[key]) > 6:
+                raise _Unreadable('payment margin labels are ambiguous')
+    centers = sorted({_mid(w, 'top', 'bottom') for group in margin_bins.values() for w in group})
+
+    def half_band(label):
+        center = _mid(label, 'top', 'bottom')
+        lo, hi = bisect.bisect_left(centers, center - 2), bisect.bisect_right(centers, center + 2)
+        distances = ([center - centers[lo - 1]] if lo else []) + ([centers[hi] - center] if hi < len(centers) else [])
+        return min(distances) / 2 if distances else 1.5 * (label['bottom'] - label['top'])
+
+    cents_left = min(c['x0'] for group in marker_bins.values() for c in group)
+    last = max(_mid(w, 'top', 'bottom') + 1.5 * (w['bottom'] - w['top']) for w in labels.values())
+    for w in words:
+        if (w['x0'] > edge + 2 and w['x1'] < cents_left and _mid(w, 'top', 'bottom') < last
+                and _VALUE.fullmatch(w['text']) and not any(
+                    abs(_mid(w, 'top', 'bottom') - _mid(label, 'top', 'bottom')) < half_band(label)
+                    for label in nearby(margin_bins, w))):
+            raise _Unreadable('an amount in the payment column has no printed row')
+    out = {}
+    for n, label in labels.items():
+        cents = [w for w in nearby(marker_bins, label) if w['x0'] > label['x1'] and _overlaps(w, label)]
+        if len(cents) != 1:
+            raise _Unreadable('a payment cents column is absent or repeated')
+        # A typed amount's baseline may be above its label. The neighbouring
+        # printed row defines the band, rather than the text extraction order.
+        center = _mid(label, 'top', 'bottom')
+        half = half_band(label)
+        row = [w for w in words if w['x1'] > label['x1'] and abs(_mid(w, 'top', 'bottom') - center) < half]
+        cell = [w for w in row if w['x0'] > label['x1'] and w['x1'] < cents[0]['x0'] and w['text'] != '.']
+        if any(w not in cell and w is not cents[0] and w['text'] != '.' for w in row):
+            raise _Unreadable('text or a figure crosses a payment box boundary')
+        value = _cell(cell)
+        if value is not None:
+            if value < 0:
+                raise _Unreadable('a payment is negative')
+            out[n] = {'value': value, 'provenance': {'sha256': source_digest, 'page': page,
+                                                    'form': '540', 'line': n}}
+    return out
+
+
+def _one_heading(words: list, phrase: tuple, *, near: dict | None = None) -> dict:
+    found = _phrases(words, phrase)
+    if near is not None:
+        found = [w for w in found if abs(w['top'] - near['top']) < 3]
+    if len(found) != 1:
+        raise _Unreadable('an identity heading is absent or repeated')
+    return found[0]
+
+
+def _identity_text(words: list, left: float, right: float, top: float, bottom: float) -> str:
+    picked = [w for w in words if not w.get('masked_row') and w['x0'] >= left - 1 and w['x1'] <= right + 1
+              and top < _mid(w, 'top', 'bottom') < bottom]
+    if len(_word_rows(picked)) > 1:
+        raise _Unreadable('an identity field contains more than one row')
+    return ' '.join(w['text'] for w in sorted(picked, key=lambda w: w['x0'])).strip()
+
+
+def _name_ok(value: str) -> bool:
+    return bool(value) and len(value) <= 100 and all(c.isalpha() or c in " -'\u2019" for c in value)
+
+
+def _identity_page(words: list, page: int, source_digest: str) -> dict:
+    """Official 1040 page-1 proposals. No DOB, residency or credit eligibility is inferred."""
+    visible = [w for w in words if not w.get('masked_row')]
+    proposals = {}
+
+    def add(path, value):
+        proposals[path] = {'value': value, 'provenance': {'sha256': source_digest, 'page': page,
+                                                        'form': '1040', 'line': path}}
+
+    def ids(top, bottom, left, right):
+        found = []
+        for w in words:
+            candidates = w.get('identity_identifiers', []) if w.get('masked_row') else [w]
+            for value in candidates:
+                if (re.fullmatch(r'XXX-XX-[0-9]{4}', value['text'])
+                        and value['text'] in re.findall(r'(?<![A-Za-z0-9])XXX-XX-[0-9]{4}(?![A-Za-z0-9])', w['text'])
+                        and top < _mid(value, 'top', 'bottom') < bottom
+                        and value['x0'] >= left - 1 and value['x1'] <= right + 1):
+                    found.append(value['text'])
+        return found
+
+    for owner, phrase in [('primary', ('Your', 'first', 'name')), ('spouse', ('If', 'joint', 'return,'))]:
+        try:
+            head = _one_heading(visible, phrase)
+            last = _one_heading(visible, ('Last', 'name'), near=head)
+            social = _one_heading(visible, ('social', 'security', 'number'), near=head)
+            top, bottom = head['bottom'], head['bottom'] + 15
+            first = _identity_text(words, head['x0'], last['x0'] - 2, top, bottom)
+            surname = _identity_text(words, last['x0'] - 3, social['x0'] - 4, top, bottom)
+            # A first-name/middle-initial field supplies an initial only when
+            # its final token is one letter; a full middle name is not guessed.
+            parts = first.split()
+            middle = None
+            if len(parts) > 1 and len(parts[-1].rstrip('.')) == 1 and parts[-1][0].isalpha():
+                middle, first = parts[-1].rstrip('.'), ' '.join(parts[:-1])
+            if first and surname and _name_ok(first) and _name_ok(surname):
+                add(owner + '.first_name', first)
+                add(owner + '.last_name', surname)
+                if middle:
+                    add(owner + '.middle_name', middle)
+                found = ids(top, bottom, social['x0'] - 22, max(w['x1'] for w in visible if abs(w['top'] - head['top']) < 3) + 22)
+                if len(found) == 1:
+                    add(owner + '.ssn_last4', found[0])
+        except _Unreadable:
+            pass  # only the missing proposals stay in the current-year interview
+    try:
+        street = _one_heading(visible, ('Home', 'address'))
+        apt = _one_heading(visible, ('Apt.', 'no.'), near=street)
+        city = _one_heading(visible, ('City,', 'town,'))
+        state = _one_heading(visible, ('State',), near=city)
+        zip_head = _one_heading(visible, ('ZIP', 'code'), near=city)
+        address = _identity_text(words, street['x0'], apt['x0'] - 2, street['bottom'], street['bottom'] + 15)
+        apartment = _identity_text(words, apt['x0'], apt['x0'] + 50, apt['bottom'], apt['bottom'] + 15)
+        town = _identity_text(words, city['x0'], state['x0'] - 2, city['bottom'], city['bottom'] + 15)
+        code = _identity_text(words, state['x0'] - 3, zip_head['x0'] - 2, state['bottom'], state['bottom'] + 15)
+        zipcode = _identity_text(words, zip_head['x0'] - 3, zip_head['x0'] + 70, zip_head['bottom'], zip_head['bottom'] + 15)
+        from agents.lib.capabilities import _USPS_STATES
+        safe = lambda v: bool(v) and len(v) <= 160 and all(c.isalnum() or c in " .,#/'-" for c in v)
+        if safe(address) and safe(town) and code in _USPS_STATES and re.fullmatch(r'[0-9]{5}(?:-?[0-9]{4})?', zipcode):
+            if apartment:
+                if not safe(apartment):
+                    raise _Unreadable('an apartment is invalid')
+                address += ' Apt ' + apartment
+            add('address', {'street': address, 'city': town, 'state': code, 'zip': zipcode})
+    except _Unreadable:
+        pass
+    try:
+        heads = [_one_heading(visible, ('Dependent', str(i))) for i in range(1, 5)]
+        columns = _bands([_mid(w, 'x0', 'x1') for w in heads])
+        first_head = _one_heading(visible, ('(1)', 'First', 'name'))
+        last_head = _one_heading(visible, ('(2)', 'Last', 'name'))
+        relationship = _one_heading(visible, ('(4)', 'Relationship'))
+        ssn = [w for w in visible if w['text'] == 'SSN' and last_head['bottom'] < w['top'] < relationship['top']
+               and w['x1'] < columns[0][0]]
+        if len(ssn) != 1:
+            raise _Unreadable('dependent SSN heading is absent')
+        dep = []
+        for left, right in columns:
+            name = _identity_text(words, left, right, first_head['top'] - 1, last_head['top'] - 1)
+            surname = _identity_text(words, left, right, last_head['top'] - 1, ssn[0]['top'] - 1)
+            relation = _identity_text(words, left, right, relationship['top'] - 1, relationship['bottom'] + 3)
+            if not any((name, surname, relation)):
+                continue
+            if not all(_name_ok(v) for v in (name, surname, relation)):
+                raise _Unreadable('a dependent name/relationship is incomplete')
+            person = {'first_name': name, 'last_name': surname, 'relationship': relation}
+            found = ids(ssn[0]['top'] - 1, relationship['top'] - 1, left, right)
+            if len(found) == 1:
+                person['ssn_last4'] = found[0]
+            dep.append(person)
+        if dep:
+            add('dependents', dep)
+    except _Unreadable:
+        pass
+    return proposals
+
+
+def identity_confirmation_ids(seed: dict) -> list[str]:
+    return sorted(seed.get('identity_proposals', {}))
+
+
+def _confirms_identity(confirmed, seed: dict) -> bool:
+    expected = identity_confirmation_ids(seed)
+    return isinstance(confirmed, list) and len(confirmed) == len(expected) and set(confirmed) == set(expected)
+
+
 def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: dict | None = None) -> dict:
     """Pure masked-text extraction; the caller never persists extracted text.
     `words` are the pages' word positions, which the carryover tables and the
@@ -778,6 +980,7 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
     schedule_p: list[tuple[int, int]] = []
     unreviewed: set[str] = set()
     first_pages: list[int] = []
+    ca_layout_problems = False
     for page, raw in pages.items():
         if type(page) is not int or page < 0 or not isinstance(raw, str):
             raise ImportError("Invalid extracted page")
@@ -804,6 +1007,19 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
         if form == "1040" and "Filing Status" in text:
             first_pages.append(page)
         lines = locate_lines(text, form, page + 1, source_digest)
+        if form == "540" and words is not None and page in words:
+            side = re.search(r"(?:Side (\d)|Side\s+(\d))", text)
+            wanted = {"97"} if side and (side[1] or side[2]) == "3" else {"98", "99"} if side and (side[1] or side[2]) == "4" else set()
+            if wanted:
+                try:
+                    located = _ca_payment_lines(words[page], wanted, page + 1, source_digest)
+                    if any(n in lines and lines[n]["value"] != r["value"] for n, r in located.items()) or any(n in lines and n not in located for n in wanted):
+                        raise ImportError("Text and positional California payment values disagree")
+                    lines = located
+                except _Unreadable:
+                    if not wanted <= lines.keys():
+                        lines = {}
+                        ca_layout_problems = True
         if form == "8606":
             if re.search(r"(?m)(?:^|\s)Form 8606 \(20\d{2}\) Page [2-9]$", text):
                 continue  # Parts II and III: no line 14, and no second owner
@@ -849,7 +1065,9 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
         add(key, lines[line]["value"] if line in lines else 0.0, records)
 
     line_field("estimated_payments_applied", "1040", "36", "34", ("35a", "36"))
-    if "540" in forms:
+    if ca_layout_problems:
+        question("ca_estimated_payments_applied", "California payment boxes could not be read by position; inspect lines 97-99 manually")
+    elif "540" in forms:
         line_field("ca_estimated_payments_applied", "540", "98", "97", ("98", "99"))
     else:
         question("california", "Confirm no California resident return, or enter its separate opening balances manually")
@@ -951,6 +1169,13 @@ def extract_seed(pages: dict[int, str], year: int, source_digest: str, words: di
         seed["table_evidence"] = tables
     if marked:
         seed["marked_filing_status"] = marked
+    identities = [_identity_page((words or {}).get(page, []), page + 1, source_digest) for page in first_pages]
+    found = [identity for identity in identities if identity]
+    if found:
+        reference = {k: v["value"] for k, v in found[0].items()}
+        if any({k: v["value"] for k, v in record.items()} != reference for record in found[1:]):
+            raise ImportError("Conflicting page-1 identity proposals")
+        seed["identity_proposals"] = found[0]
     return seed
 
 
@@ -1000,7 +1225,7 @@ def import_pdf(workspace: Path, source: str, current_year: int) -> Path:
         raise ImportError("Archive already exists; import never replaces an archived return")
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     pages = extract_pdf_text(str(path), workspace=str(workspace))
-    words = extract_pdf_words(str(path), workspace=str(workspace))
+    words = extract_pdf_words(str(path), workspace=str(workspace), identity_layout=True)
     seed = extract_seed(pages, year, before, words)
     if hashlib.sha256(path.read_bytes()).hexdigest() != before:
         raise ImportError("Source PDF changed during import")
@@ -1037,6 +1262,12 @@ def review_report(result: dict) -> str:
                 lines += ["", f"{key} and {other} print identical Form 8606 figures. If one is a second copy "
                           f"of the same worksheet, map it to `{DUPLICATE}<the other id>`; two owners with equal "
                           "figures are each assigned their own owner."]
+    if seed.get("identity_proposals"):
+        lines += ["", "## Page-1 identity and dependent proposals", "",
+                  "Private source facts only. Re-interview DOB, residency, eligibility and additional dependents; current identity is never overwritten."]
+        lines += [f"- {key}: {json.dumps(record['value'], ensure_ascii=True)} (page {record['provenance']['page']})"
+                  for key, record in seed["identity_proposals"].items()]
+        lines += ["", "confirmed_identity: " + json.dumps(identity_confirmation_ids(seed))]
     lines += _table_report(seed)
     lines += ["", "## Derived worksheets", "", json.dumps(seed["worksheets"], indent=2), "",
               "## Unresolved questions", ""]
@@ -1111,6 +1342,8 @@ def validate_reviewed(result: dict, profile: dict) -> dict:
     # A review confirmed before the table readers existed has no tables.
     if not _confirms_every_table(review.get("confirmed_tables", []), seed):
         raise ImportError("Every extracted carryover table requires individual confirmation")
+    if not _confirms_identity(review.get("confirmed_identity", []), seed):
+        raise ImportError("Every identity proposal requires individual confirmation")
     return seed
 
 
@@ -1196,8 +1429,10 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     seed = result.get("prior_return_import", {})
     if result.get("meta", {}).get("imported_review") != "pending" or seed.get("tax_year") != year:
         raise ImportError("Only a pending import for this year can be confirmed")
-    if set(decisions) != {"seed_sha256", "confirmed_fields", "confirmed_tables", "questions", "filing_status",
-                          "ira_owners"}:
+    expected_review = {"seed_sha256", "confirmed_fields", "confirmed_tables", "questions", "filing_status", "ira_owners"}
+    if seed.get("identity_proposals"):
+        expected_review.add("confirmed_identity")
+    if set(decisions) != expected_review:
         raise ImportError("Review must match the documented confirmation schema")
     if decisions["seed_sha256"] != digest(seed):
         raise ImportError("Review was prepared for a different import")
@@ -1205,6 +1440,8 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
             or len(decisions["confirmed_fields"]) != len(seed["fields"])
             or set(decisions["confirmed_fields"]) != set(seed["fields"])):
         raise ImportError("Confirm every imported figure exactly once")
+    if not _confirms_identity(decisions.get("confirmed_identity", []), seed):
+        raise ImportError("Confirm every identity proposal exactly once")
     questions = decisions["questions"]
     if (not isinstance(questions, dict) or set(questions) != set(seed["unresolved"])
             or any(v not in {"not_applicable", "manual_required"} for v in questions.values())):
@@ -1233,6 +1470,8 @@ def confirm_import(workspace: Path, year: int, decisions: dict) -> None:
     seed["review"] = {"seed_sha256": digest(seed), "profile_sha256": digest(profile),
                       "confirmed_fields": decisions["confirmed_fields"], "questions": questions,
                       "ira_owners": decisions["ira_owners"], "confirmed_tables": decisions["confirmed_tables"]}
+    if seed.get("identity_proposals"):
+        seed["review"]["confirmed_identity"] = decisions["confirmed_identity"]
     result["meta"]["imported_review"] = "confirmed"
     result["meta"]["imported_review_sha256"] = digest(seed["review"])
     answers = workspace / "answers.md"
@@ -1321,6 +1560,23 @@ def imported_changes(prior, current) -> list:
         out.append(Change("carryforwards", path, "taxpayer_profile.json", marker,
                           _get_path(current.profile, path), "apply",
                           "BLOCKED: resolve these import worksheets manually before computation"))
+    return out
+
+
+def imported_identity_changes(prior, current) -> dict:
+    """Reviewed proposals remain evidence; current-year identity/eligibility is re-interviewed."""
+    from agents.lib.rollover import Change, _get_path
+    seed = validate_reviewed(prior.result, prior.profile)
+    proposals = seed.get("identity_proposals", {})
+    out = {}
+    for category, keys, suffix in (("identity", [k for k in proposals if k != "dependents"], "identity"),
+                                    ("dependents", [k for k in proposals if k == "dependents"], "dependent")):
+        if keys:
+            path = f"prior_year.imported_{suffix}_proposals"
+            value = {k: proposals[k] for k in keys}
+            out[category] = [Change(category, path, "taxpayer_profile.json", value,
+                                   _get_path(current.profile, path), "ask",
+                                   "Reviewed source facts only; complete current-year identity/dependent interview in the owner-only workpaper")]
     return out
 
 

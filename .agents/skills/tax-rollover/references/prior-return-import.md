@@ -19,8 +19,10 @@ Otherwise parse sequentially with this banner in every interpretation workpaper:
 > Parse boundary NOT enforced — parsed in the main session under prompt-level
 > rules, because this agent cannot give a sub-task a closed tool set.
 
-`parse_utils` masks identifiers at extraction. No source text or names are saved
-in the seed. Re-interview identity, filing status and dependents at setup; never
+`parse_utils` masks identifiers at extraction. No source text or full identifiers
+are saved. The seed may contain sanitized page-1 identity/dependent proposals,
+so both it and its report are private, owner-only files. Re-interview identity,
+filing status and dependents at setup; never
 extract or save a full SSN even temporarily. The workspace root, `documents/`
 and `documents/prior_return/` must already be owner-only using `secure_fs`.
 
@@ -80,6 +82,21 @@ the left margin; nothing assumes a page offset.
   worksheets.
 - Form 1040's marked filing-status box is read the same way. The confirmed
   status must match it.
+- Form 540 Side 3 line 97 and Side 4 lines 98-99 use the right-margin line
+  labels, printed cents column and row bands. A detached amount stays in its
+  physical box. An unassigned figure, missing label, ambiguous cell or failed
+  97 = 98 + 99 identity remains unresolved or refuses. Complete, strictly
+  labelled text lines retain the existing text reader when no coherent box
+  geometry is present; a missing positional amount cannot override a text
+  amount that was read.
+- Form 1040 page 1 proposes first/last names, an explicitly printed middle
+  initial, masked last fours, a domestic mailing address and dependents'
+  names/relationships. Safe nonnumeric word positions and already-masked
+  identifier boxes preserve the columns even when the default masker collapses
+  a changed row. A missing or orphan identifier never shifts another child's
+  identifier. Unreadable or unsupported layouts remain interview questions.
+  DOB, months of residency, current-year credit eligibility, changed ownership
+  and dependent continuation pages are never inferred.
 
 A table found but not read becomes a question (`ftc_schedule_b`,
 `ca_credit_carryovers`, `filing_status_mark`), never a partial table.
@@ -113,6 +130,10 @@ Write an owner-only local JSON review under `summaries/` with exactly:
 - `confirmed_tables`: the report's table confirmation ids, each once: one per
   foreign tax credit category and origin year, zeros included, and one per
   California credit code.
+- `confirmed_identity`: when the report lists identity confirmation ids, the
+  exact list, each once. This field is required only for seeds with proposals;
+  legacy seeds without proposals keep the previous review schema. Compare each
+  proposed fact and its source page in the private workpaper before confirming.
 - `filing_status`: `Single`, `MFJ`, `MFS`, `HOH` or `QSS`, confirmed against page 1;
   it must match a box the report says is marked.
 - `ira_owners`: each `ira_basis_page_N` id mapped to the person it belongs to on
@@ -149,6 +170,13 @@ it, and `/tax-project` and `/tax-withholding` run as for a filer with no archive
 Continue with the normal rollover diff/category approval. Every imported amount
 is an `ask`, including explicit zeros and any allocation after a status change.
 California opening payments reset `estimated_payments.ca_verified`.
+
+Reviewed page-1 facts appear as `ask` proposals under the rollover's identity
+and dependents categories. They carry into `prior_year.imported_identity_proposals`
+and `prior_year.imported_dependent_proposals` as provenance-bearing evidence;
+they never overwrite this year's names, household members or eligibility inputs.
+Finish the current-year interview using the private workpaper. Terminal and
+JSON CLI previews show only the evidence paths, not the private values.
 
 ## Manual worksheets remain hard gates
 
