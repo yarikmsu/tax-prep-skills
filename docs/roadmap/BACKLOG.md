@@ -201,6 +201,10 @@ Trigger and range behavior is documented in
   percentage or substitute TY2025 values. Found by the same review.
 
 - **AA90 (P3, S): Mask the identifiers the official-form sweep still leaks.**
+  Implementation prepared; awaiting PR review and merge. The change recognizes
+  Form 4506-C's first-taxpayer and spouse labels and lets IT-213's exact
+  "SSN or ITIN" column reach a first entry after empty child rows, with an
+  intervening heading still ending its reach. See the AA90 changelog entry.
   #80's review typed nine digits into every text field of 112 official blank
   IRS, FTB and NY forms, one field at a time and all at once, and flattened
   them through `extract_pdf_text`. Two layouts still return an SSN whole, as

@@ -18,6 +18,10 @@ from pdfminer.utils import decode_text
 
 # (file, URL, zero-based page, SSN fields, {field: typed text})
 RECORDS = [
+    ("f4506c.pdf", "https://www.irs.gov/pub/irs-pdf/f4506c.pdf", 0,
+     ["first_ssn[0]", "second_ssn[0]"], {}),
+    ("it213_fill_in.pdf", "https://www.tax.ny.gov/pdf/current_forms/it/it213_fill_in.pdf", 0,
+     [f"Page 1 Zone {n}" for n in range(75, 81)], {}),
     ("f1095a--2025.pdf", "https://www.irs.gov/pub/irs-prior/f1095a--2025.pdf", 1,
      ["f1_17[0]", "f1_22[0]", "f1_27[0]", "f1_32[0]", "f1_37[0]"], {}),
     ("f8332.pdf", "https://www.irs.gov/pub/irs-pdf/f8332.pdf", 0,

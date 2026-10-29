@@ -1,5 +1,26 @@
 # Epic AA — the 2026-09-20 product-owner review
 
+## AA90 — Form 4506-C and NY IT-213 identifier masking
+
+Form 4506-C's "First taxpayer identification number" and "Spouse's
+taxpayer identification number" now label individual identifiers. Bare
+business taxpayer-identification headings remain outside that rule.
+
+IT-213's exact "SSN or ITIN" heading now starts a column with the same
+obstruction-checked reach as a numbered heading. This covers a sixth child
+whose SSN is the column's first entry after empty rows; an intervening
+heading still ends the reach. Its "or ITIN" suffix also belongs to the
+label when reading overlays.
+
+Official blank-form words and field rectangles cover both 4506-C fields
+and all six IT-213 child fields, individually and together. Extraction tests
+cover text and words, text/table masking covers the new labels, and negative
+cases preserve business identifiers, unrelated headings and routing numbers.
+Removing the new column rule makes the sixth-child regression fail.
+
+This entry records the implementation branch; the task remains open in the
+backlog until its PR is merged.
+
 Backlog: `docs/roadmap/BACKLOG.md`. Epic AA began as the seven items a
 product-owner review raised on 2026-09-20, the day the roadmap was collapsed to
 one file. They are not a feature theme: AA2 and AA3 are process, AA4 and AA5 are

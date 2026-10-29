@@ -235,6 +235,9 @@ _ID_LABEL = (
     # possessive alternative below decides, payer side excluded.
     r"|(?<!other\s)(?<!other\s\s)(?<!['\u2019]s\s)identifying[^\S\n]+number(?=[^\S\n]*(?:$|as shown))"
     r"|your[^\S\n]+(?:taxpayer[^\S\n]+identification|identifying)[^\S\n]+number(?=[^\S\n]*$)"
+    # Form 4506-C names the first taxpayer and spouse explicitly. A bare
+    # business taxpayer identification heading still does not label an SSN.
+    r"|(?:first|spouse['\u2019]s)[^\S\n]+taxpayer[^\S\n]+identification[^\S\n]+number(?![A-Za-z])"
     rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
     r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
