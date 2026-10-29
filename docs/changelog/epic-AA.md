@@ -4260,7 +4260,7 @@ doubling its rows less than triples its work.
 - What still prints is AA92.
 
 
-## AA95 — spaces beside identifier separators
+## AA95 — spaces beside identifier separators (#91, awaiting merge)
 
 OCR can insert horizontal whitespace on either side of either separator in
 a delimited SSN or ITIN. The shared delimiter pattern now accepts those

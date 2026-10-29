@@ -210,8 +210,8 @@ Trigger and range behavior is documented in
   delimited spelling, one separator character throughout, and pin it
   both ways: a date's 2-2-4 and a telephone number's 3-3-4 stay as
   printed, spaced or not.
-  Implementation is on `aa95-spaced-ssn-separators`, awaiting merge; the item
-  stays open until its PR lands.
+  Implementation is in #91, awaiting merge; the item stays open until its
+  PR lands.
 
 - **AA94 (P3, S): Label Form 1042-S's "Recipient's U.S. TIN".** #87's
   review read the possessive TIN headings real forms print. Forms
