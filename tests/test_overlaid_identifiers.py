@@ -496,3 +496,16 @@ def test_a_chain_of_rotated_decoys_does_not_carry_off_an_ssn(tmp_path, label):
                                          (36, 200, 9, 'Other information')] + decoys)
     out = _digits(extract_pdf_text(str(pdf))[0])
     assert (_ssn('') in out or _ssn('')[::-1] in out) == (label != 'Your social security number')
+
+
+@pytest.mark.parametrize('label_tilt,ssn_tilt,other', [(0, 1, (400, 500, 9, '7', 0.4)), (0, 1, (400, 500, 9, 'p.', 0.4)),
+                                                       (0.5, 0.8, (400, 760, 9, 'Page 1.', 0.2)),
+                                                       (0, -15, (400, 500, 9, '7', -15.5))])
+def test_a_tilted_ssn_keeps_its_separators_beside_another_tilted_line(tmp_path, label_tilt, ssn_tilt, other):
+    """An OCR text layer tilts each line its own way: a line elsewhere a
+    fraction of a degree under the SSN's shares its frame, and the SSN,
+    drifting off that frame's first baseline, still reads with its hyphens."""
+    pdf = _draw(tmp_path / 'ocr.pdf', [(200, 100, 9, 'Your social security number', label_tilt),
+                                      (230, 100, 9, _ssn('-'), ssn_tilt), other, (36, 200, 9, 'Other information')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _ssn('') not in _digits(out)

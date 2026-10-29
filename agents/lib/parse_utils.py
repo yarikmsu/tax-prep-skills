@@ -388,9 +388,11 @@ _FRAME_GAP = 1.0   # degrees apart at most for two rotated glyphs' baselines to 
 
 def _angle(char: dict) -> float:
     """The glyph's baseline direction in degrees, from -180 to 180; level
-    for a matrix with no direction or a non-finite one."""
+    for a matrix with no direction or one whose scale is not finite, which
+    an entry's own overflow makes it."""
     a, b = char.get("matrix", (1, 0))[:2]
-    if not (math.isfinite(a) and math.isfinite(b) and math.hypot(a, b)):
+    scale = math.hypot(a, b)
+    if not scale or not math.isfinite(scale):
         return 0.0
     return math.degrees(math.atan2(b, a))
 
@@ -456,9 +458,12 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
     lines: dict[tuple, list[dict]] = {}
     between: list[tuple[tuple, dict]] = []
     for n, frame in enumerate(_overlay_frames(digits + marks, tick)):
+        # A run tilted off its frame's first baseline drifts across it: a
+        # rotated frame's lines are its rows, as pdfplumber's text forms them.
+        rows = {id(g): r for r, row in enumerate(_word_rows(frame)) for g in row} if n else {}
         for glyph in frame:
             tick()
-            key = (n, round(glyph["size"], 1), round(glyph["bottom"], 1))
+            key = (n, round(glyph["size"], 1), rows[id(glyph)] if n else round(glyph["bottom"], 1))
             if id(glyph.get("_overlay_source", glyph)) in numerals:
                 lines.setdefault(key, []).append(glyph)
             else:
