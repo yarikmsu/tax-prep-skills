@@ -558,6 +558,9 @@ class TestMaskSsn:
         from itertools import product
         label = "Employee's SSN"
         for gaps in product(("", gap), repeat=4):
+            for between in (" ", ": ", " # ", ". ", "\u00a0"):
+                value = _with_separator_gaps(("000", "00", LAST4), sep, gaps)
+                assert mask_ssn(f"SSN{between}{value}") == f"SSN{between}{MASKED}"
             for groups in (("000", "00", LAST4), ("900", "70", LAST4)):
                 value = _with_separator_gaps(groups, sep, gaps)
                 expected = layout.format(label=label, value=MASKED)
@@ -591,10 +594,15 @@ class TestMaskSsn:
         assert mask_ssn(f"{label} {row}\n{value}").endswith(f"\n{MASKED}")
 
     @pytest.mark.parametrize("row", ["SSN Dividends 250 - 15 - 1200", "RECIPIENT'S TIN Adj 100- 25- 1000",
-                                     "Your social security number Paid $1,234.56. 2025 est"])
+                                     "Your social security number Paid $1,234.56. 2025 est",
+                                     "Acceptance agent fee per ITIN: $125.50. 2025 rates apply.",
+                                     "Lines for the SSN ($100- 25- 1000) are blank.", "Its TIN, 600 - 10 - 2000",
+                                     "SSN \u00b9 125.50. 2025", "SSN \u2022\u2022 125 - 15 - 1200",
+                                     "passport as identification - 600 - 10 - 2000"])
     def test_a_split_shape_across_a_labels_row_is_no_value(self, row):
-        """Page text joins a label to the columns across its row: a split
-        shape with a word between is a figure printed there."""
+        """Page text joins a label to the columns across its row, and prose
+        names a label before a figure: a split shape with a word, a "$",
+        a parenthesis or a dash between is a figure printed there."""
         assert mask_ssn(row) == row
 
     @pytest.mark.parametrize("sep", ["-", ".", "/"])

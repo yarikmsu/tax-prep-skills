@@ -276,11 +276,13 @@ _ID_GOVERNED = re.compile(
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
-# On its label's row a split is the label's own only straight after it, with
-# no word between: page text joins a label to columns across the page, and
-# "SSN Dividends 250 - 15 - 1200" is a figure printed there.
+# On its label's row a split is the label's own only straight after it,
+# spaces and one ":", "#" or "." between: page text joins a label to columns
+# across the page ("SSN Dividends 250 - 15 - 1200"), and prose names a label
+# before a figure ("fee per ITIN: $125.50. 2025", "SSN ($100- 25- 1000)").
 _ID_LABELED_SPLIT = re.compile(
-    rf"({_ID_LABEL}[^0-9A-Za-z\n]{{0,8}})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
+    rf"({_ID_LABEL}[^\S\n]*(?:[:#.][^\S\n]*)?)(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
+    re.IGNORECASE)
 _ID_ANY_VALUE = re.compile(
     rf"{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)", re.IGNORECASE)

@@ -4397,10 +4397,18 @@ telephone numbers, EINs and vertical whitespace stay outside it.
   and with it filename refusal, the redactor and the overlay, keeps main's
   contiguous spellings.
 - On its label's row a split is the label's own only straight after it,
-  with no word between: page text joins a label to the columns across the
-  page, and "SSN Dividends 250 - 15 - 1200" is a figure printed there. On
-  the line under a label, or in a cell a label governs, a split-shaped
-  figure masks as the whitespace spelling there does, the safe direction.
+  spaces and one colon, number sign or period between: page text joins a
+  label to the columns across the page ("SSN Dividends 250 - 15 - 1200"),
+  and prose names a label before a figure ("fee per ITIN: $125.50. 2025").
+  On the line under a label, or in a cell a label governs, a split-shaped
+  figure masks as the whitespace spelling there does, the safe direction;
+  so does one on the line under a prose "SSN" with no value after it,
+  main's trigger for the whitespace spelling too.
+- A second review drew 200,000 strings and about 6,800 PDF pages against
+  main: none prints an SSN main masks. Over 999 pages of IRS publications
+  no page masks differently from main. Generated pages of split SSNs
+  under a label, tilted up to a degree, printed 588 of 792 whole on main
+  and none now.
 - Still printing, as on main: an unlabelled split, one page text breaks
   across lines on a steep page, and one only position ties to its label,
   AA96. Main also prints the SSN under a label whose row carries a figure
