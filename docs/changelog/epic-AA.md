@@ -4215,5 +4215,6 @@ cover text and words, and text/table masking covers the new labels.
   removing the column rule or widening the label to any word before
   "taxpayer identification number" now fails them.
 - An "or ITIN" label tail was dropped: "ITIN" is a label of its own, so the
-  phrase already ends at one (0 overlay leaks in 1,320 placements, with or
-  without it).
+  phrase already ends at one. Only the exact heading reaches that far: a
+  "Payer SSN or ITIN" twin keeps its number, and "Spouses" without its
+  apostrophe labels the 4506-C field as the possessive rule already did.

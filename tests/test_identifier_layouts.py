@@ -67,7 +67,8 @@ def test_each_field_alone_in_the_official_layout(form):
 
 @pytest.mark.parametrize('label', ["1b. First taxpayer identification number",
                                    "2b. Spouse's taxpayer identification number",
-                                   "2b. Spouse’s taxpayer identification number"])
+                                   "2b. Spouse’s taxpayer identification number",
+                                   "2b. Spouses taxpayer identification number"])
 def test_4506c_labels_in_text_and_cells(label):
     assert mask_ssn(f'{label}: {_value(0)}') == f'{label}: XXX-XX-1000'
     assert mask_table([[label, 'Amount'], [_value(0), 1234.56]])[1] == ['XXX-XX-1000', 1234.56]
@@ -93,7 +94,8 @@ def test_official_label_layouts_at_both_pdf_boundaries(tmp_path, label, offset):
 @pytest.mark.parametrize('label,offset', [('Employer taxpayer identification number', 18),
                                         ('Payer taxpayer identification number', 18),
                                         ('Business taxpayer identification number', 18),
-                                        ('SSN or ITIN for reference', 140)])
+                                        ('SSN or ITIN for reference', 140),
+                                        ('Payer SSN or ITIN', 140)])
 def test_unrelated_headings_keep_their_numbers(tmp_path, label, offset):
     """The layouts above, where their labels mask the value: only the heading differs."""
     pdf = _draw(tmp_path / 'other.pdf', _layout(label, offset, ROUTING))
