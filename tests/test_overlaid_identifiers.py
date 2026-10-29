@@ -766,6 +766,34 @@ def test_a_rotated_ssn_split_by_spaces(tmp_path, angle, split):
     _assert_masked(_draw(tmp_path / 'split.pdf', [(300, 400, 9, spelled, angle), (36, 600, 9, 'Other information')]))
 
 
+@pytest.mark.parametrize('angle', [0.3, 1])
+@pytest.mark.parametrize('line', ['Interest 125.50 $1000.00', 'Interest 125.50 -1000.00',
+                                  'Interest 125.50 (1000.00)', 'Balance 125.50 /2026'])
+def test_tilted_amounts_side_by_side_stay(tmp_path, angle, line):
+    """Overlay rows spell every mark "-", so an amount and the "$" of the
+    next read as an SSN split beside its separator. Page text masks that
+    split only with the same hyphen, dot or slash twice, and so does the
+    overlay: on a tilted scan these are two amounts."""
+    pdf = _draw(tmp_path / 'amounts.pdf', [(72, 140, 11, line, angle), (36, 600, 9, 'Other information')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _digits(out) == _digits(line)
+
+
+@pytest.mark.parametrize('angle', [0.3, 15, 90])
+@pytest.mark.parametrize('gap', [' ', '   '])
+@pytest.mark.parametrize('split', [3, 4, 6, 7])
+@pytest.mark.parametrize('sep', ['-', '.', '/'])
+def test_a_tilted_ssn_split_beside_a_separator_goes(tmp_path, angle, gap, split, sep):
+    """Across words, split wide enough to be two, the overlay reads the
+    SSN as page text does, the same separator twice. Tilted 15 degrees
+    page text prints a split's words a line apart, where no mask finds
+    them, so a space in the stream still leaves the run unreadable: it
+    goes whole."""
+    value = _ssn(sep)
+    _assert_masked(_draw(tmp_path / 'split.pdf', [(300, 400, 9, f'{value[:split]}{gap}{value[split:]}', angle),
+                                                (36, 600, 9, 'Other information')]))
+
+
 @pytest.mark.parametrize('lead', [9.5, 11])
 def test_a_tilted_reference_under_tight_leading_keeps_its_last_four(tmp_path, lead):
     """Lines above and below overlap its box, not its row: page text reads

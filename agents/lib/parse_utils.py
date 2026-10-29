@@ -638,13 +638,12 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
             spelled += [glyph["text"] if glyph["text"].isdigit() else "-" for glyph in group]
             owners += group
         text = "".join(spelled)
-        _, values, delimited, _ = identifier_spans(text)
-        ssns = [[glyph for glyph in owners[low:high] if glyph is not None]
-                for low, high in values + [(low, high) for low, high, _ in delimited if text[low + 3:low + 4] == "-"]]
-        for low, high, _ in delimited:
+        _, values, spelled_runs, _ = identifier_spans(text)
+        delimited = _delimited(text, owners, spelled_runs)
+        ssns = [[glyph for glyph in owners[low:high] if glyph is not None] for low, high in values + delimited]
+        for low, high in delimited:
             run = [g.get("_overlay_source", g) for g in owners[low:high] if g is not None]
-            if (text[low + 3:low + 4] == "-" and any(abs(_angle(g)) > _LEVEL for g in run)
-                    and _unreadable(run, chars, positions, lines)):
+            if any(abs(_angle(g)) > _LEVEL for g in run) and _unreadable(run, chars, positions, lines):
                 hidden.update(id(g) for g in run)
         accounted = {id(glyph): n for n, run in enumerate(ssns) for glyph in run}   # each glyph's SSN
         unread: dict[int, list[int]] = {}   # the words interleaved with each label's letters, by position
@@ -686,13 +685,30 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
     return hidden
 
 
+def _delimited(text: str, owners: list, spelled: list) -> list[tuple[int, int]]:
+    """The delimited SSNs among an overlay row's spelled runs, whose words
+    spell every mark "-". Within one word any two marks delimit one, as
+    before. Across words, the OCR split beside a separator, only the same
+    hyphen, dot or slash twice does, as `mask_ssn` reads page text: an
+    amount and the "$" of the next are two amounts."""
+    out = []
+    for low, high, _ in spelled:
+        marks = [owners[k]["text"] for k in range(low, high) if text[k] == "-"]
+        if len(marks) == 2 and (" " not in text[low:high] or (marks[0] == marks[1] and marks[0] in "-./")):
+            out.append((low, high))
+    return out
+
+
 def _unreadable(run: list[dict], chars: list[dict], positions: dict[int, int], lines: dict[int, int]) -> bool:
     """Whether page text cannot read `run`, in its reading order, as one
     SSN its masks find: its glyphs fall on several of the page's rows, the
     row would order them otherwise (stacked, or right to left), another
     glyph of the row lies across them, or the PDF stream spaces them, as a
     letter-spaced or OCR-split SSN prints. A space between some of its
-    digits but not others makes it two words instead, as "1 04/15/2026"."""
+    digits but not others makes it two words instead, as "1 04/15/2026".
+    Page text masks an OCR split on its line, but clusters its words by
+    their tops, not by these rows: tilted 15 degrees, "000-00-" and "6789"
+    print a line apart, so any space still makes the run unreadable."""
     spaced = [any(chars[k]["text"].isspace() for k in range(min(i, j) + 1, max(i, j)))
               for a, b in zip(run, run[1:]) for i, j in [(positions[id(a)], positions[id(b)])]]
     split = [gap for a, b, gap in zip(run, run[1:], spaced) if a["text"].isdigit() and b["text"].isdigit()]
