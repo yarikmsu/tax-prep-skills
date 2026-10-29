@@ -414,6 +414,14 @@ def _project(char: dict, angle: float) -> dict:
             "bottom": bottom, "size": height, "_overlay_source": char}
 
 
+def _baseline(char: dict) -> float:
+    """Where the glyph's baseline lies across its own direction: one value
+    for every glyph of a run drawn along one matrix, whatever frame it is
+    read in, and a point apart for a label's punctuation a point off it."""
+    a, b, _, _, e, f = char["matrix"]
+    return (b * e - a * f) / math.hypot(a, b)
+
+
 def _overlay_frames(chars: list[dict], tick) -> list[list[dict]]:
     """The page's level glyphs, as they are, then the rest in frames whose
     baselines run within `_FRAME_GAP` degrees of the next, joined across the
@@ -458,12 +466,12 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
     lines: dict[tuple, list[dict]] = {}
     between: list[tuple[tuple, dict]] = []
     for n, frame in enumerate(_overlay_frames(digits + marks, tick)):
-        # A run tilted off its frame's first baseline drifts across it: a
-        # rotated frame's lines are its rows, as pdfplumber's text forms them.
-        rows = {id(g): r for r, row in enumerate(_word_rows(frame)) for g in row} if n else {}
         for glyph in frame:
             tick()
-            key = (n, round(glyph["size"], 1), rows[id(glyph)] if n else round(glyph["bottom"], 1))
+            # A run tilted off its frame's first baseline drifts across it;
+            # along its own matrix, it lies on one.
+            bottom = _baseline(glyph["_overlay_source"]) if n else glyph["bottom"]
+            key = (n, round(glyph["size"], 1), round(bottom, 1))
             if id(glyph.get("_overlay_source", glyph)) in numerals:
                 lines.setdefault(key, []).append(glyph)
             else:

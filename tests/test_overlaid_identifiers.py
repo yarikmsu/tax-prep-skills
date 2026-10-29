@@ -509,3 +509,15 @@ def test_a_tilted_ssn_keeps_its_separators_beside_another_tilted_line(tmp_path, 
                                       (230, 100, 9, _ssn('-'), ssn_tilt), other, (36, 200, 9, 'Other information')])
     for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
         assert _ssn('') not in _digits(out)
+
+
+@pytest.mark.parametrize('tilt', [0, 1])
+@pytest.mark.parametrize('heading', ['wrapped', 'slash'])
+def test_a_labels_own_punctuation_is_no_separator_on_a_tilted_page(tmp_path, tilt, heading):
+    """A heading's ")" or a label's "/" a point and a half off the SSN's
+    baseline, between two of its digits, stays with the label's letters."""
+    items = ([(200, 100, 7, '(2) Social security', tilt), (200, 109, 7, 'number', tilt), (210, 101.5, 7, _ssn(''), tilt)]
+             if heading == 'wrapped' else [(200, 100, 9, 'SSN/ITIN', tilt), (204, 101.5, 9, _ssn('-'), tilt)])
+    pdf = _draw(tmp_path / 'punctuation.pdf', items + [(36, 200, 9, 'Other information')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _ssn('') not in _digits(out)

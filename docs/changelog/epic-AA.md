@@ -4250,4 +4250,11 @@ doubling its rows less than triples its work.
   hair, and a level band of a whole degree let a hyphenated SSN tilted one
   degree split its label, as on main. Glyphs now share a frame by
   neighbouring angle, and only a float's noise counts as level.
+- A second pass tilted each line its own way, as an OCR layer does: a
+  line a fraction of a degree under the SSN's joined its frame, the SSN
+  drifted off the 0.1-point baseline its hyphens were matched on, and they
+  split its label again. Matching them by pdfplumber's row tolerance
+  instead took a heading's ")" and a label's "/" a point and a half off
+  for separators. A rotated glyph's baseline is now read along its own
+  matrix, one value for a whole run, still to 0.1 point.
 - What still prints is AA92.
