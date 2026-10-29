@@ -991,22 +991,6 @@ def _raw_pdf(path):
     return text, tables
 
 
-def _draw(path, items):
-    """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
-    order given, which is the order pdfplumber meets them in the stream."""
-    from reportlab.pdfgen import canvas
-    page = canvas.Canvas(str(path), pagesize=(612, 792))
-    for x, top, size, text, *angle in items:
-        page.saveState()
-        page.setFont("Helvetica", size)
-        page.translate(x, 792 - top - size)
-        page.rotate(angle[0] if angle else 0)
-        page.drawString(0, 0, text)
-        page.restoreState()
-    page.save()
-    return path
-
-
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "extract_tables",
                                     "extract_csv", "extract_excel"])
 @pytest.mark.parametrize("sep", ["-", ".", "/"])
@@ -1037,6 +1021,22 @@ def test_split_delimited_ssns_at_extraction_boundary(tmp_path, route, sep, label
     assert value not in out
     assert MASKED in out
     assert all(v in out for v in (date, phone, "12-3456789", "850.00"))
+
+
+def _draw(path, items):
+    """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
+    order given, which is the order pdfplumber meets them in the stream."""
+    from reportlab.pdfgen import canvas
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, top, size, text, *angle in items:
+        page.saveState()
+        page.setFont("Helvetica", size)
+        page.translate(x, 792 - top - size)
+        page.rotate(angle[0] if angle else 0)
+        page.drawString(0, 0, text)
+        page.restoreState()
+    page.save()
+    return path
 
 
 class TestMaskingByPosition:
