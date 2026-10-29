@@ -4220,24 +4220,6 @@ cover text and words, and text/table masking covers the new labels.
   apostrophe labels the 4506-C field as the possessive rule already did.
 
 
-## AA93 — authorization-form taxpayer identifiers
-
-Forms 2848 and 8821 both print "Taxpayer identification number(s)" over
-the taxpayer's identifier field. That exact parenthesized plural now labels
-SSNs and ITINs; the singular business heading and an ordinary plural remain
-outside the rule. A hyphenated EIN stays as printed, including beside the
-two individual identifier fields on Form 2848.
-
-Official blank-form words and field rectangles cover Form 2848's
-`TaxpayerIDSSN` and `TaxpayerIDITIN` and Form 8821's `f1_7`. Tests type each
-field alone and together, reconstruct the official word geometry for PDF
-extraction, and cover text, words, tables, spaced identifiers and unrelated
-business headings. Review caught an interaction with AA92's punctuation-only
-label normalization: "(s)" becomes a separate "s" there. That spelling also
-labels the field, and a combined-code probe removes the overlaid identifier
-without requiring either PR to be merged first.
-
-
 ## AA91 — wrapped-heading and rotated identifier overlays
 
 The overlap index now reads the two-row headings the positional reader
@@ -4276,3 +4258,28 @@ doubling its rows less than triples its work.
   for separators. A rotated glyph's baseline is now read along its own
   matrix, one value for a whole run, still to 0.1 point.
 - What still prints is AA92.
+
+
+## AA93 — authorization-form taxpayer identifiers
+
+Forms 2848 and 8821 both print "Taxpayer identification number(s)" over
+the taxpayer's identifier field. That exact parenthesized plural now labels
+SSNs and ITINs; the singular business heading and an ordinary plural remain
+outside the rule. A hyphenated EIN stays as printed, including beside the
+two individual identifier fields on Form 2848.
+
+Official blank-form words and field rectangles cover Form 2848's
+`TaxpayerIDSSN` and `TaxpayerIDITIN` and Form 8821's `f1_7`. Tests type each
+field alone and together, reconstruct the official word geometry for PDF
+extraction, and cover text, words, tables, spaced identifiers and unrelated
+business headings. A label view that reads punctuation as spacing, as
+AA92's overlap reader does, spells "(s)" as a separate "s"; that spelling
+labels the field too.
+
+- Review rebuilt the fixture from the forms as published, byte for byte,
+  and switched off each spelling of the heading: a test went red each time.
+  Nine digits typed into all 103 text fields of Form 2848's two pages and
+  Form 8821's first are masked only in the identifier fields, an EIN typed
+  without its hyphen, and the taxpayer-name line that shares the
+  identifiers' text row. CAF numbers, PTINs, telephone, fax and plan
+  numbers keep theirs.
