@@ -18,6 +18,13 @@ from pdfminer.utils import decode_text
 
 # (file, URL, zero-based page, SSN fields, {field: typed text})
 RECORDS = [
+    # Both authorizations print "Taxpayer identification number(s)". The
+    # plural parenthesis distinguishes their shared individual/entity box
+    # from a business's singular taxpayer-identification heading.
+    ("f2848.pdf", "https://www.irs.gov/pub/irs-pdf/f2848.pdf", 0,
+     ["TaxpayerIDSSN[0]", "TaxpayerIDITIN[0]"], {"TaxpayerIDEIN[0]": "00-0001003"}),
+    ("f8821.pdf", "https://www.irs.gov/pub/irs-pdf/f8821.pdf", 0,
+     ["f1_7[0]"], {}),
     ("f4506c.pdf", "https://www.irs.gov/pub/irs-pdf/f4506c.pdf", 0,
      ["first_ssn[0]", "second_ssn[0]"], {}),
     ("it213_fill_in.pdf", "https://www.tax.ny.gov/pdf/current_forms/it/it213_fill_in.pdf", 0,

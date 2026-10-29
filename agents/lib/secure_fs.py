@@ -239,6 +239,12 @@ _ID_LABEL = (
     # apostrophe optional as in the possessive below. A bare business
     # taxpayer identification heading still does not label an SSN.
     r"|(?:first|spouse['\u2019]?s)[^\S\n]+taxpayer[^\S\n]+identification[^\S\n]+number(?![A-Za-z])"
+    # Forms 2848 and 8821 share this exact heading over the taxpayer's
+    # SSN/ITIN or EIN. The parenthesized plural keeps singular business
+    # taxpayer-identification headings outside this rule; a 2-7 EIN stays
+    # unmasked even in the shared authorization box. A punctuation-normalized
+    # label-only view spells "(s)" as a separate "s".
+    r"|taxpayer[^\S\n]+identification[^\S\n]+number(?:\(s\)|[^\S\n]+s)(?![A-Za-z])"
     rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
     r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
