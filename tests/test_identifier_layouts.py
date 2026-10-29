@@ -18,7 +18,7 @@ from tests.test_parse_utils import _draw, ROUTING
 
 LAYOUTS = json.loads((Path(__file__).parent / 'fixtures/prior_return/identifier_layouts.json').read_text(encoding='utf-8'))
 BY_FORM = {Path(record['source']).stem: record for record in LAYOUTS}
-FIELDS = {'f4506c': 2, 'it213_fill_in': 6, 'f1095a--2025': 5, 'f8332': 3, 'f1040sei--2025': 3, 'f1095c--2025': 2, '2025-593': 1}
+FIELDS = {'f2848': 2, 'f8821': 1, 'f4506c': 2, 'it213_fill_in': 6, 'f1095a--2025': 5, 'f8332': 3, 'f1040sei--2025': 3, 'f1095c--2025': 2, '2025-593': 1}
 
 
 def _words(record: dict) -> list[dict]:
@@ -54,7 +54,7 @@ def test_every_identifier_in_the_official_layouts(form):
     assert _governed_runs(words) == set(values), 'every SSN, and no printed form number'
 
 
-@pytest.mark.parametrize('form', ['f4506c', 'it213_fill_in'])
+@pytest.mark.parametrize('form', ['f2848', 'f8821', 'f4506c', 'it213_fill_in'])
 def test_each_field_alone_in_the_official_layout(form):
     """The sixth child is the first with an SSN; earlier rows stay blank.
     A repeated value elsewhere must not mask a positional miss by value."""
@@ -74,6 +74,60 @@ def test_4506c_labels_in_text_and_cells(label):
     assert mask_table([[label, 'Amount'], [_value(0), 1234.56]])[1] == ['XXX-XX-1000', 1234.56]
 
 
+@pytest.mark.parametrize('label', ['Taxpayer identification number(s)', 'TAXPAYER IDENTIFICATION NUMBER(S)'])
+@pytest.mark.parametrize('value', [_value(0), ' '.join(('000', '00', '1000')), ' '.join(_value(0))])
+def test_authorization_labels_in_text_and_cells(label, value):
+    assert mask_ssn(f'{label}: {value}') == f'{label}: XXX-XX-1000'
+    assert mask_ssn(f'{label}\n{value}') == f'{label}\nXXX-XX-1000'
+    assert mask_table([[label, 'Amount'], [value, 1234.56]])[1] == ['XXX-XX-1000', 1234.56]
+
+
+def test_the_authorization_heading_in_a_punctuation_normalized_label_view():
+    from agents.lib.secure_fs import identifier_spans
+    label = 'Taxpayer identification number s'
+    assert identifier_spans(label)[0] == [(0, len(label), False)]
+
+
+def test_an_overlay_on_the_authorization_heading(tmp_path):
+    import pdfplumber
+    from agents.lib.parse_utils import _safe_pdf_page
+    pdf = _draw(tmp_path / 'authorization-overlay.pdf', [(200, 100, 9, 'Taxpayer identification number(s)'),
+                                                       (200, 100, 9, _value(0))])
+    with pdfplumber.open(pdf) as document:
+        assert not any(c['text'].isdigit() for c in _safe_pdf_page(document.pages[0], lambda: None).chars)
+
+
+@pytest.mark.parametrize('form', ['f2848', 'f8821'])
+def test_authorization_layouts_at_the_pdf_boundaries(tmp_path, form):
+    from reportlab.pdfbase.pdfmetrics import getDescent, stringWidth
+    from reportlab.pdfgen import canvas
+    record = BY_FORM[form]
+    words = _words(record)
+    for i, box in enumerate(record['fields']):
+        _type(words, _value(i), box)
+    # A 2-7 EIN remains as printed under the same heading, on Form 2848.
+    for text, *box in record.get('typed', []):
+        _type(words, text, [text, *box])
+    # Reconstruct the official word positions as glyphs so the extraction
+    # boundary, rather than just the positional helper, must mask the fields.
+    pdf = tmp_path / 'authorization.pdf'
+    page = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    for word in words:
+        size = word['bottom'] - word['top']
+        text = page.beginText(word['x0'], 792 - word['bottom'] - getDescent('Helvetica') * size / 1000)
+        text.setFont('Helvetica', size)
+        text.setHorizScale(100 * (word['x1'] - word['x0']) / stringWidth(word['text'], 'Helvetica', size))
+        # Official forms contain explicit space glyphs even when their
+        # geometric gap is below pdfplumber's word tolerance.
+        text.textOut(word['text'] + ' ')
+        page.drawText(text)
+    page.save()
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        for i in range(len(record['fields'])):
+            assert _value(i) not in out and f'XXX-XX-{1000 + i}' in out
+        assert all(text in out for text, *box in record.get('typed', []))
+
+
 def _layout(label: str, offset: int, value: str) -> list[tuple]:
     """`value` `offset` points under `label`, a line off its column between
     them: page text's label-above rule stops there, so a late child's entry
@@ -83,6 +137,7 @@ def _layout(label: str, offset: int, value: str) -> list[tuple]:
 
 @pytest.mark.parametrize('label,offset', [("1b. First taxpayer identification number", 18),
                                         ("2b. Spouse's taxpayer identification number", 18),
+                                        ('Taxpayer identification number(s)', 18),
                                         ('SSN or ITIN', 140)])
 def test_official_label_layouts_at_both_pdf_boundaries(tmp_path, label, offset):
     pdf = _draw(tmp_path / 'identifiers.pdf', _layout(label, offset, _value(0)) + [(36, 400, 9, f'Routing {ROUTING}')])
@@ -94,6 +149,9 @@ def test_official_label_layouts_at_both_pdf_boundaries(tmp_path, label, offset):
 @pytest.mark.parametrize('label,offset', [('Employer taxpayer identification number', 18),
                                         ('Payer taxpayer identification number', 18),
                                         ('Business taxpayer identification number', 18),
+                                        ('Taxpayer identification number', 18),
+                                        ('Taxpayer identification numbers', 18),
+                                        ('Taxpayer identification number(s)XYZ', 18),
                                         ('SSN or ITIN for reference', 140),
                                         ('Payer SSN or ITIN', 140)])
 def test_unrelated_headings_keep_their_numbers(tmp_path, label, offset):
@@ -101,6 +159,32 @@ def test_unrelated_headings_keep_their_numbers(tmp_path, label, offset):
     pdf = _draw(tmp_path / 'other.pdf', _layout(label, offset, ROUTING))
     for text in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
         assert ROUTING in text
+
+
+def test_authorization_heading_keeps_a_hyphenated_ein():
+    label, ein = 'Taxpayer identification number(s)', '00-0001003'
+    assert mask_ssn(f'{label}\n{ein}') == f'{label}\n{ein}'
+    assert mask_table([[label], [ein]]) == [[label], [ein]]
+
+
+def test_an_authorization_heading_in_a_pdf_table(tmp_path):
+    from reportlab.pdfgen import canvas
+    from agents.lib.parse_utils import extract_tables
+    pdf = tmp_path / 'authorization-table.pdf'
+    page = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    for y in (600, 630, 660):
+        page.line(100, y, 500, y)
+    for x in (100, 350, 500):
+        page.line(x, 600, x, 660)
+    page.setFont('Helvetica', 9)
+    page.drawString(110, 640, 'Taxpayer identification number(s)')
+    page.drawString(360, 640, 'Amount')
+    page.drawString(110, 610, _value(0))
+    page.drawString(360, 610, '1234.56')
+    page.save()
+    tables = extract_tables(str(pdf))
+    assert tables and _value(0) not in str(tables)
+    assert 'XXX-XX-1000' in str(tables) and '1234.56' in str(tables)
 
 
 def test_an_intervening_heading_stops_the_late_child_column(tmp_path):
