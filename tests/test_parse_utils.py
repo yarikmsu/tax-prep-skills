@@ -550,23 +550,52 @@ class TestMaskSsn:
 
     @pytest.mark.parametrize("sep", ["-", ".", "/"])
     @pytest.mark.parametrize("gap", [" ", "\t", "\u00a0", "\u2009", " \t\u00a0"])
-    @pytest.mark.parametrize("prefix", ["Reference", "Employee's SSN"])
-    def test_horizontal_gaps_beside_ssn_separators(self, sep, gap, prefix):
+    @pytest.mark.parametrize("layout", ["{label}: {value} Wages 850.00", "{label}\n{value}"])
+    def test_a_split_ssn_under_its_label(self, sep, gap, layout):
+        """An OCR layer splits a delimited SSN beside its separators. Under
+        a label, beside it, below it or in the cell it governs, every split
+        masks, its last four kept."""
         from itertools import product
-        from agents.lib.secure_fs import names_an_identifier
+        label = "Employee's SSN"
         for gaps in product(("", gap), repeat=4):
             for groups in (("000", "00", LAST4), ("900", "70", LAST4)):
                 value = _with_separator_gaps(groups, sep, gaps)
-                text = f"{prefix}: {value} Wages 850.00"
-                expected = f"{prefix}: {MASKED} Wages 850.00"
-                assert mask_ssn(text) == expected
+                expected = layout.format(label=label, value=MASKED)
+                assert mask_ssn(layout.format(label=label, value=value)) == expected
                 assert mask_ssn(expected) == expected
-                # A label carrying this spelling has its value already;
-                # it must not claim the next row's routing number.
-                assert mask_ssn(f"{text}\nRouting {ROUTING}") == f"{expected}\nRouting {ROUTING}"
-                # A newly refused filename must also be safe in its error.
-                assert names_an_identifier(f"form-{value}.pdf")
-                assert redact(f"form-{value}.pdf") == "form-[REDACTED].pdf"
+                assert mask_table([[label, value]]) == [[label, MASKED]]
+                assert mask_table([[label], [value]]) == [[label], [MASKED]]
+
+    @pytest.mark.parametrize("text", [
+        "Your total tax was $1,234.56. 2025 payments follow.", "Paid $500.00. 1099-INT attached",
+        "Dividends 250 - 15 - 1200", "Net 600 - 10 - 2000", "Ratio 125 / 50 / 1000",
+        "Losses 100- 25- 1000", "Total 123.45 . 6789", "Total 123.45\t.\u00a06789",
+        f"Reference {_with_separator_gaps(('000', '00', LAST4), '-', ('', '', '', ' '))}",
+    ])
+    def test_a_split_shape_without_a_label_prints_as_printed(self, text):
+        """Unlabelled, a separator with whitespace beside it is an amount
+        ending a sentence before a year, a dash for zero between figures, a
+        subtraction or a ratio as often as an OCR-split SSN."""
+        assert mask_ssn(text) == text
+        assert mask_table([[text]]) == [[text]]
+
+    @pytest.mark.parametrize("label,row", [
+        ("SSN", "Dividends 250 - 15 - 1200"),
+        ("Your social security number", "Tax was $1,234.56. 2025 payments"),
+        ("Spouse's SSN", f"Your SSN {_with_separator_gaps(('000', '00', '4321'), '-', ('', '', '', ' '))}"),
+    ])
+    @pytest.mark.parametrize("value", [_ssn(""), _ssn(" "), " ".join(_ssn(""))])
+    def test_a_split_shape_on_a_labels_row_leaves_the_ssn_under_it_masked(self, label, row, value):
+        """A split spelling never tells a label its value is on its row: an
+        amount printed there would hand back the SSN printed under it."""
+        assert mask_ssn(f"{label} {row}\n{value}").endswith(f"\n{MASKED}")
+
+    @pytest.mark.parametrize("row", ["SSN Dividends 250 - 15 - 1200", "RECIPIENT'S TIN Adj 100- 25- 1000",
+                                     "Your social security number Paid $1,234.56. 2025 est"])
+    def test_a_split_shape_across_a_labels_row_is_no_value(self, row):
+        """Page text joins a label to the columns across its row: a split
+        shape with a word between is a figure printed there."""
+        assert mask_ssn(row) == row
 
     @pytest.mark.parametrize("sep", ["-", ".", "/"])
     @pytest.mark.parametrize("gap", ["", " ", "\t", "\u00a0"])
@@ -583,10 +612,10 @@ class TestMaskSsn:
     def test_spaced_ssn_separators_must_agree_and_digits_stay_bounded(self, gap):
         from itertools import permutations
         for first, second in permutations("-./", 2):
-            mixed = f"000{gap}{first}{gap}00{gap}{second}{gap}{LAST4}"
+            mixed = f"SSN 000{gap}{first}{gap}00{gap}{second}{gap}{LAST4}"
             assert mask_ssn(mixed) == mixed
         value = _with_separator_gaps(("000", "00", LAST4), "-", [gap] * 4)
-        for text in ("1" + value, value + "1"):
+        for text in ("SSN 1" + value, "SSN " + value + "1"):
             assert mask_ssn(text) == text
 
     @pytest.mark.parametrize("gap", ["\n", "\r", "\v", "\f", "\u0085", "\u2028", "\u2029"])
@@ -595,7 +624,7 @@ class TestMaskSsn:
             gaps = [""] * 4
             gaps[position] = gap
             value = _with_separator_gaps(("000", "00", LAST4), "-", gaps)
-            assert mask_ssn(value) == value
+            assert mask_ssn(f"SSN {value}") == f"SSN {value}"
 
     def test_an_itin_is_masked_the_same_way(self):
         assert mask_ssn(f"ITIN {_itin()}") == f"ITIN {MASKED}"
@@ -1018,7 +1047,7 @@ def _raw_pdf(path):
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "extract_tables",
                                     "extract_csv", "extract_excel"])
 @pytest.mark.parametrize("sep", ["-", ".", "/"])
-@pytest.mark.parametrize("label", ["Reference", "Employee SSN"])
+@pytest.mark.parametrize("label", ["SSN", "Employee SSN"])
 def test_split_delimited_ssns_at_extraction_boundary(tmp_path, route, sep, label):
     from agents.lib import parse_utils
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle

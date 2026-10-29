@@ -4376,37 +4376,33 @@ change; unrelated identifier fields survive after it.
 ## AA95 — spaces beside identifier separators (#91)
 
 OCR can insert horizontal whitespace on either side of either separator in
-a delimited SSN or ITIN. The shared delimiter pattern now accepts those
-gaps while keeping the 3-2-4 groups and the same hyphen, dot or slash twice.
-Its alternatives have no captures, preserving every caller's last-four
-group. Filename detection and error redaction inherit the same spelling.
+a delimited SSN or ITIN. Under an identifier label such a split now masks,
+its last four kept: straight after the label on its row, on the line under
+a label that ends its row, and in a table cell a label cell governs. It
+takes the 3-2-4 groups and the same hyphen, dot or slash twice; dates,
+telephone numbers, EINs and vertical whitespace stay outside it.
 
-Regressions cover every combination of the four gap positions, horizontal
-Unicode spaces and tabs, labelled and unlabelled values, and all five
-document extraction routes. Dates, phone numbers, EINs and amounts survive;
-mixed separators, longer digit groups and vertical whitespace are outside
-the new match. Pre-fix tests reproduce the leak.
-
-- Review drew the new spelling on tilted pages. AA92's overlay rows spell
-  every mark "-" and join their words with a space, so the wider pattern
-  joined two words there: on a page tilted 0.3 degrees "125.50 $1000.00"
-  read as an SSN split beside its separator, and both amounts left the
-  page. Across words the overlay now counts a run only with the same
-  hyphen, dot or slash twice, as page text does; within one word any two
-  marks still delimit, as before.
-- A space in the stream still makes an off-level run unreadable, so a
-  tilted split goes whole, its last four with it. Page text clusters a
-  split's words by their tops, not by the rows the overlay reads: tilted
-  15 degrees, "000-00-" and "6789" print a line apart, and a rule letting
-  page text mask them printed them whole.
-- Across 5,148 generated pages of split SSNs, tilted 0 to 180 degrees and
-  spaced one or three wide, none prints an SSN main or the PR as opened
-  masks; the leaks fall to about a seventh of main's and half the PR's.
-  What still prints, as on main, is a separator spaced wide on both sides
-  off level. On 264 pages tilted 5 degrees or less the PR as opened kept a
-  split's last four, by where its space fell, which now goes whole.
-- 999 pages of IRS publications hold no run the wider pattern matches and
-  the old one did not. Declined: an amount followed by a number opening
-  with its own separator, "125.50 .1000.00" or "100-25 -1000", masks as an
-  SSN at any angle. The pre-commit gate still blocks only the contiguous
-  spellings: in committed source a spaced minus is arithmetic.
+- As opened, the PR masked the split with no label, through the delimiter
+  pattern the redactor, filename refusal and positional readers share.
+  Review found that shape in ordinary text: an amount ending a sentence
+  before a year ("$1,234.56. 2025" became "$1,XXX-XX-2025"), a dash
+  standing for zero between two figures, a subtraction. On a label's row
+  it also told the label its value was there, so the SSN printed under the
+  label printed whole where main masks it. And AA92's overlay rows, digits
+  and marks only, joined values across the words between them on a tilted
+  page, whose unlabelled rule then removed them.
+- The split is therefore label-only, as the whitespace spelling and bare
+  nine digits are, and never tells a label its value is beside it: it adds
+  masking and changes no decision main makes. The shared delimiter pattern,
+  and with it filename refusal, the redactor and the overlay, keeps main's
+  contiguous spellings.
+- On its label's row a split is the label's own only straight after it,
+  with no word between: page text joins a label to the columns across the
+  page, and "SSN Dividends 250 - 15 - 1200" is a figure printed there. On
+  the line under a label, or in a cell a label governs, a split-shaped
+  figure masks as the whitespace spelling there does, the safe direction.
+- Still printing, as on main: an unlabelled split, one page text breaks
+  across lines on a steep page, and one only position ties to its label,
+  AA96. Main also prints the SSN under a label whose row carries a figure
+  in the whitespace or delimited spelling, a wage with its cents in their
+  own column and then a year: the mechanism review used, AA97.

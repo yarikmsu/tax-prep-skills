@@ -101,14 +101,7 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # alone; the test is the claim now.
 # The hyphen, dot and slash spellings, shared with `_ID_DELIMITED` below so a
 # spelling the gate learns reaches the redactor and the masker together.
-# An OCR layer can split either side of either separator. Only horizontal
-# whitespace belongs here: joining rows could consume unrelated form values.
-# Build one alternative per separator, with no captures, so both marks agree
-# and the masker's existing last-four group keeps its number.
-_SSN_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
-_SSN_DELIMS = "(?:" + "|".join(
-    rf"{_SSN_GAP}{re.escape(sep)}{_SSN_GAP}[0-9]{{2}}{_SSN_GAP}{re.escape(sep)}{_SSN_GAP}"
-    for sep in "-./") + ")"
+_SSN_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_SSN_DELIMS}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
@@ -177,9 +170,10 @@ def redact(text) -> str:
 #
 # Only the hyphen, dot and slash spellings are masked UNLABELED. The
 # whitespace spelling and the bare nine-digit run are masked only under an
-# identifier label, because both are shapes a document prints for other
-# things: nine bare digits is a routing number exactly as often as an SSN, and
-# a form that prints cents in their own column extracts as `850 00` — followed
+# identifier label, as is a delimited one an OCR layer split (`_ID_SPLIT`),
+# because each is a shape a document prints for other things: nine bare
+# digits is a routing number exactly as often as an SSN, and a form that
+# prints cents in their own column extracts as `850 00` — followed
 # by a four-digit figure (a year, a box number, the next amount) that is the
 # whitespace spelling to the digit. A lookbehind for a comma or dollar sign
 # protected only amounts of $1,000 or more; below that line the masker erased
@@ -265,9 +259,28 @@ _ID_VALUE_RE = re.compile(
 # the whitespace spelling it is masked only under a label: Form 1040 prints
 # the refund routing number in a comb field too.
 _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}")
+# An OCR layer splits a delimited SSN beside a separator, horizontal
+# whitespace on either side of either mark. Like the whitespace spelling it
+# is masked only under a label: unlabelled, the same shape is an amount
+# ending a sentence before a year ("$1,234.56. 2025"), a dash standing for
+# zero between two figures, a subtraction. Nor does it tell a label its
+# value is there (`_ID_ANY_VALUE`): a label whose row also prints such an
+# amount would give up the SSN printed under it. The same mark twice, and no
+# capture of its own, so the last four stays the pattern's one group.
+_ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
+_ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
+                     for mark in "-./")
+# What a label governs: the whitespace spelling, or a delimited one split.
+_ID_GOVERNED = re.compile(
+    rf"(?<![0-9])[0-9]{{3}}(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
+# On its label's row a split is the label's own only straight after it, with
+# no word between: page text joins a label to columns across the page, and
+# "SSN Dividends 250 - 15 - 1200" is a figure printed there.
+_ID_LABELED_SPLIT = re.compile(
+    rf"({_ID_LABEL}[^0-9A-Za-z\n]{{0,8}})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
 _ID_ANY_VALUE = re.compile(
     rf"{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)", re.IGNORECASE)
@@ -330,7 +343,7 @@ def _mask_under_labels(text: str) -> str:
     for i in range(1, len(raw)):
         above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
         if _label_ends(text, starts[above], starts[above] + len(raw[above])):
-            lines[i] = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw[i]))
+            lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", raw[i]))
     return "\n".join(lines)
 
 
@@ -469,7 +482,8 @@ def mask_ssn(value):
     out = _mask_under_labels(value)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
     out = _mask_spaced_after_labels(out)
-    return _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
+    out = _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
+    return _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
 
 
 def first_non_finite(node, _path: tuple = ()) -> "str | None":
@@ -534,7 +548,7 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
-    masked = _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1",
+    masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
                                            _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
     return masked if masked != text else cell
 
