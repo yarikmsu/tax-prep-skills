@@ -10,32 +10,6 @@ of AA13 and AA12, AA16 from AA6's measurements, and AA17 from AA6's review.
 
 ---
 
-## AA91 — wrapped-heading and rotated identifier overlays
-
-The overlap index now reads the same two-row headings as the positional
-reader, including the lower "number" row. It still indexes only identifier
-label letters. Rotated digits and their separators are projected onto their
-own baseline for grouping, then checked against the source page's label
-letters. The original glyphs leave a derived page before text, word or table
-extraction; source characters, bytes and table rules stay intact.
-
-Regressions cover both wrapped rows, clockwise and counterclockwise angles,
-separators, split groups, source immutability and PDF tables. Removing either
-the wrapped-heading reader or the rotation projection breaks its regression.
-Review found an overlay touching only "Your" before a wrapped match; the
-overlap index now includes the complete upper phrase, with the positional
-reader's original box unchanged. Its regression failed before that fix.
-A dense statement preserves CUSIPs and account numbers set tight below their
-headings while using an index budget too small to index all those letters.
-Doubling its rows grows tracked work by about 1.97 times. An interleaved
-old/new comparison of full extraction on that synthetic statement measured
-about 1.02 times the baseline; the overlap routine alone costs more, while
-the PDF parse still dominates the read. Timing ratios are observations, not
-test thresholds.
-
-This entry records the implementation branch; the task remains open in the
-backlog until its PR is merged.
-
 ## AA1 — the Earned Income Credit is disclosed instead of defaulting to zero
 
 ### What was wrong
@@ -4244,3 +4218,36 @@ cover text and words, and text/table masking covers the new labels.
   phrase already ends at one. Only the exact heading reaches that far: a
   "Payer SSN or ITIN" twin keeps its number, and "Spouses" without its
   apostrophe labels the 4506-C field as the possessive rule already did.
+
+
+## AA91 — wrapped-heading and rotated identifier overlays
+
+The overlap index now reads the two-row headings the positional reader
+reads ("(2) Social security" over "number"), its whole upper phrase
+included, so an overlay touching only "Your" before the match is caught;
+the positional reader keeps the match's own box. It still indexes only
+identifier label letters. Rotated digits and their separators are read
+along their own baseline from the PDF matrix, glyphs within a degree of
+their neighbours as one run, and checked against the source page's label
+letters. The original glyphs leave a derived page before text, word or
+table extraction; source characters, bytes and table rules stay intact.
+
+Regressions cover both wrapped rows, clockwise and counterclockwise angles,
+separators, split groups, source immutability and PDF tables. A dense
+statement keeps the CUSIPs and account numbers set tight under their
+headings within an index budget too small to hold all their letters, and
+doubling its rows less than triples its work.
+
+- Review compared generated pages against main: rotations, skew, scaling,
+  mirroring, font sizes, separators and wrapped headings. No new full SSN
+  printed, but any contact by a glyph off level counted as interleaving: on
+  a page tilted 0.3 degrees, as a scan's text layer is, the value on the
+  line under a label left the parse, and a rotated date or form code
+  touching a label went whole. A rotated word now joins a label's garble
+  only on that label's line, glyph by glyph, and goes whole only as nine
+  digits running on together.
+- Frames keyed by a rounded direction split an SSN whose glyphs differ by a
+  hair, and a level band of a whole degree let a hyphenated SSN tilted one
+  degree split its label, as on main. Glyphs now share a frame by
+  neighbouring angle, and only a float's noise counts as level.
+- What still prints is AA92.
