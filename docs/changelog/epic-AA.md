@@ -4260,21 +4260,6 @@ doubling its rows less than triples its work.
 - What still prints is AA92.
 
 
-## AA95 — spaces beside identifier separators (#91, awaiting merge)
-
-OCR can insert horizontal whitespace on either side of either separator in
-a delimited SSN or ITIN. The shared delimiter pattern now accepts those
-gaps while keeping the 3-2-4 groups and the same hyphen, dot or slash twice.
-Its alternatives have no captures, preserving every caller's last-four
-group. Filename detection and error redaction inherit the same spelling.
-
-Regressions cover every combination of the four gap positions, horizontal
-Unicode spaces and tabs, labelled and unlabelled values, and all five
-document extraction routes. Dates, phone numbers, EINs and amounts survive;
-mixed separators, longer digit groups and vertical whitespace are outside
-the new match. Pre-fix tests reproduce the leak. The implementation awaits
-merge; the backlog retains the open item until then.
-
 ## AA93 — authorization-form taxpayer identifiers
 
 Forms 2848 and 8821 both print "Taxpayer identification number(s)" over
@@ -4387,3 +4372,41 @@ change; unrelated identifier fields survive after it.
   Copy A's 70 text fields on the blank form, one field at a time. Against
   main, only a value under 13i's heading now masks, through page text,
   words and position alike; 13l, 13m, 16b and 12e print as before.
+
+## AA95 — spaces beside identifier separators (#91)
+
+OCR can insert horizontal whitespace on either side of either separator in
+a delimited SSN or ITIN. The shared delimiter pattern now accepts those
+gaps while keeping the 3-2-4 groups and the same hyphen, dot or slash twice.
+Its alternatives have no captures, preserving every caller's last-four
+group. Filename detection and error redaction inherit the same spelling.
+
+Regressions cover every combination of the four gap positions, horizontal
+Unicode spaces and tabs, labelled and unlabelled values, and all five
+document extraction routes. Dates, phone numbers, EINs and amounts survive;
+mixed separators, longer digit groups and vertical whitespace are outside
+the new match. Pre-fix tests reproduce the leak.
+
+- Review drew the new spelling on tilted pages. AA92's overlay rows spell
+  every mark "-" and join their words with a space, so the wider pattern
+  joined two words there: on a page tilted 0.3 degrees "125.50 $1000.00"
+  read as an SSN split beside its separator, and both amounts left the
+  page. Across words the overlay now counts a run only with the same
+  hyphen, dot or slash twice, as page text does; within one word any two
+  marks still delimit, as before.
+- A space in the stream still makes an off-level run unreadable, so a
+  tilted split goes whole, its last four with it. Page text clusters a
+  split's words by their tops, not by the rows the overlay reads: tilted
+  15 degrees, "000-00-" and "6789" print a line apart, and a rule letting
+  page text mask them printed them whole.
+- Across 5,148 generated pages of split SSNs, tilted 0 to 180 degrees and
+  spaced one or three wide, none prints an SSN main or the PR as opened
+  masks; the leaks fall to about a seventh of main's and half the PR's.
+  What still prints, as on main, is a separator spaced wide on both sides
+  off level. On 264 pages tilted 5 degrees or less the PR as opened kept a
+  split's last four, by where its space fell, which now goes whole.
+- 999 pages of IRS publications hold no run the wider pattern matches and
+  the old one did not. Declined: an amount followed by a number opening
+  with its own separator, "125.50 .1000.00" or "100-25 -1000", masks as an
+  SSN at any angle. The pre-commit gate still blocks only the contiguous
+  spellings: in committed source a spaced minus is arithmetic.
