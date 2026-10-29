@@ -634,6 +634,30 @@ class TestMaskSsn:
         an SSN in the transcript."""
         assert mask_ssn(f"{label} {_ssn('')}") == f"{label} {MASKED}"
 
+    @pytest.mark.parametrize("possessive", ["Recipient's", "Recipient\u2019s", "RECIPIENTS"])
+    @pytest.mark.parametrize("sep", ["", " ", "-"])
+    @pytest.mark.parametrize("itin", [False, True])
+    @pytest.mark.parametrize("layout", ["{label} {value}", "{label}\n{value}"])
+    def test_form_1042s_recipient_us_tin(self, possessive, sep, itin, layout):
+        # TY2026 https://www.irs.gov/pub/irs-pdf/f1042s.pdf, box 13i.
+        # Keep the form's words, including the qualifier after TIN.
+        label = f"13i {possessive} U.S. TIN, if any"
+        value = sep.join(_itin().split("-")) if itin else _ssn(sep)
+        text = layout.format(label=label, value=value)
+        assert mask_ssn(text) == layout.format(label=label, value=MASKED)
+
+    @pytest.mark.parametrize("label", [
+        "16b Payer's TIN", "16b Payer\u2019s TIN", "Payer's U.S. TIN",
+        "12e Withholding agent's global intermediary identification number (GIIN)",
+        "13l Recipient's GIIN", "13m Recipient's FTIN, if any", "U.S. TIN",
+    ])
+    def test_form_1042s_other_identifiers_are_not_ssn_labels(self, label):
+        from agents.lib.secure_fs import identifier_spans
+        assert identifier_spans(label)[0] == []
+        for gap in (" ", "\n"):
+            text = f"{label}{gap}{ROUTING}"
+            assert mask_ssn(text) == text
+
     @pytest.mark.parametrize("label", [
         "PAYER'S TIN", "TIN", "Employer identification number",
         "FILER'S TIN", "ISSUER'S TIN", "LENDER'S TIN", "TRUSTEE'S TIN",
@@ -1037,6 +1061,30 @@ def _draw(path, items):
         page.restoreState()
     page.save()
     return path
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "extract_tables"])
+@pytest.mark.parametrize("sep", ["", " ", "-"])
+def test_form_1042s_tin_through_pdf_routes(tmp_path, route, sep):
+    from agents.lib import parse_utils
+    from reportlab.platypus import SimpleDocTemplate, Spacer, Table, TableStyle
+    path = tmp_path / "form-1042s.pdf"
+    # Headings read from the TY2026 blank form, with synthetic field values.
+    # Separate boxes, rather than a continuous identifier column governing
+    # every row of one table (mask_table's header contract).
+    story = []
+    for label, value in [("13i Recipient's U.S. TIN, if any", _ssn(sep)),
+                         ("16b Payer's TIN", ROUTING),
+                         ("12e Withholding agent's global intermediary identification number (GIIN)", ROUTING)]:
+        table = Table([[label], [value]], colWidths=[540])
+        table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, "black"),
+                                   ("FONTSIZE", (0, 0), (-1, -1), 6)]))
+        story.extend([table, Spacer(1, 18)])
+    SimpleDocTemplate(str(path)).build(story)
+    out = repr(getattr(parse_utils, route)(str(path), workspace=str(tmp_path)))
+    assert _ssn(sep) not in out
+    assert MASKED in out
+    assert out.count(ROUTING) == 2
 
 
 class TestMaskingByPosition:
