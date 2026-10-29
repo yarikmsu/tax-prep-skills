@@ -483,3 +483,16 @@ def test_a_tilted_page_reads_a_grazing_split_run_as_a_level_page_does(tmp_path, 
             chars = document.pages[0].chars
             return ''.join(c['text'] for c in chars if id(c) in _overlaid_digits(chars, lambda: None))
     assert hidden(tilt) == hidden(0)
+
+
+@pytest.mark.parametrize('label', ['Your social security number', 'Your favourite colour here'])
+def test_a_chain_of_rotated_decoys_does_not_carry_off_an_ssn(tmp_path, label):
+    """Digits elsewhere on the page, each a degree under the next from just
+    off level up to a 90-degree SSN, put it in a frame read along their
+    first baseline. It stays masked under its label; with no label it
+    prints, so the read would show a leak."""
+    decoys = [(300 + 9 * (k % 30), 400 + 14 * (k // 30), 9, '1', 1 + 0.9 * k) for k in range(98)]
+    pdf = _draw(tmp_path / 'decoys.pdf', [(200, 100, 9, label), (200, 112, 9, _ssn('-'), 90),
+                                         (36, 200, 9, 'Other information')] + decoys)
+    out = _digits(extract_pdf_text(str(pdf))[0])
+    assert (_ssn('') in out or _ssn('')[::-1] in out) == (label != 'Your social security number')
