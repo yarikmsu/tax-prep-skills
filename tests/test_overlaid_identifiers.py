@@ -766,6 +766,40 @@ def test_a_rotated_ssn_split_by_spaces(tmp_path, angle, split):
     _assert_masked(_draw(tmp_path / 'split.pdf', [(300, 400, 9, spelled, angle), (36, 600, 9, 'Other information')]))
 
 
+@pytest.mark.parametrize('angle', [0.3, 1])
+@pytest.mark.parametrize('line', ['Interest 125.50 $1000.00', 'Interest 125.50 -1000.00',
+                                  'Interest 125.50 (1000.00)', 'Balance 125.50 /2026'])
+def test_tilted_amounts_side_by_side_stay(tmp_path, angle, line):
+    """Overlay rows spell every mark "-", so an amount and the "$" of the
+    next take the shape of an SSN split beside its separator there. With
+    no label a split is no SSN: on a tilted scan these are two amounts."""
+    pdf = _draw(tmp_path / 'amounts.pdf', [(72, 140, 11, line, angle), (36, 600, 9, 'Other information')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _digits(out) == _digits(line)
+
+
+@pytest.mark.parametrize('items', [
+    [(50, 200, 10, 'Fee 125.', 0.5), (127, 200, 10, 'Rate 50.', 0.5), (204, 200, 10, 'Year 2025', 0.5)],
+    [(50, 200, 10, 'Wages 100-', 0.05), (140, 200, 10, 'Federal 25-', 0.05), (237, 200, 10, 'State 1000', 0.05)],
+    [(60, 200, 12, 'Your total tax was $1,234.56. 2025 payments follow.', 0.05)],
+])
+def test_tilted_values_with_words_between_stay(tmp_path, items):
+    """Overlay rows hold digits and marks only, so the words between these
+    values vanish there and a split SSN's shape joins them: no label, and
+    page text prints them apart."""
+    pdf = _draw(tmp_path / 'values.pdf', items + [(36, 600, 9, 'Other information')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _digits(out) == ''.join(_digits(item[3]) for item in items)
+
+
+@pytest.mark.parametrize('row', ['Dividends 250 - 15 - 1200', 'Tax was $1,234.56. 2025 payments'])
+@pytest.mark.parametrize('value', [_ssn(''), _ssn(' ')])
+def test_a_split_shape_on_a_labels_row_leaves_its_ssn_masked(tmp_path, row, value):
+    """A figure across the row from a label, spelled as an OCR-split SSN,
+    is no sign that the label's value is beside it: the SSN under it goes."""
+    _assert_masked(_draw(tmp_path / 'row.pdf', [(50, 100, 8, 'SSN'), (260, 100, 8, row), (50, 112, 10, value)]))
+
+
 @pytest.mark.parametrize('lead', [9.5, 11])
 def test_a_tilted_reference_under_tight_leading_keeps_its_last_four(tmp_path, lead):
     """Lines above and below overlap its box, not its row: page text reads

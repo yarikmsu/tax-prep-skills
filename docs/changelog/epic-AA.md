@@ -4372,3 +4372,45 @@ change; unrelated identifier fields survive after it.
   Copy A's 70 text fields on the blank form, one field at a time. Against
   main, only a value under 13i's heading now masks, through page text,
   words and position alike; 13l, 13m, 16b and 12e print as before.
+
+## AA95 — spaces beside identifier separators (#91)
+
+OCR can insert horizontal whitespace on either side of either separator in
+a delimited SSN or ITIN. Under an identifier label such a split now masks,
+its last four kept: straight after the label on its row, on the line under
+a label that ends its row, and in a table cell a label cell governs. It
+takes the 3-2-4 groups and the same hyphen, dot or slash twice; dates,
+telephone numbers, EINs and vertical whitespace stay outside it.
+
+- As opened, the PR masked the split with no label, through the delimiter
+  pattern the redactor, filename refusal and positional readers share.
+  Review found that shape in ordinary text: an amount ending a sentence
+  before a year ("$1,234.56. 2025" became "$1,XXX-XX-2025"), a dash
+  standing for zero between two figures, a subtraction. On a label's row
+  it also told the label its value was there, so the SSN printed under the
+  label printed whole where main masks it. And AA92's overlay rows, digits
+  and marks only, joined values across the words between them on a tilted
+  page, whose unlabelled rule then removed them.
+- The split is therefore label-only, as the whitespace spelling and bare
+  nine digits are, and never tells a label its value is beside it: it adds
+  masking and changes no decision main makes. The shared delimiter pattern,
+  and with it filename refusal, the redactor and the overlay, keeps main's
+  contiguous spellings.
+- On its label's row a split is the label's own only straight after it,
+  spaces and one colon, number sign or period between: page text joins a
+  label to the columns across the page ("SSN Dividends 250 - 15 - 1200"),
+  and prose names a label before a figure ("fee per ITIN: $125.50. 2025").
+  On the line under a label, or in a cell a label governs, a split-shaped
+  figure masks as the whitespace spelling there does, the safe direction;
+  so does one on the line under a prose "SSN" with no value after it,
+  main's trigger for the whitespace spelling too.
+- A second review drew 200,000 strings and about 6,800 PDF pages against
+  main: none prints an SSN main masks. Over 999 pages of IRS publications
+  no page masks differently from main. Generated pages of split SSNs
+  under a label, tilted up to a degree, printed 588 of 792 whole on main
+  and none now.
+- Still printing, as on main: an unlabelled split, one page text breaks
+  across lines on a steep page, and one only position ties to its label,
+  AA96. Main also prints the SSN under a label whose row carries a figure
+  in the whitespace or delimited spelling, a wage with its cents in their
+  own column and then a year: the mechanism review used, AA97.
