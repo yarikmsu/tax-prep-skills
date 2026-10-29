@@ -101,7 +101,14 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # alone; the test is the claim now.
 # The hyphen, dot and slash spellings, shared with `_ID_DELIMITED` below so a
 # spelling the gate learns reaches the redactor and the masker together.
-_SSN_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
+# An OCR layer can split either side of either separator. Only horizontal
+# whitespace belongs here: joining rows could consume unrelated form values.
+# Build one alternative per separator, with no captures, so both marks agree
+# and the masker's existing last-four group keeps its number.
+_SSN_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
+_SSN_DELIMS = "(?:" + "|".join(
+    rf"{_SSN_GAP}{re.escape(sep)}{_SSN_GAP}[0-9]{{2}}{_SSN_GAP}{re.escape(sep)}{_SSN_GAP}"
+    for sep in "-./") + ")"
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_SSN_DELIMS}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(

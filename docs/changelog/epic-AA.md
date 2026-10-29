@@ -4260,6 +4260,21 @@ doubling its rows less than triples its work.
 - What still prints is AA92.
 
 
+## AA95 — spaces beside identifier separators
+
+OCR can insert horizontal whitespace on either side of either separator in
+a delimited SSN or ITIN. The shared delimiter pattern now accepts those
+gaps while keeping the 3-2-4 groups and the same hyphen, dot or slash twice.
+Its alternatives have no captures, preserving every caller's last-four
+group. Filename detection and error redaction inherit the same spelling.
+
+Regressions cover every combination of the four gap positions, horizontal
+Unicode spaces and tabs, labelled and unlabelled values, and all five
+document extraction routes. Dates, phone numbers, EINs and amounts survive;
+mixed separators, longer digit groups and vertical whitespace are outside
+the new match. Pre-fix tests reproduce the leak. The implementation awaits
+merge; the backlog retains the open item until then.
+
 ## AA93 — authorization-form taxpayer identifiers
 
 Forms 2848 and 8821 both print "Taxpayer identification number(s)" over
