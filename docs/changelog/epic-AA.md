@@ -4201,14 +4201,19 @@ business taxpayer-identification headings remain outside that rule.
 IT-213's exact "SSN or ITIN" heading now starts a column with the same
 obstruction-checked reach as a numbered heading. This covers a sixth child
 whose SSN is the column's first entry after empty rows; an intervening
-heading still ends the reach. Its "or ITIN" suffix also belongs to the
-label when reading overlays.
+heading still ends the reach.
 
 Official blank-form words and field rectangles cover both 4506-C fields
 and all six IT-213 child fields, individually and together. Extraction tests
-cover text and words, text/table masking covers the new labels, and negative
-cases preserve business identifiers, unrelated headings and routing numbers.
-Removing the new column rule makes the sixth-child regression fail.
+cover text and words, and text/table masking covers the new labels.
 
-This entry records the implementation branch; the task remains open in the
-backlog until its PR is merged.
+- Review: the extraction tests passed with each new rule removed. A value
+  140 points under "SSN or ITIN" was masked by page text's label-above rule,
+  and the employer, payer and business headings' number sat beyond any
+  heading's reach. Both now share one layout, a line off the column between
+  label and value, and the headings are drawn where the 4506-C labels mask:
+  removing the column rule or widening the label to any word before
+  "taxpayer identification number" now fails them.
+- An "or ITIN" label tail was dropped: "ITIN" is a label of its own, so the
+  phrase already ends at one (0 overlay leaks in 1,320 placements, with or
+  without it).

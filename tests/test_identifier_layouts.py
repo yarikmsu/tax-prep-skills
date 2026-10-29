@@ -73,23 +73,32 @@ def test_4506c_labels_in_text_and_cells(label):
     assert mask_table([[label, 'Amount'], [_value(0), 1234.56]])[1] == ['XXX-XX-1000', 1234.56]
 
 
+def _layout(label: str, offset: int, value: str) -> list[tuple]:
+    """`value` `offset` points under `label`, a line off its column between
+    them: page text's label-above rule stops there, so a late child's entry
+    is masked by its column's reach or not at all."""
+    return [(200, 100, 9, label), (36, 100 + offset / 2, 9, 'Other information'), (200, 100 + offset, 9, value)]
+
+
 @pytest.mark.parametrize('label,offset', [("1b. First taxpayer identification number", 18),
                                         ("2b. Spouse's taxpayer identification number", 18),
                                         ('SSN or ITIN', 140)])
 def test_official_label_layouts_at_both_pdf_boundaries(tmp_path, label, offset):
-    pdf = _draw(tmp_path / 'identifiers.pdf', [(200, 100, 9, label), (200, 100 + offset, 9, _value(0)),
-                                             (36, 400, 9, f'Routing {ROUTING}')])
+    pdf = _draw(tmp_path / 'identifiers.pdf', _layout(label, offset, _value(0)) + [(36, 400, 9, f'Routing {ROUTING}')])
     for text in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
         assert _value(0) not in text and 'XXX-XX-1000' in text
         assert ROUTING in text
 
 
-@pytest.mark.parametrize('label', ['Employer taxpayer identification number', 'Payer taxpayer identification number',
-                                   'Business taxpayer identification number', 'SSN or ITIN for reference'])
-def test_unrelated_headings_keep_their_numbers(tmp_path, label):
-    pdf = _draw(tmp_path / 'other.pdf', [(200, 100, 9, label), (36, 180, 9, 'Other information'),
-                                       (200, 240, 9, ROUTING)])
-    assert ROUTING in extract_pdf_text(str(pdf))[0]
+@pytest.mark.parametrize('label,offset', [('Employer taxpayer identification number', 18),
+                                        ('Payer taxpayer identification number', 18),
+                                        ('Business taxpayer identification number', 18),
+                                        ('SSN or ITIN for reference', 140)])
+def test_unrelated_headings_keep_their_numbers(tmp_path, label, offset):
+    """The layouts above, where their labels mask the value: only the heading differs."""
+    pdf = _draw(tmp_path / 'other.pdf', _layout(label, offset, ROUTING))
+    for text in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert ROUTING in text
 
 
 def test_an_intervening_heading_stops_the_late_child_column(tmp_path):

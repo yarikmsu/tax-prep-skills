@@ -666,7 +666,7 @@ _WRAP = 64       # characters of a heading phrase's end read ("individual taxpay
 _CAPTION = re.compile(r"^(?:\((?:[a-z]|[0-9]+[a-z]?)\)|[a-z]\.|[0-9]+[a-z]?)(?:\s|$)", re.I)
 _NUMBERED = re.compile(r"^(?:\([0-9]+[a-z]?\)|[0-9]+[a-z]?)(?:\s|$)", re.I)
 _EMPTY_ENTRY = re.compile(r"^(?:N/?A|Applied for|Tax[- ]Exempt|Died)$", re.I)   # Schedule EIC line 2: "Died"
-_LABEL_TAIL = re.compile(r"[\s.:)]*(?:or\s+(?:other\s+TIN|ITIN)[\s.:)]*)?", re.I)
+_LABEL_TAIL = re.compile(r"[\s.:)]*(?:or\s+other\s+TIN[\s.:)]*)?", re.I)   # what may end a label's phrase after it (1095-B/C)
 _ID_COLUMN = re.compile(r"SSN\s+or\s+ITIN", re.I)   # IT-213's unnumbered child identifier column
 _ABUT = 0.05     # points apart at most for words a hidden glyph split (TY2024 1040's "num b e r")
 
