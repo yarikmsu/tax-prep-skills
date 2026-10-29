@@ -464,12 +464,14 @@ def _overlay_rows(chars: list[dict], tick) -> list[list[dict]]:
     return [row for frame in _overlay_frames(chars, tick) for row in _word_rows(frame)]
 
 
-def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
+def _spelled_with(digits: list[dict], chars: list[dict], tick) -> tuple[set[int], set[int]]:
     """The ids of the glyphs an identifier spelled "000-00-0000" prints
-    between its own digits: any one glyph but a letter, digit or space, in
-    the digits' size, on their baseline, between them rather than over
-    either, and no further from either than half that size or its own width.
-    At a row's edge, a separator instead abuts its digit in the PDF stream.
+    between its own digits, then of those at a row's edge. Between: any one
+    glyph but a letter, digit or space, in the digits' size, on their
+    baseline, between them rather than over either, and no further from
+    either than half that size or its own width. At a row's edge, a
+    separator instead abuts its digit in the PDF stream, as a caption's "("
+    and ")" also abut its "1", so only the first are surely no label's.
     Left with the letters, an overlay's hyphens, dashes or slashes split its
     label's words. A space stays there, since a label's own spaces share an
     overlay's baseline whenever it is drawn in the label's size; so does a
@@ -496,7 +498,7 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
         line.sort(key=lambda d: d["x0"])
     starts = {key: [d["x0"] for d in line] for key, line in lines.items()}
     positions = {id(c): i for i, c in enumerate(chars)}
-    out = set()
+    out: set[int] = set()
     for key, glyph in between:
         tick()
         line = lines.get(key, [])
@@ -505,6 +507,7 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
         if (0 < k < len(line) and -0.5 <= glyph["x0"] - line[k - 1]["x1"] <= reach
                 and -0.5 <= line[k]["x0"] - glyph["x1"] <= reach):
             out.add(id(glyph.get("_overlay_source", glyph)))
+    edges: set[int] = set()
     # Row-edge separators have only one neighbour. Glyphs drawn at slightly
     # different angles also have different own-matrix baselines. For these,
     # require adjacency in the source stream as well as in the shared frame.
@@ -522,8 +525,8 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
                        abs(_baseline(mark) - _baseline(chars[j])) <= 0.1)
             gap = glyph["x0"] - digit["x1"] if j < at else digit["x0"] - glyph["x1"]
             if digit_frame == n and abs(glyph["size"] - digit["size"]) <= 0.1 and aligned and -0.5 <= gap <= reach:
-                out.add(id(mark))
-    return out
+                edges.add(id(mark))
+    return out, edges - out
 
 
 def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]:
@@ -541,29 +544,43 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
     SSN. Digits that only graze a label from the next line print apart from
     it, read as any page's text is. A word in `protected` (its rounded box)
     is one the positional rules already mask, keeping its last four. The
-    source page's characters are never modified. Labels and digits are read
-    in their baseline frames, with crossings checked against original page
-    glyphs. Rotated delimited SSNs are removed without requiring a label,
-    since page text can reverse them or print one digit per line."""
+    source page's characters are never modified. Labels are read as printed
+    and in their baseline frames, digits in their frames, with crossings
+    checked against original page glyphs. A delimited SSN off level that
+    page text cannot read, across its rows, stacked, right to left or
+    crossed by its row's other glyphs, goes without a label: page text
+    would print it a digit a line, reversed or garbled, where no mask
+    finds it. One page text reads whole, however tilted, is its to mask,
+    the last four kept.
+    A row-edge separator never decides a crossing: a value's own "$" or a
+    label's own ":" abuts it, and would carry an amount onto the label."""
     from pdfplumber.utils import extract_words
 
     digits = [c for c in chars if c["text"] in "0123456789" and len(c["text"]) == 1]
     if not digits:
         return set()
-    delimiters = _spelled_with(digits, chars, tick)
-    # Punctuation is spacing in this label-only view, except the possessive
-    # apostrophe. It must not become a phrase on its own when an overlay
-    # borrows a caption's ")", nor split "number" at a row-edge separator.
-    letters = [{**c, "text": c["text"] if c["text"].isalpha() or c["text"] in "'\u2019" else " ",
-                "_overlay_source": c}
-               for c in chars if not any(d in "0123456789" for d in c["text"])]
+    between, edges = _spelled_with(digits, chars, tick)
+    delimiters = between | edges
+    # Labels are read from two label-only views, and a label in either
+    # indexes its letters. As printed, rows are the page's own: a caption's
+    # parentheses hold its phrase together, "#" ends "Social security #",
+    # and no tilted glyph elsewhere can carry a level heading off its row;
+    # only separators between two digits leave it, as a caption's "(1)"
+    # abuts its digit as a row-edge separator would.
+    # Spaced, punctuation but the possessive apostrophe is spacing and rows
+    # are read in baseline frames: a rotated heading, or one whose ")" an
+    # overlay borrows as a separator, leaving "(" a phrase of its own.
+    printed = [c for c in chars if not any(d in "0123456789" for d in c["text"]) and id(c) not in between]
+    spaced = [{**c, "text": c["text"] if c["text"].isalpha() or c["text"] in "'\u2019" else " ",
+               "_overlay_source": c}
+              for c in chars if not any(d in "0123456789" for d in c["text"])]
     index: dict[tuple[int, int], list[tuple[dict, int]]] = {}   # each label letter, with its label's number
     indexed: set[int] = set()
     indexed_words: set[int] = set()
     entries = 0
     covers = []
     rows_by_frame = [_word_rows(extract_words(frame, return_chars=True))
-                     for frame in _overlay_frames(letters, tick) if frame]
+                     for frame in [printed] + _overlay_frames(spaced, tick) if frame]
     for row in [row for rows in rows_by_frame for row in rows]:
         tick()
         text, starts = _row_text(row)
@@ -601,6 +618,7 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
                             raise ParseBudgetError("Identifier overlap index exceeds its per-page budget; split or repair the PDF.")
                         index.setdefault((x, y), []).append((char, label))
     lines = {id(c): n for n, line in enumerate(_word_rows(chars)) for c in line}
+    positions = {id(c): i for i, c in enumerate(chars)}
     hidden: set[int] = set()
     for row in _overlay_rows(digits + [c for c in chars if id(c) in delimiters], tick):
         tick()
@@ -624,9 +642,10 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
         ssns = [[glyph for glyph in owners[low:high] if glyph is not None]
                 for low, high in values + [(low, high) for low, high, _ in delimited if text[low + 3:low + 4] == "-"]]
         for low, high, _ in delimited:
-            run = [g for g in owners[low:high] if g is not None]
-            if text[low + 3:low + 4] == "-" and any(abs(_angle(g)) > _LEVEL for g in run):
-                hidden.update(id(g.get("_overlay_source", g)) for g in run)
+            run = [g.get("_overlay_source", g) for g in owners[low:high] if g is not None]
+            if (text[low + 3:low + 4] == "-" and any(abs(_angle(g)) > _LEVEL for g in run)
+                    and _unreadable(run, chars, positions, lines)):
+                hidden.update(id(g) for g in run)
         accounted = {id(glyph): n for n, run in enumerate(ssns) for glyph in run}   # each glyph's SSN
         unread: dict[int, list[int]] = {}   # the words interleaved with each label's letters, by position
         turned: dict[int, list[int]] = {}   # rotated words crossing them over several of the page's lines
@@ -635,7 +654,7 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
             numerals = [glyph for glyph in group if glyph["text"].isdigit()]
             sources = [g.get("_overlay_source", g) for g in group]
             bounds = _box([g.get("_overlay_source", g) for g in numerals or group])
-            crossed = _labels_crossed(sources, index, lines, tick)
+            crossed = _labels_crossed([g for g in sources if id(g) not in edges], index, lines, tick)
             if not crossed or tuple(round(bounds[k], 3) for k in ("x0", "x1", "top", "bottom")) in protected:
                 continue
             for n in {accounted[id(glyph)] for glyph in group if id(glyph) in accounted}:
@@ -665,6 +684,26 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
                 crossing = list(range(low, high + 1))
             hidden.update(id(glyph.get("_overlay_source", glyph)) for at in crossing for glyph in groups[at])
     return hidden
+
+
+def _unreadable(run: list[dict], chars: list[dict], positions: dict[int, int], lines: dict[int, int]) -> bool:
+    """Whether page text cannot read `run`, in its reading order, as one
+    SSN its masks find: its glyphs fall on several of the page's rows, the
+    row would order them otherwise (stacked, or right to left), another
+    glyph of the row lies across them, or the PDF stream spaces them, as a
+    letter-spaced or OCR-split SSN prints. A space between some of its
+    digits but not others makes it two words instead, as "1 04/15/2026"."""
+    spaced = [any(chars[k]["text"].isspace() for k in range(min(i, j) + 1, max(i, j)))
+              for a, b in zip(run, run[1:]) for i, j in [(positions[id(a)], positions[id(b)])]]
+    split = [gap for a, b, gap in zip(run, run[1:], spaced) if a["text"].isdigit() and b["text"].isdigit()]
+    if any(split) and not all(split):
+        return False
+    rows = {lines[id(g)] for g in run}
+    if any(spaced) or len(rows) > 1 or any((b["x0"] + b["x1"]) / 2 <= a["x1"] for a, b in zip(run, run[1:])):
+        return True
+    own, x0, x1 = {id(g) for g in run}, min(g["x0"] for g in run), max(g["x1"] for g in run)
+    return any(id(c) not in own and lines.get(id(c)) in rows and not c["text"].isspace()
+               and c["x0"] < x1 and c["x1"] > x0 for c in chars)
 
 
 def _run_on(left: list[dict], right: list[dict]) -> bool:
@@ -1318,6 +1357,8 @@ def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool
     as ONE word spanning it, holding the masked row: no position inside it
     can come back without the identifier."""
     rows = _word_rows(words)
+    if not rows:   # every glyph left the page as an overlay
+        return []
     texts = [" ".join(word["text"] for word in row) for row in rows]
     masked = mask_runs(mask_ssn("\n".join(texts)), _governed_runs(words, tick)).split("\n")
     if len(masked) != len(rows):
