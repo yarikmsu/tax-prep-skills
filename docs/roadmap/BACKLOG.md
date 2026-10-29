@@ -226,6 +226,21 @@ Trigger and range behavior is documented in
   SSN's run-on words. Revisit if a real document shows an SSN spaced further
   apart than twice its height, or grazing its label from the next line.
 
+- **AA92 (P3, M): Mask the overlays AA91 still prints.**
+  #85's review drew overlays over identifier labels and compared them with
+  main. These print a full SSN, as on main: one in a wrapped heading's own
+  size starting just after "(2)", whose ")" `_spelled_with` reads as a
+  separator, leaving "(" a phrase of its own that `_wrapped_label_words`
+  pairs "number" with; one split across the heading's two rows with a
+  separator at a row's edge, which stays with the label's letters; skewed
+  (oblique) text over its label, which reads as level and whose widened
+  glyph boxes keep its hyphens with the letters; a label and SSN rotated
+  together, since labels are read from level rows only; a rotated SSN over
+  no label, printed a digit a line or reversed; and one beside "number"
+  under the upper phrase, the wrapped label's box taking its right edge
+  from that phrase. Every other digit drawn 0.4 degrees off level, starting
+  left of its label, prints the digits off the label, where main hides them.
+
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 

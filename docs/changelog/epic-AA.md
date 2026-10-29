@@ -4218,3 +4218,43 @@ cover text and words, and text/table masking covers the new labels.
   phrase already ends at one. Only the exact heading reaches that far: a
   "Payer SSN or ITIN" twin keeps its number, and "Spouses" without its
   apostrophe labels the 4506-C field as the possessive rule already did.
+
+
+## AA91 — wrapped-heading and rotated identifier overlays
+
+The overlap index now reads the two-row headings the positional reader
+reads ("(2) Social security" over "number"), its whole upper phrase
+included, so an overlay touching only "Your" before the match is caught;
+the positional reader keeps the match's own box. It still indexes only
+identifier label letters. Rotated digits and their separators are read
+along their own baseline from the PDF matrix, glyphs within a degree of
+their neighbours as one run, and checked against the source page's label
+letters. The original glyphs leave a derived page before text, word or
+table extraction; source characters, bytes and table rules stay intact.
+
+Regressions cover both wrapped rows, clockwise and counterclockwise angles,
+separators, split groups, source immutability and PDF tables. A dense
+statement keeps the CUSIPs and account numbers set tight under their
+headings within an index budget too small to hold all their letters, and
+doubling its rows less than triples its work.
+
+- Review compared generated pages against main: rotations, skew, scaling,
+  mirroring, font sizes, separators and wrapped headings. No new full SSN
+  printed, but any contact by a glyph off level counted as interleaving: on
+  a page tilted 0.3 degrees, as a scan's text layer is, the value on the
+  line under a label left the parse, and a rotated date or form code
+  touching a label went whole. A rotated word now joins a label's garble
+  only on that label's line, glyph by glyph, and goes whole only as nine
+  digits running on together.
+- Frames keyed by a rounded direction split an SSN whose glyphs differ by a
+  hair, and a level band of a whole degree let a hyphenated SSN tilted one
+  degree split its label, as on main. Glyphs now share a frame by
+  neighbouring angle, and only a float's noise counts as level.
+- A second pass tilted each line its own way, as an OCR layer does: a
+  line a fraction of a degree under the SSN's joined its frame, the SSN
+  drifted off the 0.1-point baseline its hyphens were matched on, and they
+  split its label again. Matching them by pdfplumber's row tolerance
+  instead took a heading's ")" and a label's "/" a point and a half off
+  for separators. A rotated glyph's baseline is now read along its own
+  matrix, one value for a whole run, still to 0.1 point.
+- What still prints is AA92.
