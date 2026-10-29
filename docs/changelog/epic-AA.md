@@ -4283,3 +4283,74 @@ labels the field too.
   without its hyphen, and the taxpayer-name line that shares the
   identifiers' text row. CAF numbers, PTINs, telephone, fax and plan
   numbers keep theirs.
+
+
+## AA92 — remaining identifier overlays
+
+The overlap reader now reads labels twice, a label in either view
+indexing its letters: as printed, as before, and in their own baseline
+frames with punctuation as spacing, crossings still checked against the
+original glyphs. A wrapped caption's parenthesis and a separator
+at either row's edge no longer break the label. Source-adjacent separators
+also leave with the overlay when its glyphs alternate level and slightly
+tilted baselines. Level and tilted glyphs share a frame when their angles
+are neighbours; oblique text uses the glyph's advance rather than its widened
+ink box. A delimited SSN off level that page text cannot print whole is
+removed even without a label: across several of its rows, stacked or
+right to left, crossed by its row's other glyphs, or spaced in the PDF
+stream. Page text would print it a digit a line, reversed, garbled or
+split, where no mask finds it.
+
+A value beside the lower word of a wrapped heading is measured from that
+word's right edge, while the full heading still governs its column below.
+Regressions cover each reported layout, all three PDF extraction routes,
+separate field values under the recovered label, and the original page's
+immutability. Rotated unlabelled account numbers, EINs, dates and amounts
+remain, as do values grazing a tilted label from the next line.
+
+- Review compared generated pages against main and the PR as opened: the
+  AA91 families, ladders of glyphs a degree apart stepping off level, and
+  punctuated labels. Read only spaced and framed, labels printed full SSNs
+  main masks. "#" in "Social security #" became spacing; a ladder from just
+  under level framed a level heading with it, read along the ladder's
+  first baseline, its words on several rows; and spacing "(1)" and "(2)"
+  split a caption into phrases "number" no longer sat under. The printed
+  view holds each. Only separators between two digits leave it: the new
+  row-edge rule also takes a caption's "(" and ")" around its digit.
+- Across 26,004 generated pages in all, none prints an SSN main masks, and
+  the leaks fall to about a quarter of main's. Six lose a routing number
+  main keeps: an upside-down label drawn across it puts nine digits over an
+  SSN label, the safe direction. What still prints is mostly "Payer's TIN",
+  an EIN's label by design, and headings no current form prints. Checking
+  the real ones found Form 1042-S's "Recipient's U.S. TIN" no label at all,
+  overlay or not: AA94.
+- A second review drew values beside labels and on tilted pages. Overlay
+  rows hold digits and marks only, so "Voucher 1 04/15/2026" on a page
+  tilted 0.3 degrees read its "1" into the date, a delimited SSN's shape,
+  and the unlabelled rule removed it for one glyph off level; so it did a
+  tilted SSN page text masks, last four and all, and a page left empty
+  raised. The
+  rule now asks what page text prints, from its own rows: a run on one, in
+  reading order, crossed by nothing of the row and unspaced in the stream
+  is page text's to mask. A space between some of its digits but not
+  others makes two words; one beside a separator only, or between every
+  glyph, is an OCR-split or letter-spaced SSN, which no mask finds. The
+  run's own box was not enough: long lines tilted 1.5 degrees run into one
+  of page text's rows, and an SSN alone on its line prints among their
+  letters. A label's own ":" abutting its value, or an amount's "$" or ")"
+  touching a label letter, joined the value as a row-edge separator and
+  carried it onto the label; crossing is now the digits' to decide, as on
+  main. "Social security? No" and the like
+  read as labels in the spaced view, the safe direction, and stay so. A
+  nine-digit value beside a wrapped heading's lower word masks as an SSN,
+  and one drawn over "number:" goes, as under a one-row label.
+- Still declined. Printing, as on main: an SSN tracked wider than a word's
+  gap, and one whose stream holds a space glyph drawn elsewhere between
+  its digits, the only SSN on the 26,004 pages that the PR as opened
+  masked and this prints, on seven of them. Going, where main keeps them:
+  a date joined to a number beside it by position alone, no space glyph,
+  at 90 degrees or more, and a 3-2-4 value with mixed delimiters, its
+  first group in parentheses.
+- The overlay pass now runs on pages with no label, for the unlabelled
+  rule: on a dense statement page it takes over three times main's
+  time, the whole extraction about a quarter more.

@@ -489,13 +489,12 @@ def test_a_tilted_page_reads_a_grazing_split_run_as_a_level_page_does(tmp_path, 
 def test_a_chain_of_rotated_decoys_does_not_carry_off_an_ssn(tmp_path, label):
     """Digits elsewhere on the page, each a degree under the next from just
     off level up to a 90-degree SSN, put it in a frame read along their
-    first baseline. It stays masked under its label; with no label it
-    prints, so the read would show a leak."""
+    first baseline. A delimited SSN must stay masked with or without a label."""
     decoys = [(300 + 9 * (k % 30), 400 + 14 * (k // 30), 9, '1', 1 + 0.9 * k) for k in range(98)]
     pdf = _draw(tmp_path / 'decoys.pdf', [(200, 100, 9, label), (200, 112, 9, _ssn('-'), 90),
                                          (36, 200, 9, 'Other information')] + decoys)
     out = _digits(extract_pdf_text(str(pdf))[0])
-    assert (_ssn('') in out or _ssn('')[::-1] in out) == (label != 'Your social security number')
+    assert _ssn('') not in out and _ssn('')[::-1] not in out
 
 
 @pytest.mark.parametrize('label_tilt,ssn_tilt,other', [(0, 1, (400, 500, 9, '7', 0.4)), (0, 1, (400, 500, 9, 'p.', 0.4)),
@@ -521,3 +520,280 @@ def test_a_labels_own_punctuation_is_no_separator_on_a_tilted_page(tmp_path, til
     pdf = _draw(tmp_path / 'punctuation.pdf', items + [(36, 200, 9, 'Other information')])
     for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
         assert _ssn('') not in _digits(out)
+
+
+def _assert_masked(pdf):
+    """All PDF entry points see the same sanitized characters."""
+    for out in (extract_pdf_text(str(pdf))[0],
+                ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0]),
+                str(extract_tables(str(pdf)))):
+        assert _ssn('') not in _digits(out)
+        assert _ssn('')[::-1] not in _digits(out)
+
+
+@pytest.mark.parametrize('sep', ['', '-'])
+def test_a_wrapped_heading_with_an_overlay_in_its_own_size(tmp_path, sep):
+    pdf = _draw(tmp_path / 'caption-size.pdf', [(200, 100, 7, '(2) Social security'),
+                                               (200, 109, 7, 'number'), (210, 100, 7, _ssn(sep))])
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('sep', ['-', '/', '_'])
+@pytest.mark.parametrize('edge', ['upper', 'lower'])
+def test_an_overlay_split_across_a_wrapped_headings_rows(tmp_path, sep, edge):
+    first, rest = _ssn('')[:3], _ssn('')[3:]
+    pdf = _draw(tmp_path / 'two-rows.pdf', [(200, 100, 7, '(2) Social security'),
+                                          (200, 109, 7, 'number'),
+                                          (210, 100, 9, first + (sep if edge == 'upper' else '')),
+                                          (210, 109, 9, (sep if edge == 'lower' else '') + rest),
+                                          (200, 125, 9, _SECOND)])
+    _assert_masked(pdf)
+    assert _SECOND not in _digits(extract_pdf_text(str(pdf))[0])
+
+
+@pytest.mark.parametrize('angle', [-90, -30, 30, 90, 180])
+@pytest.mark.parametrize('sep', ['', '-', '  '])
+def test_a_label_and_overlay_rotated_together(tmp_path, angle, sep):
+    import pdfplumber
+    from agents.lib.parse_utils import _safe_pdf_page
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'turned-label.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.translate(250, 400)
+    c.rotate(angle)
+    c.setFont('Helvetica', 9)
+    c.drawString(0, 0, 'Your social security number')
+    c.drawString(0, 0, _ssn(sep))
+    c.save()
+    _assert_masked(pdf)
+    original = pdf.read_bytes()
+    with pdfplumber.open(pdf) as document:
+        page = document.pages[0]
+        before = [dict(g) for g in page.chars]
+        assert not any(g['text'].isdigit() for g in _safe_pdf_page(page, lambda: None).chars)
+        assert page.chars == before
+    assert pdf.read_bytes() == original
+
+
+@pytest.mark.parametrize('skew', [-30, -15, 15, 30])
+def test_an_oblique_overlay(tmp_path, skew):
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'oblique.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.setFont('Helvetica', 9)
+    c.drawString(200, 600, 'Your social security number')
+    c.saveState()
+    c.translate(205, 600)
+    c.skew(0, skew)
+    c.drawString(0, 0, _ssn('-'))
+    c.restoreState()
+    c.save()
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('angle', [-90, 90, 180])
+def test_a_rotated_delimited_ssn_needs_no_label(tmp_path, angle):
+    pdf = _draw(tmp_path / 'unlabelled.pdf', [(200, 300, 9, _ssn('-'), angle),
+                                            (36, 500, 9, f'Routing {ROUTING}')])
+    _assert_masked(pdf)
+    assert ROUTING in extract_pdf_text(str(pdf))[0]
+
+
+def test_a_wrapped_headings_value_beside_its_lower_word(tmp_path):
+    pdf = _draw(tmp_path / 'lower-word.pdf', [(200, 100, 7, '(2) Social security'),
+                                           (200, 109, 7, 'number'), (233, 109, 7, _ssn(''))])
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('sep', ['', '-'])
+@pytest.mark.parametrize('start', [160, 170, 180])
+def test_alternately_tilted_digits_beginning_left_of_the_label(tmp_path, sep, start):
+    import pdfplumber
+    from agents.lib.parse_utils import _overlaid_digits
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'alternating.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.setFont('Helvetica', 9)
+    c.drawString(200, 600, 'Your social security number')
+    x = float(start)
+    for i, glyph in enumerate(_ssn(sep)):
+        c.saveState()
+        c.translate(x, 600)
+        c.rotate(0.4 if i % 2 else 0)
+        c.drawString(0, 0, glyph)
+        c.restoreState()
+        x += c.stringWidth(glyph, 'Helvetica', 9)
+    c.save()
+    _assert_masked(pdf)
+    with pdfplumber.open(pdf) as document:
+        chars = document.pages[0].chars
+        hidden = _overlaid_digits(chars, lambda: None)
+        assert ''.join(g['text'] for g in chars if id(g) in hidden) == _ssn(sep)
+
+
+@pytest.mark.parametrize('angle', [-90, -0.4, 0.4, 90, 180])
+@pytest.mark.parametrize('value', [ROUTING, '12-3456789', '04/15/2025', '1234.56'])
+def test_rotated_unlabelled_numbers_keep_their_digits(tmp_path, angle, value):
+    pdf = _draw(tmp_path / 'kept-number.pdf', [(200, 300, 9, value, angle)])
+    assert sorted(_digits(extract_pdf_text(str(pdf))[0])) == sorted(_digits(value))
+
+
+@pytest.mark.parametrize('sep', ['', '-', ' '])
+@pytest.mark.parametrize('label', ['Social security #', 'Your social security number'])
+@pytest.mark.parametrize('ladder', [0, 6, 10])
+def test_a_level_label_read_as_printed(tmp_path, label, sep, ladder):
+    """Read as spacing, "#" is no label; and a ladder of glyphs a degree
+    apart, from just under level, frames a level heading with them and reads
+    it along their first baseline, its words on several rows. Read as
+    printed, the label holds whichever way the spaced view misses it."""
+    steps = [(380 + 15 * k, 600, 9, glyph, -0.9 * (k + 1)) for k in range(ladder) for glyph in 'Q-']
+    pdf = _draw(tmp_path / 'printed.pdf', [(200, 100, 9, label), (206, 100, 9, _ssn(sep))] + steps)
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('sep', ['', ' '])
+@pytest.mark.parametrize('size', [6, 7])
+def test_a_captions_parentheses_hold_its_phrase(tmp_path, size, sep):
+    """Spacing "(1)" and "(2)" opens gaps wider than the heading is tall, so
+    "number" pairs with "Dependents" alone. As printed, the parentheses keep
+    one phrase over it, and the overlay crossing "Dependents" goes."""
+    pdf = _draw(tmp_path / 'caption.pdf', [(200, 100, 7, 'Dependents (1) First name (2) Social security'),
+                                         (200, 109, 7, 'number'), (190, 96, size, _ssn(sep))])
+    _assert_masked(pdf)
+
+
+def _width(text: str) -> float:
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    return stringWidth(text, 'Helvetica', 9)
+
+
+@pytest.mark.parametrize('angle', [0.3, -2, 45, 90, 180])
+@pytest.mark.parametrize('line', ['Voucher 1 04/15/2026', 'Pay date: 1 12.31.2025'])
+def test_a_space_in_the_stream_ends_an_unlabelled_run(tmp_path, angle, line):
+    """Overlay rows hold digits and marks only, so "1" runs into its date's
+    first group, a delimited SSN's shape. The space between them in
+    the PDF stream keeps them two words, rotated or not."""
+    pdf = _draw(tmp_path / 'dated.pdf', [(200, 300, 9, line, angle), (36, 600, 9, 'Other information')])
+    assert sorted(_digits(extract_pdf_text(str(pdf))[0])) == sorted(_digits(line))
+
+
+@pytest.mark.parametrize('angle', [0.3, -2])
+def test_a_tilted_ssn_on_one_line_keeps_its_last_four(tmp_path, angle):
+    """Page text reads an SSN tilted along one of its lines whole and masks
+    it; removing it as unreadable would drop its last four too."""
+    pdf = _draw(tmp_path / 'tilted.pdf', [(60, 80, 9, 'Your social security number', angle),
+                                        (60, 92, 9, _ssn('-'), angle)])
+    text = extract_pdf_text(str(pdf))[0]
+    assert _ssn('') not in _digits(text) and 'XXX-XX-6789' in text
+
+
+@pytest.mark.parametrize('angle', [90, 180])
+def test_a_page_holding_only_a_rotated_ssn(tmp_path, angle):
+    """Every glyph leaves as the overlay: an empty page, not a refusal."""
+    _assert_masked(_draw(tmp_path / 'lone.pdf', [(200, 300, 9, _ssn('-'), angle)]))
+
+
+@pytest.mark.parametrize('label,value', [("Employee's SSN:", '12-3456789'), ('SSN:', '1,234.56'),
+                                         ('Social security no.', '12/31/2025')])
+def test_a_labels_own_punctuation_does_not_carry_its_value(tmp_path, label, value):
+    """The ":" abuts both the label's last letter and, in the stream, the
+    value's first digit, a row-edge separator's place. Crossing is the
+    digits' to decide, so the value stays beside the label."""
+    for k in range(12):
+        x = 50 + 7.37 * k
+        pdf = _draw(tmp_path / f'abutting{k}.pdf', [(x, 100, 9, label), (x + _width(label) + 1, 100, 9, value)])
+        assert _digits(value) in _digits(extract_pdf_text(str(pdf))[0])
+
+
+@pytest.mark.parametrize('label', ['SSN', 'Your social security number'])
+@pytest.mark.parametrize('value,mark', [('$1,234.56', 'lead'), ('(1,234.56)', 'trail'), ('1,234.56%', 'trail')])
+def test_a_values_own_mark_on_a_label_letter(tmp_path, label, value, mark):
+    """Only the amount's "$" or ")" touches the label: its digits do not, so
+    the amount stays, garbled into the label's word as main prints it."""
+    core = value.strip('$()%')
+    if mark == 'lead':
+        x = 200 + _width(label) - 0.7 * _width(value[0])
+    else:
+        x = 200 - _width(value[:value.index(core) + len(core)]) - 0.3 * _width(value[-1])
+    pdf = _draw(tmp_path / 'mark.pdf', [(200, 100, 9, label), (x, 100, 9, value)])
+    assert _digits(core) in _digits(extract_pdf_text(str(pdf))[0])
+
+
+@pytest.mark.parametrize('angle', [0.3, -2])
+@pytest.mark.parametrize('dx', [0, 12])
+def test_a_tilted_ssn_drawn_across_words_that_label_nothing(tmp_path, angle, dx):
+    """"Payer's TIN" labels an EIN, so no label governs the SSN drawn over
+    it; on its row, page text garbles it into the letters, where no mask
+    finds it, so it goes as page text cannot read it. (Six points on, the
+    label's apostrophe falls between two of its digits and reads as one of
+    its separators, so the run is no SSN: a limit main shares.)"""
+    pdf = _draw(tmp_path / 'across.pdf', [(200, 100, 7, "Payer's TIN", angle), (200 + dx, 100, 7, _ssn('-'), angle),
+                                        (36, 300, 9, f'Routing {ROUTING}')])
+    _assert_masked(pdf)
+    assert ROUTING in extract_pdf_text(str(pdf))[0]
+
+
+@pytest.mark.parametrize('dx', [0, 10, 30])
+def test_a_steep_ssn_across_a_heading_that_labels_nothing(tmp_path, dx):
+    """Thirty degrees off level, its glyphs rise further than a row:
+    page text prints them a few to a line among the heading's words."""
+    pdf = _draw(tmp_path / 'steep.pdf', [(200, 100, 7, "Recipient's taxpayer"), (200, 109, 7, 'identification number'),
+                                       (200 + dx, 104, 9, _ssn('-'), -30)])
+    _assert_masked(pdf)
+
+
+_FILL = 'Interest income reported by the payer for the calendar year shown above, including amounts credited'
+
+
+@pytest.mark.parametrize('angle', [1.5, 3])
+@pytest.mark.parametrize('sep', ['-', '/'])
+def test_a_tilted_ssn_among_full_width_lines(tmp_path, angle, sep):
+    """Long lines tilted a degree or two run into one of page text's rows
+    with their neighbours, and an SSN alone on its line prints among their
+    letters, though nothing crosses its own box: its row decides."""
+    items = [(40, 100 + 11 * k, 9, _FILL, angle) for k in range(6) if k != 3]
+    _assert_masked(_draw(tmp_path / 'scan.pdf', items + [(40, 133, 9, _ssn(sep), angle), (200, 133, 9, 'Box 1', angle)]))
+
+
+@pytest.mark.parametrize('angle', [0.5, 90, 180])
+@pytest.mark.parametrize('split', [3, 4, 6, 7, 'every'])
+def test_a_rotated_ssn_split_by_spaces(tmp_path, angle, split):
+    """A space beside a separator is how OCR splits an SSN, and one between
+    every glyph is letter spacing: neither makes two words of it, as a
+    space between some of its digits but not others does."""
+    value = _ssn('-')
+    spelled = ' '.join(value) if split == 'every' else f'{value[:split]} {value[split:]}'
+    _assert_masked(_draw(tmp_path / 'split.pdf', [(300, 400, 9, spelled, angle), (36, 600, 9, 'Other information')]))
+
+
+@pytest.mark.parametrize('lead', [9.5, 11])
+def test_a_tilted_reference_under_tight_leading_keeps_its_last_four(tmp_path, lead):
+    """Lines above and below overlap its box, not its row: page text reads
+    it whole and masks it, its last four kept."""
+    items = [(100, 100, 9, f'Reference {_ssn("-")} issued', 1),
+             (100, 100 + lead, 9, 'Account summary and transaction detail', 1),
+             (100, 100 - lead, 9, 'Statement period January through December', 1)]
+    text = extract_pdf_text(str(_draw(tmp_path / 'lead.pdf', items)))[0]
+    assert _ssn('') not in _digits(text) and 'XXX-XX-6789' in text
+
+
+@pytest.mark.parametrize('angle', [35, -40])
+@pytest.mark.parametrize('tracking', [2, 3])
+def test_an_unlabelled_tracked_ssn_rising_across_rows(tmp_path, angle, tracking):
+    """Tracked wide, a steep run keeps reading order and nothing crosses
+    it, but each glyph rises past page text's row: a glyph or two to a
+    row, where no mask finds it. (Tracked past a word's gap, each glyph is
+    a word of its own and nothing reads as an SSN, as on a level page.)"""
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'tracked.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.drawString(36, 100, 'Other information')
+    c.translate(300, 400)
+    c.rotate(angle)
+    text = c.beginText(0, 0)
+    text.setFont('Helvetica', 9)
+    text.setCharSpace(tracking)
+    text.textOut(_ssn('-'))
+    c.drawText(text)
+    c.save()
+    _assert_masked(pdf)
