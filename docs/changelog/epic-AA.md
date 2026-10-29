@@ -4283,3 +4283,23 @@ labels the field too.
   without its hyphen, and the taxpayer-name line that shares the
   identifiers' text row. CAF numbers, PTINs, telephone, fax and plan
   numbers keep theirs.
+
+
+## AA92 — remaining identifier overlays
+
+The overlap reader now reads labels in their own baseline frames, treating
+punctuation as spacing in its label-only view and retaining the original
+glyphs for crossing checks. A wrapped caption's parenthesis and a separator
+at either row's edge no longer break the label. Source-adjacent separators
+also leave with the overlay when its glyphs alternate level and slightly
+tilted baselines. Level and tilted glyphs share a frame when their angles
+are neighbours; oblique text uses the glyph's advance rather than its widened
+ink box. Rotated delimited SSNs are removed even without a label, since page
+text can reverse them or print one digit per line.
+
+A value beside the lower word of a wrapped heading is measured from that
+word's right edge, while the full heading still governs its column below.
+Regressions cover each reported layout, all three PDF extraction routes,
+separate field values under the recovered label, and the original page's
+immutability. Rotated unlabelled account numbers, EINs, dates and amounts
+remain, as do values grazing a tilted label from the next line.

@@ -489,13 +489,12 @@ def test_a_tilted_page_reads_a_grazing_split_run_as_a_level_page_does(tmp_path, 
 def test_a_chain_of_rotated_decoys_does_not_carry_off_an_ssn(tmp_path, label):
     """Digits elsewhere on the page, each a degree under the next from just
     off level up to a 90-degree SSN, put it in a frame read along their
-    first baseline. It stays masked under its label; with no label it
-    prints, so the read would show a leak."""
+    first baseline. A delimited SSN must stay masked with or without a label."""
     decoys = [(300 + 9 * (k % 30), 400 + 14 * (k // 30), 9, '1', 1 + 0.9 * k) for k in range(98)]
     pdf = _draw(tmp_path / 'decoys.pdf', [(200, 100, 9, label), (200, 112, 9, _ssn('-'), 90),
                                          (36, 200, 9, 'Other information')] + decoys)
     out = _digits(extract_pdf_text(str(pdf))[0])
-    assert (_ssn('') in out or _ssn('')[::-1] in out) == (label != 'Your social security number')
+    assert _ssn('') not in out and _ssn('')[::-1] not in out
 
 
 @pytest.mark.parametrize('label_tilt,ssn_tilt,other', [(0, 1, (400, 500, 9, '7', 0.4)), (0, 1, (400, 500, 9, 'p.', 0.4)),
@@ -521,3 +520,119 @@ def test_a_labels_own_punctuation_is_no_separator_on_a_tilted_page(tmp_path, til
     pdf = _draw(tmp_path / 'punctuation.pdf', items + [(36, 200, 9, 'Other information')])
     for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
         assert _ssn('') not in _digits(out)
+
+
+def _assert_masked(pdf):
+    """All PDF entry points see the same sanitized characters."""
+    for out in (extract_pdf_text(str(pdf))[0],
+                ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0]),
+                str(extract_tables(str(pdf)))):
+        assert _ssn('') not in _digits(out)
+        assert _ssn('')[::-1] not in _digits(out)
+
+
+@pytest.mark.parametrize('sep', ['', '-'])
+def test_a_wrapped_heading_with_an_overlay_in_its_own_size(tmp_path, sep):
+    pdf = _draw(tmp_path / 'caption-size.pdf', [(200, 100, 7, '(2) Social security'),
+                                               (200, 109, 7, 'number'), (210, 100, 7, _ssn(sep))])
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('sep', ['-', '/', '_'])
+@pytest.mark.parametrize('edge', ['upper', 'lower'])
+def test_an_overlay_split_across_a_wrapped_headings_rows(tmp_path, sep, edge):
+    first, rest = _ssn('')[:3], _ssn('')[3:]
+    pdf = _draw(tmp_path / 'two-rows.pdf', [(200, 100, 7, '(2) Social security'),
+                                          (200, 109, 7, 'number'),
+                                          (210, 100, 9, first + (sep if edge == 'upper' else '')),
+                                          (210, 109, 9, (sep if edge == 'lower' else '') + rest),
+                                          (200, 125, 9, _SECOND)])
+    _assert_masked(pdf)
+    assert _SECOND not in _digits(extract_pdf_text(str(pdf))[0])
+
+
+@pytest.mark.parametrize('angle', [-90, -30, 30, 90, 180])
+@pytest.mark.parametrize('sep', ['', '-', '  '])
+def test_a_label_and_overlay_rotated_together(tmp_path, angle, sep):
+    import pdfplumber
+    from agents.lib.parse_utils import _safe_pdf_page
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'turned-label.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.translate(250, 400)
+    c.rotate(angle)
+    c.setFont('Helvetica', 9)
+    c.drawString(0, 0, 'Your social security number')
+    c.drawString(0, 0, _ssn(sep))
+    c.save()
+    _assert_masked(pdf)
+    original = pdf.read_bytes()
+    with pdfplumber.open(pdf) as document:
+        page = document.pages[0]
+        before = [dict(g) for g in page.chars]
+        assert not any(g['text'].isdigit() for g in _safe_pdf_page(page, lambda: None).chars)
+        assert page.chars == before
+    assert pdf.read_bytes() == original
+
+
+@pytest.mark.parametrize('skew', [-30, -15, 15, 30])
+def test_an_oblique_overlay(tmp_path, skew):
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'oblique.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.setFont('Helvetica', 9)
+    c.drawString(200, 600, 'Your social security number')
+    c.saveState()
+    c.translate(205, 600)
+    c.skew(0, skew)
+    c.drawString(0, 0, _ssn('-'))
+    c.restoreState()
+    c.save()
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('angle', [-90, 90, 180])
+def test_a_rotated_delimited_ssn_needs_no_label(tmp_path, angle):
+    pdf = _draw(tmp_path / 'unlabelled.pdf', [(200, 300, 9, _ssn('-'), angle),
+                                            (36, 500, 9, f'Routing {ROUTING}')])
+    _assert_masked(pdf)
+    assert ROUTING in extract_pdf_text(str(pdf))[0]
+
+
+def test_a_wrapped_headings_value_beside_its_lower_word(tmp_path):
+    pdf = _draw(tmp_path / 'lower-word.pdf', [(200, 100, 7, '(2) Social security'),
+                                           (200, 109, 7, 'number'), (233, 109, 7, _ssn(''))])
+    _assert_masked(pdf)
+
+
+@pytest.mark.parametrize('sep', ['', '-'])
+@pytest.mark.parametrize('start', [160, 170, 180])
+def test_alternately_tilted_digits_beginning_left_of_the_label(tmp_path, sep, start):
+    import pdfplumber
+    from agents.lib.parse_utils import _overlaid_digits
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'alternating.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.setFont('Helvetica', 9)
+    c.drawString(200, 600, 'Your social security number')
+    x = float(start)
+    for i, glyph in enumerate(_ssn(sep)):
+        c.saveState()
+        c.translate(x, 600)
+        c.rotate(0.4 if i % 2 else 0)
+        c.drawString(0, 0, glyph)
+        c.restoreState()
+        x += c.stringWidth(glyph, 'Helvetica', 9)
+    c.save()
+    _assert_masked(pdf)
+    with pdfplumber.open(pdf) as document:
+        chars = document.pages[0].chars
+        hidden = _overlaid_digits(chars, lambda: None)
+        assert ''.join(g['text'] for g in chars if id(g) in hidden) == _ssn(sep)
+
+
+@pytest.mark.parametrize('angle', [-90, -0.4, 0.4, 90, 180])
+@pytest.mark.parametrize('value', [ROUTING, '12-3456789', '04/15/2025', '1234.56'])
+def test_rotated_unlabelled_numbers_keep_their_digits(tmp_path, angle, value):
+    pdf = _draw(tmp_path / 'kept-number.pdf', [(200, 300, 9, value, angle)])
+    assert sorted(_digits(extract_pdf_text(str(pdf))[0])) == sorted(_digits(value))
