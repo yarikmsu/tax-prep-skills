@@ -4355,7 +4355,7 @@ remain, as do values grazing a tilted label from the next line.
   rule: on a dense statement page it takes over three times main's
   time, the whole extraction about a quarter more.
 
-## AA94 — Form 1042-S recipient U.S. TIN
+## AA94 — Form 1042-S recipient U.S. TIN (#90, awaiting merge)
 
 The TY2026 [blank Form 1042-S](https://www.irs.gov/pub/irs-pdf/f1042s.pdf)
 extracts box 13i as "Recipient’s U.S. TIN, if any". The possessive identifier

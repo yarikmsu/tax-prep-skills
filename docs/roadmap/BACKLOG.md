@@ -220,8 +220,8 @@ Trigger and range behavior is documented in
   masked anyway. Read the form's own words on the blank form's extracted
   text, and pin box 13i both ways, with box 16b's "Payer's TIN" and
   12e's GIIN left unlabelled.
-  Implementation is on `aa94-1042s-recipient-tin`, awaiting merge; the item
-  stays open until its PR lands.
+  Implementation is in #90, awaiting merge; the item stays open until its
+  PR lands.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
