@@ -4190,3 +4190,31 @@ flattened:
   whose return it is now have cases that fail without them. Mutating the
   repeated-cents or box-crossing guards alone fails nothing: the own-box rule
   refuses those layouts too.
+
+
+## AA90 — Form 4506-C and NY IT-213 identifier masking
+
+Form 4506-C's "First taxpayer identification number" and "Spouse's
+taxpayer identification number" now label individual identifiers. Bare
+business taxpayer-identification headings remain outside that rule.
+
+IT-213's exact "SSN or ITIN" heading now starts a column with the same
+obstruction-checked reach as a numbered heading. This covers a sixth child
+whose SSN is the column's first entry after empty rows; an intervening
+heading still ends the reach.
+
+Official blank-form words and field rectangles cover both 4506-C fields
+and all six IT-213 child fields, individually and together. Extraction tests
+cover text and words, and text/table masking covers the new labels.
+
+- Review: the extraction tests passed with each new rule removed. A value
+  140 points under "SSN or ITIN" was masked by page text's label-above rule,
+  and the employer, payer and business headings' number sat beyond any
+  heading's reach. Both now share one layout, a line off the column between
+  label and value, and the headings are drawn where the 4506-C labels mask:
+  removing the column rule or widening the label to any word before
+  "taxpayer identification number" now fails them.
+- An "or ITIN" label tail was dropped: "ITIN" is a label of its own, so the
+  phrase already ends at one. Only the exact heading reaches that far: a
+  "Payer SSN or ITIN" twin keeps its number, and "Spouses" without its
+  apostrophe labels the 4506-C field as the possessive rule already did.
