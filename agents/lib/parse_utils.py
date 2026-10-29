@@ -413,25 +413,26 @@ def _project(char: dict, angle: float) -> dict:
 
 
 def _overlay_frames(chars: list[dict], tick) -> list[list[dict]]:
-    """The page's level glyphs, as they are, then the rest in frames of
-    baselines within `_FRAME_GAP` degrees of the frame's first, joined
-    across the turn from 180 to -180. A rotated frame's glyphs are read
-    along that first baseline, from their PDF matrices, so a rotated SSN is
-    one run rather than nine unrelated page rows, and one whose glyphs are
-    drawn a hair apart stays one. Only a float's noise counts as level: a
-    tilted overlay's delimiters share no baseline with its digits on the
-    page, and would split its label."""
+    """The page's level glyphs, as they are, then the rest in frames whose
+    baselines run within `_FRAME_GAP` degrees of the next, joined across the
+    turn from 180 to -180: a glyph elsewhere on the page cannot move where a
+    frame ends. A rotated frame's glyphs are read along its first baseline,
+    from their PDF matrices, so a rotated SSN is one run rather than nine
+    unrelated page rows, and one whose glyphs are drawn a hair apart, or
+    drift, stays one. Only a float's noise counts as level: a tilted
+    overlay's delimiters share no baseline with its digits on the page, and
+    would split its label."""
     page: list[dict] = []
     frames: list[list[tuple[float, dict]]] = []
     for angle, char in sorted(((_angle(c), c) for c in chars), key=lambda item: item[0]):
         tick()
         if abs(angle) <= _LEVEL:
             page.append(char)
-        elif frames and angle - frames[-1][0][0] <= _FRAME_GAP:
+        elif frames and angle - frames[-1][-1][0] <= _FRAME_GAP:
             frames[-1].append((angle, char))
         else:
             frames.append([(angle, char)])
-    if len(frames) > 1 and frames[0][-1][0] + 360 - frames[-1][0][0] <= _FRAME_GAP:
+    if len(frames) > 1 and frames[0][0][0] + 360 - frames[-1][-1][0] <= _FRAME_GAP:
         frames[0] = frames.pop() + frames[0]
     return [page] + [[_project(char, frame[0][0]) for _, char in frame] for frame in frames]
 

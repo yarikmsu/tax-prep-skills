@@ -416,12 +416,20 @@ def test_a_rotated_date_or_code_touching_a_label_keeps_its_digits(tmp_path, angl
     assert _ssn('') not in read(_ssn('-')) and _ssn('')[::-1] not in read(_ssn('-'))
 
 
-@pytest.mark.parametrize('base,jitter,x', [(0, 0.0001, 160), (30, 0.5, 200), (90, 0.4, 200), (180, 0.4, 245)])
-def test_glyphs_drawn_a_hair_apart_read_as_one_run(tmp_path, base, jitter, x):
-    """Every other digit drawn a fraction of a degree off its neighbours is
-    still one SSN, across a whole-degree boundary and the turn from 180 to
-    -180 too; a float's noise off level is the page's own, its first digits
-    printed left of the label."""
+@pytest.mark.parametrize('base,turns,x,decoy', [
+    (0, [0, 0.0001] * 5, 160, None),
+    (30, [0, 0.5] * 5, 200, None),
+    (90, [0, 0.4] * 5, 200, None),
+    (180, [0, 0.4] * 5, 245, None),
+    (30, [0, 0.5] * 5, 200, -0.8),
+    (30, [0.2 * i for i in range(9)], 200, None),
+])
+def test_glyphs_drawn_a_hair_apart_read_as_one_run(tmp_path, base, turns, x, decoy):
+    """Digits drawn a fraction of a degree off their neighbours, or drifting
+    1.6 degrees in all, are still one SSN, across a whole-degree boundary
+    and the turn from 180 to -180 too, and a rotated digit elsewhere on the
+    page just under their angle does not split them. A float's noise off
+    level is the page's own, its first digits printed left of the label."""
     import pdfplumber
     from reportlab.pdfgen import canvas
     from agents.lib.parse_utils import _overlaid_digits
@@ -429,12 +437,18 @@ def test_glyphs_drawn_a_hair_apart_read_as_one_run(tmp_path, base, jitter, x):
     c = canvas.Canvas(str(pdf), pagesize=(612, 792))
     c.setFont('Helvetica', 9)
     c.drawString(200, 683, 'Your social security number')
+    if decoy is not None:
+        c.saveState()
+        c.translate(400, 300)
+        c.rotate(base + decoy)
+        c.drawString(0, 0, '1')
+        c.restoreState()
     c.translate(x, 685)
     c.rotate(base)
     for i, digit in enumerate(_ssn('')):
         c.saveState()
         c.translate(5 * i, 0)
-        c.rotate(jitter if i % 2 else 0)
+        c.rotate(turns[i])
         c.drawString(0, 0, digit)
         c.restoreState()
     c.save()
