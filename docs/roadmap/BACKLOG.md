@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA92** — mask the overlays AA91 still prints. **AA93** — mask the TIN fields of Forms 2848 and 8821. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85. | Both reach documents any filer may parse; review drew AA92's overlays rather than meeting them in a document. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA95** — mask an SSN split by a space beside a separator. **AA94** — label Form 1042-S's "Recipient's U.S. TIN". AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88. | AA95 reaches any scanned document an OCR layer splits, a W-2 included; AA94 only a nonresident's Form 1042-S. Review drew AA95's spelling on generated pages rather than meeting it in a document. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -200,38 +200,26 @@ Trigger and range behavior is documented in
   contracts can be reviewed; do not derive them from the announced inflation
   percentage or substitute TY2025 values. Found by the same review.
 
-- **AA92 (P3, M): Mask the overlays AA91 still prints.**
-  #85's review drew overlays over identifier labels and compared them with
-  main. These print a full SSN, as on main: one in a wrapped heading's own
-  size starting just after "(2)", whose ")" `_spelled_with` reads as a
-  separator, leaving "(" a phrase of its own that `_wrapped_label_words`
-  pairs "number" with; one split across the heading's two rows with a
-  separator at a row's edge, which stays with the label's letters; skewed
-  (oblique) text over its label, which reads as level and whose widened
-  glyph boxes keep its hyphens with the letters; a label and SSN rotated
-  together, since labels are read from level rows only; a rotated SSN over
-  no label, printed a digit a line or reversed; and one beside "number"
-  under the upper phrase, the wrapped label's box taking its right edge
-  from that phrase. Every other digit drawn 0.4 degrees off level, starting
-  left of its label, prints the digits off the label, where main hides them.
-  Two fail-closed alternatives were declined. #81's automated security
-  review asked to refuse any unaccounted digits touching a label on any
-  line; on official forms shifted 4 points that refused dozens of pages of
-  amounts and dates set tight under labels. #85's asked to hide a rotated
-  word that touches a label whole unless proven not an SSN; that dropped the
-  value under a label on a page tilted 0.3 degrees. Revisit if a real
-  document shows an SSN spaced further apart than twice its height, or
-  grazing its label from the next line.
+- **AA95 (P2, S): Mask an SSN split by a space beside a separator.**
+  #87's review drew SSNs as an OCR layer splits them, a space on either
+  side of one hyphen or of both. `mask_ssn` reads a delimited SSN only
+  with its groups contiguous, and the whitespace spelling only without
+  hyphens, so every such split prints whole on a level page, under its
+  label or not; AA92 removes it only off level, where page text cannot
+  print it. Allow horizontal whitespace beside a separator in the
+  delimited spelling, one separator character throughout, and pin it
+  both ways: a date's 2-2-4 and a telephone number's 3-3-4 stay as
+  printed, spaced or not.
 
-- **AA93 (P3, S): Mask the TIN fields of Forms 2848 and 8821.**
-  #84's review typed nine digits into every text field of 22 official form
-  pages, Form 4506-C's siblings among them. Form 2848's taxpayer SSN and
-  ITIN fields (`TaxpayerIDSSN`, `TaxpayerIDITIN`) and Form 8821's field
-  under "Taxpayer identification number(s)" return a bare SSN whole, as on
-  main. `secure_fs._ID_LABEL` leaves a bare "taxpayer identification
-  number" heading unlabelled on purpose, since a business's prints an EIN
-  there: read each form's own heading, on the blank form's extracted text,
-  before widening it. Both are authorizations, not return documents.
+- **AA94 (P3, S): Label Form 1042-S's "Recipient's U.S. TIN".** #87's
+  review read the possessive TIN headings real forms print. Forms
+  1099-INT, 1099-R, 1099-K, 1098-T, 5498 and W-2G print "<NAME>'S TIN",
+  which labels. Form 1042-S box 13i prints "Recipient's U.S. TIN, if any",
+  and the possessive rule needs "TIN" straight after the possessive: a
+  bare nine-digit SSN or ITIN there prints whole on main, hyphenated it is
+  masked anyway. Read the form's own words on the blank form's extracted
+  text, and pin box 13i both ways, with box 16b's "Payer's TIN" and
+  12e's GIIN left unlabelled.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
@@ -529,8 +517,10 @@ merge.
 | AA89 | #76, #77, #80 | Unlettered columns retain the heading reach until a first entry establishes a chain; late first entries require a lettered or numbered caption. A nine-digit run just above an SSN label whose own box is blank is masked (a ZIP+4 above a 1099's empty recipient TIN, a FEIN typed without its hyphen above FTB 593's empty individual row), the safe direction. |
 | AA88 | #81 | An overlay on a wrapped heading's lower row, or rotated off its row, printed whole until AA91 (#85). Digits interleaved with an identifier label leave with it, a misregistered value on the label included, the safe direction. |
 | AA44 | #69, #70, #82 | No software-produced return PDF has been read yet: check the first real import's report table by table. Birth dates, residency, credit eligibility and continuation dependents stay interview questions; a Side 4 figure off its printed cents row is asked. |
-| AA90 | #84 | Only IT-213's exact "SSN or ITIN" heading gets the long column reach. Forms 2848 and 8821 still leak: AA93. |
+| AA90 | #84 | Only IT-213's exact "SSN or ITIN" heading gets the long column reach. Forms 2848 and 8821 printed whole until AA93 (#88). |
 | AA91 | #85 | What still prints is AA92. A rotated word touching a label goes whole only as nine digits running on together, and only its glyphs on the label's own line go otherwise, the safe direction. |
+| AA93 | #88 | A bare nine-digit EIN in Form 2848's EIN field, beside its SSN fields, masks as an SSN, the safe direction; hyphenated it stays. |
+| AA92 | #87 | Still printing, as on main: an SSN tracked past a word's gap, or with a space glyph drawn elsewhere between its digits in the stream; split beside a separator on a level page it is AA95. A date joined to a number by position alone, at 90 degrees or more, goes as an SSN would, the safe direction. Form 1042-S's "Recipient's U.S. TIN" is no label: AA94. |
 | AA87 | #74 | Identifiers past its reaches (FTB 3532, Forms 1095-A/B/C, Schedule EIC, Form 8332, IT-201's dependents 6 and 7) are AA89, and an SSN drawn over its own label is AA88; a page that masks its first dependent and prints the next in full still leaks. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
