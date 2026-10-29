@@ -211,6 +211,10 @@ Trigger and range behavior is documented in
   not yet diagnosed. Neither is a document a California filer parses.
 
 - **AA91 (P3, M): Mask the overlays AA88's labels do not reach.**
+  Implementation prepared; awaiting PR review and merge. The overlap index
+  shares the positional reader's wrapped-heading words, and rotated digits
+  and separators are grouped on their own baseline before checking the
+  original page's label letters. See the AA91 changelog entry.
   #81 masks an SSN drawn over an identifier label's letters on one row. Two
   overlays still print whole, as on main: one on the lower row of a wrapped
   heading ("(2) Social security" over "number"), which `_wrapped_labels`

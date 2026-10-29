@@ -276,3 +276,111 @@ def test_overlap_with_the_possessive_part_of_a_caption(tmp_path):
                                            (174, 100, 6, _ssn(''))])
     out = extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
     assert _ssn('') not in ''.join(re.findall(r'[0-9]', out))
+
+
+@pytest.mark.parametrize('head', ['(2) Social security', '(2) Identifying'])
+@pytest.mark.parametrize('top', [100, 109])
+@pytest.mark.parametrize('sep', ['', '-', '/'])
+def test_overlays_on_either_row_of_a_wrapped_heading(tmp_path, head, top, sep):
+    pdf = _draw(tmp_path / 'wrapped.pdf', [(200, 100, 7, head), (200, 109, 7, 'number'),
+                                          (200, top, 9, _ssn(sep)), (36, 300, 9, f'Routing {ROUTING}')])
+    for out in (extract_pdf_text(str(pdf))[0], str(extract_pdf_words(str(pdf)))):
+        assert _ssn('') not in ''.join(re.findall(r'[0-9]', out))
+        assert ROUTING in out
+
+
+def test_a_wrapped_heading_keeps_its_possessive_in_the_overlap_index(tmp_path):
+    import pdfplumber
+    from agents.lib.parse_utils import _overlaid_digits
+    pdf = _draw(tmp_path / 'wrapped-prefix.pdf', [(200, 100, 7, 'Your social security'),
+                                                 (200, 109, 7, 'number'), (174, 100, 6, _ssn(''))])
+    with pdfplumber.open(pdf) as document:
+        chars = document.pages[0].chars
+        hidden = _overlaid_digits(chars, lambda: None)
+        assert ''.join(c['text'] for c in chars if id(c) in hidden) == _ssn('')
+    assert _ssn('') not in ''.join(re.findall(r'[0-9]', extract_pdf_text(str(pdf))[0]))
+
+
+@pytest.mark.parametrize('angle', [-90, -45, -15, 15, 45, 90, 180, 270])
+@pytest.mark.parametrize('sep', ['', '-', '/', '.', '\u2014', '_'])
+def test_rotated_overlays_read_on_their_own_baseline(tmp_path, angle, sep):
+    import pdfplumber
+    from agents.lib.parse_utils import _overlaid_digits
+    pdf = _draw(tmp_path / 'rotated.pdf', [(200, 100, 9, 'Your social security number'),
+                                          (208, 95, 9, _ssn(sep), angle), (36, 200, 9, 'Other information'),
+                                          (36, 300, 9, f'Routing {ROUTING}')])
+    with pdfplumber.open(pdf) as document:
+        chars = document.pages[0].chars
+        hidden = _overlaid_digits(chars, lambda: None)
+        assert ''.join(c['text'] for c in chars if id(c) in hidden) == _ssn(sep)
+    for out in (extract_pdf_text(str(pdf))[0], str(extract_pdf_words(str(pdf)))):
+        assert _ssn('') not in ''.join(re.findall(r'[0-9]', out))
+        assert ROUTING in out
+
+
+@pytest.mark.parametrize('angle', [-90, -45, 45, 90, 180])
+def test_rotated_split_groups_and_the_source_page(tmp_path, angle):
+    import pdfplumber
+    from agents.lib.parse_utils import _safe_pdf_page
+    pdf = _draw(tmp_path / 'split-rotated.pdf', [(200, 100, 9, 'Your social security number'),
+                                                (208, 95, 9, '  '.join((_ssn('')[:4], _ssn('')[4:])), angle)])
+    original = pdf.read_bytes()
+    with pdfplumber.open(pdf) as document:
+        page = document.pages[0]
+        before = [dict(c) for c in page.chars]
+        safe = _safe_pdf_page(page, lambda: None)
+        assert not any(c['text'].isdigit() for c in safe.chars)
+        assert page.chars == before
+    assert pdf.read_bytes() == original
+
+
+@pytest.mark.parametrize('angle', [0, 45, 90])
+def test_wrapped_or_rotated_overlays_leave_pdf_tables(tmp_path, angle):
+    from reportlab.pdfgen import canvas
+    pdf = tmp_path / 'wrapped-table.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    for y in (600, 630, 680):
+        c.line(100, y, 500, y)
+    for x in (100, 300, 500):
+        c.line(x, 600, x, 680)
+    c.setFont('Helvetica', 7)
+    c.drawString(120, 660, '(2) Social security')
+    c.drawString(120, 651, 'number')
+    c.saveState()
+    c.translate(125, 651)
+    c.rotate(angle)
+    c.setFont('Helvetica', 9)
+    c.drawString(0, 0, _ssn('-'))
+    c.restoreState()
+    c.setFont('Helvetica', 9)
+    c.drawString(310, 610, ROUTING)
+    c.save()
+    tables = extract_tables(str(pdf))
+    assert tables and ROUTING in str(tables)
+    assert _ssn('') not in ''.join(re.findall(r'[0-9]', str(tables)))
+
+
+def test_dense_statements_keep_cusips_and_accounts_without_indexing_their_letters(tmp_path, monkeypatch):
+    import pdfplumber
+    from agents.lib import parse_utils
+    # Enough for the actual identifier label; indexing all the statement's
+    # unrelated letters would exceed this budget long before its last row.
+    monkeypatch.setattr(parse_utils, 'MAX_OVERLAY_INDEX_ENTRIES', 128)
+    visits = []
+    for count in (30, 60):
+        rows = [(200, 25, 7, '(2) Social security'), (200, 34, 7, 'number'), (200, 34, 9, _ssn(''))]
+        for n in range(count):
+            top = 80 + n * 10
+            rows.extend([(36, top, 7, 'CUSIP'), (36, top + 4.5, 9, ROUTING),
+                         (300, top, 7, 'Account number'), (300, top + 4.5, 9, ROUTING)])
+        pdf = _draw(tmp_path / f'dense{count}.pdf', rows)
+        calls = []
+        with pdfplumber.open(pdf) as document:
+            page = document.pages[0]
+            hidden = parse_utils._overlaid_digits(page.chars, lambda: calls.append(1))
+            assert ''.join(c['text'] for c in page.chars if id(c) in hidden) == _ssn('')
+        visits.append(len(calls))
+        text = extract_pdf_text(str(pdf))[0]
+        assert _ssn('') not in ''.join(re.findall(r'[0-9]', text))
+        assert text.count(ROUTING) == 2 * count
+    assert visits[1] < 3 * visits[0]

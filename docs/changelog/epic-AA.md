@@ -10,6 +10,32 @@ of AA13 and AA12, AA16 from AA6's measurements, and AA17 from AA6's review.
 
 ---
 
+## AA91 — wrapped-heading and rotated identifier overlays
+
+The overlap index now reads the same two-row headings as the positional
+reader, including the lower "number" row. It still indexes only identifier
+label letters. Rotated digits and their separators are projected onto their
+own baseline for grouping, then checked against the source page's label
+letters. The original glyphs leave a derived page before text, word or table
+extraction; source characters, bytes and table rules stay intact.
+
+Regressions cover both wrapped rows, clockwise and counterclockwise angles,
+separators, split groups, source immutability and PDF tables. Removing either
+the wrapped-heading reader or the rotation projection breaks its regression.
+Review found an overlay touching only "Your" before a wrapped match; the
+overlap index now includes the complete upper phrase, with the positional
+reader's original box unchanged. Its regression failed before that fix.
+A dense statement preserves CUSIPs and account numbers set tight below their
+headings while using an index budget too small to index all those letters.
+Doubling its rows grows tracked work by about 1.97 times. An interleaved
+old/new comparison of full extraction on that synthetic statement measured
+about 1.02 times the baseline; the overlap routine alone costs more, while
+the PDF parse still dominates the read. Timing ratios are observations, not
+test thresholds.
+
+This entry records the implementation branch; the task remains open in the
+backlog until its PR is merged.
+
 ## AA1 — the Earned Income Credit is disclosed instead of defaulting to zero
 
 ### What was wrong

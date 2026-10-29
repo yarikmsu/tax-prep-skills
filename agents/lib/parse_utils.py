@@ -382,6 +382,40 @@ def _validate_file_path(
 _WORD_GAP = 3   # pdfplumber's default x_tolerance: glyphs further apart than this begin a new word
 
 
+def _overlay_frame(char: dict) -> tuple[tuple, dict]:
+    """A glyph in its baseline's reading frame, with the source kept for
+    overlap checks on the page. PDF matrices give the baseline direction
+    and origin; projecting those avoids treating a rotated SSN as nine
+    unrelated page rows. Ordinary horizontal glyphs keep their geometry."""
+    a, b, _, _, e, f = char.get("matrix", (1, 0, 0, 1, 0, 0))
+    if a > 0 and b == 0:
+        return (1.0, 0.0), char
+    scale = math.hypot(a, b)
+    if not scale:
+        return (1.0, 0.0), char
+    u, v = a / scale, b / scale
+    frame = (round(u, 6), round(v, 6))
+    if frame == (1.0, 0.0):
+        return frame, char
+    advance = abs(char["adv"] * scale)
+    # An axis-aligned glyph box encloses its rotated advance and font
+    # height. Solve along the better-conditioned axis, including at 90°.
+    height = ((char["bottom"] - char["top"] - abs(v) * advance) / abs(u)
+              if abs(u) >= abs(v) else (char["x1"] - char["x0"] - abs(u) * advance) / abs(v))
+    x, bottom = u * e + v * f, v * e - u * f
+    return frame, {**char, "x0": x, "x1": x + advance, "top": bottom - height,
+                   "bottom": bottom, "size": height, "_overlay_source": char}
+
+
+def _overlay_rows(chars: list[dict], tick) -> list[list[dict]]:
+    frames: dict[tuple, list[dict]] = {}
+    for char in chars:
+        tick()
+        frame, glyph = _overlay_frame(char)
+        frames.setdefault(frame, []).append(glyph)
+    return [row for glyphs in frames.values() for row in _word_rows(glyphs)]
+
+
 def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
     """The ids of the glyphs an identifier spelled "000-00-0000" prints
     between its own digits: any one glyph but a letter, digit or space, in
@@ -393,20 +427,25 @@ def _spelled_with(digits: list[dict], chars: list[dict], tick) -> set[int]:
     label's own slash or apostrophe, which lands on an overlay's digit
     rather than between two."""
     lines: dict[tuple, list[dict]] = {}
-    for digit in sorted(digits, key=lambda d: d["x0"]):
-        lines.setdefault((round(digit["size"], 1), round(digit["bottom"], 1)), []).append(digit)
+    for digit in digits:
+        tick()
+        frame, digit = _overlay_frame(digit)
+        lines.setdefault((frame, round(digit["size"], 1), round(digit["bottom"], 1)), []).append(digit)
+    for line in lines.values():
+        line.sort(key=lambda d: d["x0"])
     starts = {key: [d["x0"] for d in line] for key, line in lines.items()}
     out = set()
     for char in chars:
         if len(char["text"]) != 1 or char["text"].isalnum() or char["text"].isspace():
             continue
         tick()
-        key = (round(char["size"], 1), round(char["bottom"], 1))
+        frame, glyph = _overlay_frame(char)
+        key = (frame, round(glyph["size"], 1), round(glyph["bottom"], 1))
         line = lines.get(key, [])
-        k = bisect.bisect_left(starts.get(key, []), char["x0"])
-        reach = max(char["x1"] - char["x0"], char["size"] / 2)
-        if (0 < k < len(line) and -0.5 <= char["x0"] - line[k - 1]["x1"] <= reach
-                and -0.5 <= line[k]["x0"] - char["x1"] <= reach):
+        k = bisect.bisect_left(starts.get(key, []), glyph["x0"])
+        reach = max(glyph["x1"] - glyph["x0"], glyph["size"] / 2)
+        if (0 < k < len(line) and -0.5 <= glyph["x0"] - line[k - 1]["x1"] <= reach
+                and -0.5 <= line[k]["x0"] - glyph["x1"] <= reach):
             out.add(id(char))
     return out
 
@@ -426,7 +465,9 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
     SSN. Digits that only graze a label from the next line print apart from
     it, read as any page's text is. A word in `protected` (its rounded box)
     is one the positional rules already mask, keeping its last four. The
-    source page's characters are never modified."""
+    source page's characters are never modified. Wrapped headings share the
+    positional reader's words; rotated digits are grouped in their own
+    baseline frame and checked against the original page's label letters."""
     from pdfplumber.utils import extract_words
 
     digits = [c for c in chars if c["text"] in "0123456789" and len(c["text"]) == 1]
@@ -437,8 +478,10 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
     index: dict[tuple[int, int], list[tuple[dict, int]]] = {}   # each label letter, with its label's number
     indexed: set[int] = set()
     indexed_words: set[int] = set()
-    entries = label = 0
-    for row in _word_rows(extract_words(letters, return_chars=True)):
+    entries = 0
+    rows = _word_rows(extract_words(letters, return_chars=True))
+    covers = []
+    for row in rows:
         tick()
         text, starts = _row_text(row)
         phrase_of: dict[int, tuple[list[dict], int]] = {}   # a word's phrase and where it ends in the row's text
@@ -448,32 +491,35 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
             phrase_of.update((id(w), (phrase, starts[read - 1] + len(row[read - 1]["text"]))) for w in phrase)
         for low, high, _ in identifier_spans(text)[0]:
             tick()
-            label += 1
             cover = _covered(row, starts, low, high)
             phrase, phrase_end = phrase_of[id(cover[0])]
             if _LABEL_TAIL.fullmatch(text, high, phrase_end):
                 cover = phrase
-            for word in cover:
-                if id(word) in indexed_words:
+            covers.append(cover)
+    covers.extend(phrase + tail for _, tail, phrase in _wrapped_label_words(rows, tick))
+    for label, cover in enumerate(covers):
+        tick()
+        for word in cover:
+            if id(word) in indexed_words:
+                continue
+            indexed_words.add(id(word))
+            for char in word["chars"]:
+                tick()
+                if id(char) in indexed or not char["text"].isalpha():
                     continue
-                indexed_words.add(id(word))
-                for char in word["chars"]:
-                    tick()
-                    if id(char) in indexed or not char["text"].isalpha():
-                        continue
-                    indexed.add(id(char))
-                    for x in _strip_span(char["x0"], char["x1"]):
-                        for y in _strip_span(char["top"], char["bottom"]):
-                            tick()
-                            entries += 1
-                            if entries > MAX_OVERLAY_INDEX_ENTRIES:
-                                raise ParseBudgetError("Identifier overlap index exceeds its per-page budget; split or repair the PDF.")
-                            index.setdefault((x, y), []).append((char, label))
+                indexed.add(id(char))
+                for x in _strip_span(char["x0"], char["x1"]):
+                    for y in _strip_span(char["top"], char["bottom"]):
+                        tick()
+                        entries += 1
+                        if entries > MAX_OVERLAY_INDEX_ENTRIES:
+                            raise ParseBudgetError("Identifier overlap index exceeds its per-page budget; split or repair the PDF.")
+                        index.setdefault((x, y), []).append((char, label))
     if not index:
         return set()
     lines = {id(c): n for n, line in enumerate(_word_rows(chars)) for c in line}
     hidden: set[int] = set()
-    for row in _word_rows(digits + [c for c in chars if id(c) in delimiters]):
+    for row in _overlay_rows(digits + [c for c in chars if id(c) in delimiters], tick):
         tick()
         groups: list[list[dict]] = []   # the row's glyphs in pdfplumber's words
         for glyph in row:
@@ -499,13 +545,13 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
         for at, group in enumerate(groups):
             tick()
             numerals = [glyph for glyph in group if glyph["text"].isdigit()]
-            bounds = _box(numerals or group)
-            crossed = _labels_crossed(group, index, lines, tick)
+            bounds = _box([g.get("_overlay_source", g) for g in numerals or group])
+            crossed = _labels_crossed([g.get("_overlay_source", g) for g in group], index, lines, tick)
             if not crossed or tuple(round(bounds[k], 3) for k in ("x0", "x1", "top", "bottom")) in protected:
                 continue
             for n in {accounted[id(glyph)] for glyph in group if id(glyph) in accounted}:
-                hidden.update(id(glyph) for glyph in ssns[n])   # every SSN the word holds, whole
-            for label in (label for label, interleaved in crossed.items() if interleaved):
+                hidden.update(id(glyph.get("_overlay_source", glyph)) for glyph in ssns[n])
+            for label in (label for label, interleaved in crossed.items() if interleaved or "_overlay_source" in group[0]):
                 unread.setdefault(label, []).append(at)
         for crossing in unread.values():
             tick()
@@ -518,7 +564,7 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
                          if glyph["text"].isdigit() and id(glyph) not in accounted]
             if len(numerals) == 9:   # one label's nine digits, however spaced: its SSN
                 crossing = list(range(low, high + 1))
-            hidden.update(id(glyph) for at in crossing for glyph in groups[at])
+            hidden.update(id(glyph.get("_overlay_source", glyph)) for at in crossing for glyph in groups[at])
     return hidden
 
 
@@ -699,12 +745,14 @@ def _phrases(row: list[dict]) -> list[list[dict]]:
     return out
 
 
-def _wrapped_labels(rows: list[list[dict]], tick) -> list:
+def _wrapped_label_words(rows: list[list[dict]], tick) -> list:
     """Identifier headings printed on two rows: "(2) Social security" over
     "number" (the TY2024 Form 1040's dependents) and "(2) Identifying" over
     "number" (Form 1040-NR's). A label starts in the upper phrase and ends
     the lower one, which holds nothing else and starts no further below the
-    upper than it is tall; it is boxed on the lower row, as wide as both.
+    upper than it is tall. Return its matched upper words, lower words,
+    and complete upper phrase: overlap detection includes "Your" before
+    the match, while the positional reader keeps the match's own box.
     Only an upper phrase's last `_WRAP` characters are read, where such a
     label starts."""
     labels = []
@@ -729,8 +777,15 @@ def _wrapped_labels(rows: list[list[dict]], tick) -> list:
             low = next((cut + start for start, end, _ in identifier_spans(joined)[0]
                         if start < len(head_text) - cut and end == len(joined)), None)
             if low is not None:
-                box = {**_box(_covered(heads[j], starts, low, len(head_text)) + tail), "top": top, "bottom": bottom}
-                labels.append((box, False, box["x1"]))
+                labels.append((_covered(heads[j], starts, low, len(head_text)), tail, heads[j]))
+    return labels
+
+
+def _wrapped_labels(rows: list[list[dict]], tick) -> list:
+    labels = []
+    for head, tail, _ in _wrapped_label_words(rows, tick):
+        box = {**_box(head + tail), "top": tail[0]["top"], "bottom": max(w["bottom"] for w in tail)}
+        labels.append((box, False, box["x1"]))
     return labels
 
 
