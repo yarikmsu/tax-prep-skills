@@ -301,7 +301,7 @@ def test_a_wrapped_heading_keeps_its_possessive_in_the_overlap_index(tmp_path):
     assert _ssn('') not in ''.join(re.findall(r'[0-9]', extract_pdf_text(str(pdf))[0]))
 
 
-@pytest.mark.parametrize('angle', [-90, -45, -15, 15, 45, 90, 180, 270])
+@pytest.mark.parametrize('angle', [-90, -45, -15, -1, 1, 15, 45, 90, 180, 270])
 @pytest.mark.parametrize('sep', ['', '-', '/', '.', '\u2014', '_'])
 def test_rotated_overlays_read_on_their_own_baseline(tmp_path, angle, sep):
     import pdfplumber
@@ -384,3 +384,87 @@ def test_dense_statements_keep_cusips_and_accounts_without_indexing_their_letter
         assert _ssn('') not in ''.join(re.findall(r'[0-9]', text))
         assert text.count(ROUTING) == 2 * count
     assert visits[1] < 3 * visits[0]
+
+
+def _digits(text: str) -> str:
+    return ''.join(re.findall(r'[0-9]', text))
+
+
+@pytest.mark.parametrize('tilt', [0.3, 1, 2, 3])
+@pytest.mark.parametrize('value', ['1234.56', '04/15/2025'])
+def test_a_tilted_page_keeps_the_value_under_a_label(tmp_path, tilt, value):
+    """A scan's text layer, drawn a few degrees off level: the value on the
+    line under a label touches its letters without sharing its line. An
+    SSN drawn over the same label is still masked."""
+    label = [(200, 100, 9, 'Your social security number', tilt), (36, 300, 9, f'Routing {ROUTING}')]
+    kept = _draw(tmp_path / 'kept.pdf', label + [(205, 108, 9, value, tilt)])
+    assert _digits(value) in _digits(extract_pdf_text(str(kept))[0])
+    masked = _draw(tmp_path / 'masked.pdf', label + [(205, 100, 9, _ssn(''), tilt)])
+    assert _ssn('') not in _digits(extract_pdf_text(str(masked))[0])
+
+
+@pytest.mark.parametrize('angle,dx,dy', [(-90, 0, -2), (180, 115, 0), (45, 110, 10)])
+@pytest.mark.parametrize('value', ['04/15/2025', '1545-0008'])
+def test_a_rotated_date_or_code_touching_a_label_keeps_its_digits(tmp_path, angle, dx, dy, value):
+    """Only nine digits running on together are a label's SSN; a rotated
+    date or form code that touches its letters reads as main read it."""
+    def read(text):
+        pdf = _draw(tmp_path / 'rotated.pdf', [(200, 100, 9, 'Your social security number'),
+                                              (200 + dx, 100 + dy, 9, text, angle), (36, 200, 9, 'Other information')])
+        return _digits(extract_pdf_text(str(pdf))[0])
+    assert sorted(read(value)) == sorted(_digits(value))
+    assert _ssn('') not in read(_ssn('-')) and _ssn('')[::-1] not in read(_ssn('-'))
+
+
+@pytest.mark.parametrize('base,jitter,x', [(0, 0.0001, 160), (30, 0.5, 200), (90, 0.4, 200)])
+def test_glyphs_drawn_a_hair_apart_read_as_one_run(tmp_path, base, jitter, x):
+    """Every other digit drawn a fraction of a degree off its neighbours is
+    still one SSN, across a whole-degree boundary too; a float's noise off
+    level is the page's own, its first digits printed left of the label."""
+    import pdfplumber
+    from reportlab.pdfgen import canvas
+    from agents.lib.parse_utils import _overlaid_digits
+    pdf = tmp_path / 'jitter.pdf'
+    c = canvas.Canvas(str(pdf), pagesize=(612, 792))
+    c.setFont('Helvetica', 9)
+    c.drawString(200, 683, 'Your social security number')
+    c.translate(x, 685)
+    c.rotate(base)
+    for i, digit in enumerate(_ssn('')):
+        c.saveState()
+        c.translate(5 * i, 0)
+        c.rotate(jitter if i % 2 else 0)
+        c.drawString(0, 0, digit)
+        c.restoreState()
+    c.save()
+    with pdfplumber.open(pdf) as document:
+        chars = document.pages[0].chars
+        hidden = _overlaid_digits(chars, lambda: None)
+        assert sorted(c['text'] for c in chars if id(c) in hidden) == sorted(_ssn(''))
+
+
+def test_a_rotated_value_garbling_a_label_leaves_it_to_govern_its_ssn(tmp_path):
+    """Only the rotated date's glyph on the label's line goes: the label
+    reads whole again and masks the SSN beside it."""
+    pdf = _draw(tmp_path / 'garbled.pdf', [(200, 100, 9, 'Your social security number'), (220, 112, 9, '04/15/2025', 45),
+                                          (330, 100, 9, _ssn('')), (36, 200, 9, 'Other information')])
+    assert _ssn('') not in _digits(extract_pdf_text(str(pdf))[0])
+
+
+
+@pytest.mark.parametrize('tilt', [1, 2, 3])
+@pytest.mark.parametrize('split', [True, False])
+def test_a_tilted_page_reads_a_grazing_split_run_as_a_level_page_does(tmp_path, tilt, split):
+    """Digits on the line under a tilted label touch its letters without
+    joining its words: the overlay pass leaves them as it would level."""
+    import pdfplumber
+    from agents.lib.parse_utils import _overlaid_digits
+    value = '  '.join((_ssn('')[:4], _ssn('')[4:])) if split else _ssn(' ')
+
+    def hidden(angle):
+        pdf = _draw(tmp_path / f'graze{angle}.pdf', [(200, 100, 9, 'Your social security number', angle),
+                                                    (205, 108, 9, value, angle)])
+        with pdfplumber.open(pdf) as document:
+            chars = document.pages[0].chars
+            return ''.join(c['text'] for c in chars if id(c) in _overlaid_digits(chars, lambda: None))
+    assert hidden(tilt) == hidden(0)
