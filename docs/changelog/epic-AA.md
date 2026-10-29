@@ -4354,3 +4354,17 @@ remain, as do values grazing a tilted label from the next line.
 - The overlay pass now runs on pages with no label, for the unlabelled
   rule: on a dense statement page it takes over three times main's
   time, the whole extraction about a quarter more.
+
+## AA94 — Form 1042-S recipient U.S. TIN
+
+The TY2026 [blank Form 1042-S](https://www.irs.gov/pub/irs-pdf/f1042s.pdf)
+extracts box 13i as "Recipient’s U.S. TIN, if any". The possessive identifier
+rule now accepts that dotted qualifier before TIN, retaining its payer-side
+exclusions. Box 16b's payer TIN and box 12e's global intermediary
+identification number remain unlabelled, as do recipient GIIN and FTIN.
+
+Regressions cover bare, whitespace-grouped and hyphenated SSNs and ITINs
+beside or below the heading, apostrophe variants, and PDF text, word and
+table extraction. The new bare and whitespace cases failed before the
+change; unrelated identifier fields survive after it. The implementation
+awaits merge; the backlog retains the open item until then.

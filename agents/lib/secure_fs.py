@@ -181,7 +181,9 @@ def redact(text) -> str:
 # A label is SSN, ITIN, "social security number", or a POSSESSIVE followed by
 # TIN / "identification number" / "identifying number" — "RECIPIENT'S TIN" on
 # every 1099, "Winner's TIN" on a W-2G, "Shareholder's identifying number" on a
-# K-1. Three spellings the attachment forms print in their header are labels
+# K-1, or "Recipient's U.S. TIN" in Form 1042-S box 13i. The U.S. qualifier
+# belongs to TIN only; GIIN and FTIN headings remain outside this rule.
+# Three spellings the attachment forms print in their header are labels
 # exactly as printed: "Your taxpayer identification number" (Forms 8995 and
 # 8995-A) and "Your identifying number" ending their row, and "Identifying
 # number" ending the row (Form 8801) or followed by "as shown" (Form 1116).
@@ -246,7 +248,7 @@ _ID_LABEL = (
     # label-only view spells "(s)" as a separate "s".
     r"|taxpayer[^\S\n]+identification[^\S\n]+number(?:\(s\)|[^\S\n]+s)(?![A-Za-z])"
     rf"|(?!{_PAYER_SIDE}['\u2019]?s[^\S\n])[A-Za-z]+['\u2019]?s[^\S\n]+"
-    r"(?:TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
+    r"(?:(?:U\.S\.[^\S\n]+)?TIN(?![A-Za-z])|identif(?:ication|ying)(?: number| no\.?)?))")
 # Bare, or grouped 3-2-4 by horizontal whitespace of any kind: a cell pasted
 # from a web table carries U+00A0 where the page had a space.
 _ID_VALUE_RE = re.compile(
