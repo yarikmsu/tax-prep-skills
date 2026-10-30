@@ -638,7 +638,7 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
             spelled += [glyph["text"] if glyph["text"].isdigit() else "-" for glyph in group]
             owners += group
         text = "".join(spelled)
-        _, values, delimited, _ = identifier_spans(text)
+        _, values, delimited, _ = identifier_spans(text, split_values=False)
         ssns = [[glyph for glyph in owners[low:high] if glyph is not None]
                 for low, high in values + [(low, high) for low, high, _ in delimited if text[low + 3:low + 4] == "-"]]
         for low, high, _ in delimited:

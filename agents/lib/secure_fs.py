@@ -273,6 +273,8 @@ _ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{r
 # What a label governs: the whitespace spelling, or a delimited one split.
 _ID_GOVERNED = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
+_ID_SPLIT_VALUE = re.compile(
+    rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
@@ -358,7 +360,7 @@ _ID_SPELLED = re.compile(
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
-def identifier_spans(row: str) -> tuple[list, list, list, list]:
+def identifier_spans(row: str, *, split_values: bool = True) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
     identifier-shaped run still to mask, an identifier spelled another way
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
@@ -367,11 +369,16 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
     `carries` says whether a value follows the label on its row, `masked`
     whether the page masked that identifier itself (`XXX-XX-1234`). A reader
     that knows where the row sits on the page decides which label governs
-    which run; `mask_runs` masks them."""
+    which run; `mask_runs` masks them. Split values are positional candidates
+    only: the overlay reader disables them in its digits-and-marks view,
+    which omits the words that distinguish a figure from an identifier."""
     last = max((m.start() for m in _ID_ANY_VALUE.finditer(row)), default=-1)
     labels = [(m.start(), m.end(), last >= m.end()) for m in _ID_LABEL_RE.finditer(row)]
-    values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
-    return (labels, values, [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
+    values = {(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)}
+    if split_values:
+        values.update((m.start(), m.end()) for m in _ID_SPLIT_VALUE.finditer(row)
+                      if not _ID_DELIMITED.fullmatch(row, m.start(), m.end()))
+    return (labels, sorted(values), [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
             [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
 
 
@@ -392,7 +399,7 @@ def prepare_runs(runs) -> Runs:
     spelling: dict[str, str] = {}
     for raw in sorted(runs, key=len, reverse=True):
         digits = re.sub(r"[^0-9]", "", raw)
-        spelling.setdefault(digits, _mask_spaced(_ID_VALUE_RE.sub(r"XXX-XX-\1", raw)))
+        spelling.setdefault(digits, _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", raw)))
         if len(digits) > 9 and len(digits) % 9 == 0:
             for i in range(0, len(digits), 9):
                 spelling.setdefault(digits[i:i + 9], f"XXX-XX-{digits[i + 5:i + 9]}")
@@ -402,7 +409,10 @@ def prepare_runs(runs) -> Runs:
 def _run_spans(text: str, runs: Runs) -> list:
     """Where the digits of `runs` print in `text`, however they are spaced:
     `(start, end, digits)`, each starting and ending on a group of digits'
-    edge, the longest run first at each place. One pass over the text."""
+    edge, the longest whitespace run first at each place. A second pass
+    includes the marks of a split 3-2-4 value. Overlapping matches merge,
+    with an empty `digits` sentinel: their boundaries disagree, so none of
+    their digits can safely be kept."""
     found = []
     for sequence in _DIGIT_GROUPS.finditer(text):
         groups = [(sequence.start() + m.start(), sequence.start() + m.end())
@@ -422,7 +432,18 @@ def _run_spans(text: str, runs: Runs) -> list:
                 continue
             found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
             k = stop
-    return found
+    for match in _ID_SPLIT_VALUE.finditer(text):
+        digits = re.sub(r"[^0-9]", "", match[0])
+        if digits in runs.spelling:
+            found.append((match.start(), match.end(), digits))
+    merged: list[tuple[int, int, str]] = []
+    for start, end, digits in sorted(found):
+        if merged and start < merged[-1][1]:
+            low, high, _ = merged[-1]
+            merged[-1] = (low, max(high, end), "")
+        else:
+            merged.append((start, end, digits))
+    return merged
 
 
 def mask_runs(text: str, runs) -> str:
@@ -433,7 +454,7 @@ def mask_runs(text: str, runs) -> str:
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     out, last = [], 0
     for start, end, digits in _run_spans(text, runs):
-        out += [text[last:start], runs.spelling[digits]]
+        out += [text[last:start], runs.spelling[digits] if digits else "XXX-XX-XXXX"]
         last = end
     return "".join(out) + text[last:]
 
@@ -446,9 +467,9 @@ def mask_row_runs(cells: list, runs) -> list:
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     texts = [cell if isinstance(cell, str) else "" for cell in cells]
     chars = list(" ".join(texts))
-    for start, end, _ in _run_spans("".join(chars), runs):
+    for start, end, digits in _run_spans("".join(chars), runs):
         positions = [i for i in range(start, end) if chars[i] in "0123456789"]
-        whole = len(positions) % 9 == 0
+        whole = bool(digits) and len(positions) % 9 == 0
         for n, i in enumerate(positions):
             if not (whole and n % 9 >= 5):
                 chars[i] = "X"

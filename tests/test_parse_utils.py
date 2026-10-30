@@ -1084,11 +1084,13 @@ def test_split_delimited_ssns_at_extraction_boundary(tmp_path, route, sep, label
     assert all(v in out for v in (date, phone, "12-3456789", "850.00"))
 
 
-def _draw(path, items):
+def _draw(path, items, *, boxes=()):
     """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
     order given, which is the order pdfplumber meets them in the stream."""
     from reportlab.pdfgen import canvas
     page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, top, width, height in boxes:
+        page.rect(x, 792 - top - height, width, height)
     for x, top, size, text, *angle in items:
         page.saveState()
         page.setFont("Helvetica", size)
@@ -1139,6 +1141,78 @@ class TestMaskingByPosition:
         with pdfplumber.open(str(pdf)) as document:
             raw = document.pages[0].extract_text()
         return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("itin", [False, True])
+    @pytest.mark.parametrize("label", ["SSN", "Account"])
+    def test_a_split_value_governed_only_by_position(self, tmp_path, route, sep, itin, label):
+        import pdfplumber
+        from agents.lib import parse_utils
+        groups = ("900", "70", LAST4) if itin else ("000", "00", LAST4)
+        value = _with_separator_gaps(groups, sep, (" ", "", " ", " "))
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 7, label), (570, 109, 5, "R"),
+                                           (36, 116, 9, value), (170, 116, 9, ROUTING)],
+                    boxes=[(32, 112, 124, 28), (156, 112, 134, 28)])
+        with pdfplumber.open(str(pdf)) as document:
+            raw = document.pages[0].extract_text()
+        assert value in mask_ssn(raw), "page text must separate the label and value"
+        if route == "identity_words":
+            extracted = parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=True)
+        else:
+            extracted = getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path))
+        out = ("\n".join(" ".join(word["text"] for word in page) for page in extracted.values())
+               if route in {"extract_pdf_words", "identity_words"} else repr(extracted))
+        assert ROUTING in out
+        if label == "SSN":
+            assert value not in out and MASKED in out
+            if route == "identity_words":
+                assert any(item["text"] == MASKED for word in extracted[0]
+                           for item in word.get("identity_identifiers", []))
+        else:
+            assert value in out
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_split_runs_mask_the_separators_and_digits_together(self, sep):
+        from itertools import product
+        from agents.lib.secure_fs import identifier_spans, mask_runs, prepare_runs
+        for gaps in product(("", " ", "\t", "\u00a0"), repeat=4):
+            value = _with_separator_gaps(("000", "00", LAST4), sep, gaps)
+            spans = identifier_spans(value)[1]
+            if any(gaps):
+                assert spans == [(0, len(value))]
+                assert identifier_spans(value, split_values=False)[1] == []
+            runs = prepare_runs({value})
+            assert runs.spelling[_ssn("")] == MASKED
+            assert mask_runs(f"Before {value} After", runs) == f"Before {MASKED} After"
+            assert mask_runs(_ssn(""), runs) == MASKED
+            assert mask_runs(value, {_ssn("")}) == MASKED
+            for longer in ("1" + value, value + "1"):
+                assert mask_runs(longer, runs) == longer
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_a_split_run_across_cells_keeps_only_its_last_four(self, sep):
+        from agents.lib.secure_fs import mask_row_runs
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        cells = ["000", sep, "00", sep, LAST4, None, "Wages"]
+        assert mask_row_runs(cells, {value}) == ["XXX", sep, "XX", sep, LAST4, None, "Wages"]
+
+    def test_positionally_known_digits_do_not_join_other_delimited_shapes(self):
+        from agents.lib.secure_fs import mask_runs
+        runs = {_ssn("")}
+        for value in ("01 - 31 - 2026", "415 - 555 - 0100",
+                      f"000 - 00 / {LAST4}", f"000\n- 00 - {LAST4}", f"000 -\r00 - {LAST4}"):
+            assert mask_runs(value, runs) == value
+
+    def test_a_split_match_cannot_hide_an_existing_whitespace_match(self):
+        from agents.lib.secure_fs import mask_row_runs, mask_runs
+        value = _with_separator_gaps(("000", "00", LAST4), "-", (" ",) * 4)
+        prior = "".join(("123", "456", "000"))
+        text = f"123456 {value}"
+        assert mask_runs(text, {prior}) == f"XXX-XX-{prior[-4:]}{value[3:]}"
+        assert mask_runs(text, {prior, value}) == "XXX-XX-XXXX"
+        assert mask_row_runs(["123456", "000", "-", "00", "-", LAST4], {prior, value}) == [
+            "XXXXXX", "XXX", "-", "XX", "-", "XXXX"]
 
     @pytest.mark.parametrize("between", [
         [(570, 108, 5, "R")],                         # Form 540: a margin glyph

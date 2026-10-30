@@ -4414,3 +4414,27 @@ telephone numbers, EINs and vertical whitespace stay outside it.
   AA96. Main also prints the SSN under a label whose row carries a figure
   in the whitespace or delimited spelling, a wage with its cents in their
   own column and then a year: the mechanism review used, AA97.
+
+
+## AA96 — Split identifiers governed only by position
+
+The positional reader now recognizes the same 3-2-4 split spelling as
+AA95's label-only text rule. A margin glyph between the label and its value
+in page text no longer makes PDF text, words, identity metadata or tables
+hand back the whole identifier. The split's marks belong to its span;
+prepared runs produce the canonical masked spelling, and table rows keep
+only the last four digits even when the groups and marks occupy separate
+cells.
+
+Whitespace runs retain their existing pass. Split runs are found separately,
+then overlapping matches merge and keep no digits, since their boundaries
+disagree. Review caught that treating every split shape as one numeric token
+could hide a whitespace match the old reader recognized. A 2,880-case
+comparison preserves every digit the previous table-run masker hid.
+
+The overlay's digits-and-marks view explicitly keeps its earlier spellings:
+removing words from a page can join separate figures into a split shape.
+A regression with only the first figure touching a label retains the other
+figures; enabling split recognition there makes that regression fail.
+Unlabelled splits still print as printed. Filename refusal, the error
+redactor and the text-only masking rules retain their previous scope.
