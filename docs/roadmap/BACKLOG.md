@@ -225,6 +225,8 @@ Trigger and range behavior is documented in
   that label prints whole. Found by #94's review; main prints both, in the
   whitespace and bare spellings. Mask with the runs the protection was
   decided from, or decide it on the cleaned page, and pin both layouts.
+  **Implementation awaiting owner review:** [PR #97](https://github.com/yarikmsu/tax-prep-skills/pull/97).
+  Keep this item open until the PR merges.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
