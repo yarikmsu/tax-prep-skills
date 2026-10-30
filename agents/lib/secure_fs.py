@@ -58,6 +58,7 @@ appear to be. An ordinary failure does not stop it.
 # any supported syntax; this one may not.
 from __future__ import annotations
 
+from bisect import bisect_right
 import contextlib
 import errno
 import math
@@ -277,8 +278,10 @@ _ID_GOVERNED = re.compile(
 _ID_SPLIT_VALUE = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
+# A fully masked value still fills its label's box. Do not walk past it
+# through a digit-free prefix and take the next nine-digit amount as the SSN.
 _ID_LABELED_SAME_LINE = re.compile(
-    rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
+    rf"({_ID_LABEL}(?:(?!XXX-XX-XXXX)[^0-9\n]){{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
 # spaces and one ":", "#" or "." between: page text joins a label to columns
 # across the page ("SSN Dividends 250 - 15 - 1200"), and prose names a label
@@ -331,30 +334,35 @@ def _mask_spaced(text: str) -> str:
     return _ID_SPACED.sub(nines, text)
 
 
-def _mask_spaced_after_labels(text: str) -> str:
+def _mask_spaced_after_labels(text: str, runs=None) -> str:
     """The same-line layout for the comb spelling: every run after the label,
     which a single-value pattern cannot reach past the first dependent."""
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if label := _ID_LABEL_RE.search(line):
-            lines[i] = line[:label.end()] + _mask_spaced(line[label.end():])
+            value = line[label.end():]
+            if runs is not None:
+                value = mask_runs(value, runs)
+            lines[i] = line[:label.end()] + _mask_spaced(value)
     return "\n".join(lines)
 
 
-def _mask_under_labels(text: str) -> str:
+def _mask_under_labels(text: str, runs=None, original=None) -> str:
     """Mask every identifier-shaped run on a line whose PREVIOUS line carries
     an identifier label with no value after it — the label-above-value box of
     a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
     value the same-line pass has just rewritten still counts as present."""
-    raw = text.split("\n")
-    lines = list(raw)
+    original = text if original is None else original
+    raw = original.split("\n")
+    lines = text.split("\n")
     starts = [0]
     for line in raw:
         starts.append(starts[-1] + len(line) + 1)
     for i in range(1, len(raw)):
         above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
-        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
-            lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", raw[i]))
+        if _label_ends(original, starts[above], starts[above] + len(raw[above])):
+            value = mask_runs(lines[i], runs) if runs is not None else lines[i]
+            lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", value))
     return "\n".join(lines)
 
 
@@ -453,7 +461,12 @@ def _run_spans(text: str, runs: Runs) -> list:
             stop = next((group for length in runs.lengths if (group := group_at.get(start + length)) is not None
                          and digits[start:start + length] in runs.spelling), None)
             if stop is not None and (stop > reach or (start - origin) % 9):
-                found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
+                value = digits[start:edges[stop]]
+                # A different spelling can join groups that were separate in
+                # the governed comb. Its known SSN still conflicts at an offset.
+                if any(value[i:i + 9] in runs.spelling for i in range(1, len(value) - 8) if i % 9):
+                    value = ""
+                found.append((groups[k][0], groups[stop - 1][1], value))
                 if stop > reach:
                     reach, origin = stop, start
     for match in _ID_SPLIT_VALUE.finditer(text):
@@ -483,15 +496,26 @@ def mask_runs(text: str, runs) -> str:
     return "".join(out) + text[last:]
 
 
-def mask_row_runs(cells: list, runs) -> list:
+def mask_row_runs(cells: list, runs, *, _cross_cell_conflicts=False) -> list:
     """`mask_runs` across one table row, whose cells can split a run: Form
     1040's comb boxes come out of a table as "000 | 00 | 1234". Each digit is
     masked in place, a whole nine keeping its last four, so every cell keeps
-    its own text around them."""
+    its own text around them. `mask_table` resolves only conflicts spanning
+    cells first, before a cell's own mask could hide the row's boundaries."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     texts = [cell if isinstance(cell, str) else "" for cell in cells]
     chars = list(" ".join(texts))
+    boundaries, offset = [], 0
+    if _cross_cell_conflicts:
+        for text in texts[:-1]:
+            offset += len(text)
+            boundaries.append(offset)
+            offset += 1
     for start, end, digits in _run_spans("".join(chars), runs):
+        if _cross_cell_conflicts:
+            edge = bisect_right(boundaries, start)
+            if digits or edge == len(boundaries) or boundaries[edge] >= end:
+                continue
         positions = [i for i in range(start, end) if chars[i] in "0123456789"]
         whole = bool(digits) and len(positions) % 9 == 0
         for n, i in enumerate(positions):
@@ -504,7 +528,7 @@ def mask_row_runs(cells: list, runs) -> list:
     return out
 
 
-def mask_ssn(value):
+def mask_ssn(value, runs=None, *, _original=None):
     """Mask every SSN/ITIN shape in extracted document text to `XXX-XX-{last4}`.
 
     The extraction boundary is where this runs — every string
@@ -521,16 +545,24 @@ def mask_ssn(value):
     to text to look for one would change what the worker reads. A cell whose
     COLUMN carries the label is `mask_table`'s case below — it is the one place
     the shape is unambiguous, and the only place a number is masked.
+
+    Optional positional `runs` resolve overlapping copies before a textual
+    label masks their comb row nine at a time. Label reach still reads the
+    original text: rewriting its value first could change what it governs.
+    `mask_table` supplies `_original` when its across-cell pass has already
+    masked digits in place, preserving each cell's length and line breaks.
     """
     # Nine bare digits is the shortest maskable shape; every shorter cell
     # (most of a CSV) skips both regex passes.
     if not isinstance(value, str) or len(value) < 9:
         return value
-    out = _mask_under_labels(value)
+    runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
+    out = _mask_under_labels(value, runs, _original)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
-    out = _mask_spaced_after_labels(out)
+    out = _mask_spaced_after_labels(out, runs)
     out = _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
-    return _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
+    out = _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
+    return mask_runs(out, runs) if runs is not None else out
 
 
 def first_non_finite(node, _path: tuple = ()) -> "str | None":
@@ -576,7 +608,7 @@ def _is_id_label_cell(cell) -> bool:
     return isinstance(cell, str) and _label_ends(cell)
 
 
-def _mask_id_value(cell):
+def _mask_id_value(cell, runs=None):
     """Mask every identifier-shaped run in a cell a label GOVERNS.
 
     An integer is masked here and nowhere else. `mask_ssn` leaves a numeric
@@ -595,12 +627,15 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
+    original = text
+    if runs is not None:
+        text = mask_runs(text, runs)
     masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
                                            _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
-    return masked if masked != text else cell
+    return masked if masked != original else cell
 
 
-def mask_table(rows):
+def mask_table(rows, runs=None):
     """`mask_ssn` over every cell, plus the labels only the TABLE can see.
 
     Rows of cells in, rows of cells out — every extraction route that returns
@@ -609,23 +644,26 @@ def mask_table(rows):
     sequence is masked as a value, so a malformed table cannot slip past
     untouched.
     """
+    runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
     masked = []
     governed: set = set()
     for row in rows:
         if not isinstance(row, (list, tuple)):
-            masked.append(mask_ssn(row))
+            masked.append(mask_ssn(row, runs))
             continue
-        out = [mask_ssn(cell) for cell in row]
+        positioned = mask_row_runs(list(row), runs, _cross_cell_conflicts=True) if runs is not None else row
+        out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None)
+               for cell, original in zip(positioned, row)]
         # The columns a PREVIOUS row's label governs, before this row's own
         # labels are read: a header governs what is under it, never itself.
         for column in governed:
             if column < len(out):
-                out[column] = _mask_id_value(out[column])
+                out[column] = _mask_id_value(out[column], runs)
         for column, cell in enumerate(row):
             if _is_id_label_cell(cell):
                 governed.add(column)
                 if column + 1 < len(out):
-                    out[column + 1] = _mask_id_value(out[column + 1])
+                    out[column + 1] = _mask_id_value(out[column + 1], runs)
         masked.append(out)
     return masked
 

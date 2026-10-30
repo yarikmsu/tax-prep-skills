@@ -1990,6 +1990,7 @@ class TestMaskingByPosition:
         expected = " ".join(f"XXX-XX-{digits[i + 5:i + 9]}" for i in (0, 9)) if aligned else "XXX-XX-XXXX"
         assert mask_runs(f"Before {row}; Copy {_ssn(' ')}; Wages 850.00", runs) == (
             f"Before {expected}; Copy {MASKED}; Wages 850.00")
+        assert mask_runs(digits, runs) == expected
         cells = ["SSN", *groups, None, "Wages 850.00"]
         masked = mask_row_runs(cells, runs)
         assert masked[0] == "SSN" and masked[-2:] == [None, "Wages 850.00"]
@@ -1999,17 +2000,38 @@ class TestMaskingByPosition:
                                 for n, digit in enumerate(group)))
             count += len(group)
         assert masked[1:-2] == kept
+        if not aligned:
+            assert mask_table([cells], runs) == [masked]
+
+    def test_positional_masking_preserves_the_original_labels_reach(self):
+        """A bare 18-digit value does not fill its label's box in text.
+        Masking it first would make it a value and leave the next row raw."""
+        digits = "222" + _ssn("") + "333333"
+        runs = {" ".join(digits), _ssn(" ")}
+        assert mask_ssn(f"SSN {digits}\n{_SECOND}", runs) == "SSN XXX-XX-XXXX\nXXX-XX-1111"
+        figure = "".join(("850", "00", "2026"))
+        row = " ".join(digits)
+        assert mask_ssn(f"SSN {row}; Wages {figure}", runs) == f"SSN XXX-XX-XXXX; Wages {figure}"
+        assert mask_ssn(f"SSN XXX-XX-XXXX; Wages {figure}") == f"SSN XXX-XX-XXXX; Wages {figure}"
+        itin = _itin().replace("-", "")
+        assert mask_table([["SSN"], [int(itin)]], {itin}) == [["SSN"], [MASKED]]
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
-    def test_a_governed_comb_containing_an_offset_copy_keeps_no_digits(self, tmp_path, route):
-        """The far figure leaves AA98's label governing a long comb row;
-        a separate governed SSN is inside it at an offset of three digits."""
+    @pytest.mark.parametrize("layout", ["far", "above", "beside", "column"])
+    def test_a_governed_comb_containing_an_offset_copy_keeps_no_digits(self, tmp_path, route, layout):
+        """Both positional and textual labels must see the offset conflict
+        before masking nines. The separate SSN starts three digits into it."""
         digits = "222" + _ssn("") + "333333"
-        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, "SSN"), (400, 100, 9, "XXX-XX-2026"),
-                                           (36, 116, 9, " ".join(digits)),
-                                           (290, 116, 9, "850.00"),
-                                           (36, 200, 9, f"SSN {_ssn(' ')}")],
-                    boxes=[(32, 112, 250, 28), (282, 112, 100, 28)])
+        beside = layout == "beside"
+        items = [(36, 116 if beside else 100, 9, "SSN"),
+                 (70 if beside else 36, 116, 9, " ".join(digits)),
+                 (290, 116, 9, "850.00"), (36, 200, 9, f"SSN {_ssn(' ')}")]
+        boxes = [(32, 112, 250, 28), (282, 112, 100, 28)]
+        if layout == "far":
+            items.append((400, 100, 9, "XXX-XX-2026"))
+        elif layout == "column":
+            boxes += [(32, 98, 250, 14), (282, 98, 100, 14)]
+        pdf = _draw(tmp_path / "form.pdf", items, boxes=boxes)
         extracted = self._extract(route, pdf, tmp_path)
         if route == "extract_pdf_text":
             assert "XXX-XX-XXXX" in extracted[0] and MASKED in extracted[0]
@@ -2019,9 +2041,9 @@ class TestMaskingByPosition:
             assert "XXX-XX-XXXX" in text and MASKED in text
             assert f"XXX-XX-{digits[5:9]}" not in text
         else:
-            row = extracted[0][0][0][0]
-            assert row == "XXX-XX-XXXX"
-            assert extracted[0][0][0][1] == "850.00"
+            row = extracted[0][0][-1]
+            assert row[0] == ("SSN " if beside else "") + "XXX-XX-XXXX"
+            assert row[1] == "850.00"
 
     def test_mask_runs_masks_a_run_however_it_is_spaced(self):
         from agents.lib.secure_fs import mask_runs
