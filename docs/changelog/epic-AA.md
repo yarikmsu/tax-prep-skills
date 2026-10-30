@@ -4450,9 +4450,10 @@ tables, with something page text prints between the label and the value
 in a second pass after the whitespace one, and where the two passes'
 matches overlap their boundaries disagree, so the merged span keeps no
 digit. Table rows keep only the last four when the groups and marks fill
-separate cells. Unlabelled, a split still prints as printed, and the
-overlay's digits-and-marks view, filename refusal and the redactor keep
-their spellings.
+separate cells, and a split value after a label wrapped over two rows ends
+its lower phrase as the other spellings do. Unlabelled, a split still
+prints as printed, and the overlay's digits-and-marks view, filename
+refusal and the redactor keep their spellings.
 
 - As opened, the split joined `identifier_spans`' values. The positional
   reader also reads a value as a sign that a label's box is filled: a
@@ -4463,12 +4464,20 @@ their spellings.
   it printed 28 SSNs that main masks.
 - A split run is therefore a target only, never evidence: it stays out of
   `identifier_spans`, `under` and the lone-label test. `_beside` and
-  `_above` only mask more with more runs; `_under` starts a column at its
-  first entry, so it reads the page both without split runs and with
-  them as entries, their own words no longer text across the column.
-- Over the same layouts (13,665 synthetic SSNs) the result masks 1,163
-  that main prints and prints none that main masks; 2,000 stacked-column
-  layouts without splits, 114 filled official forms and 19 IRS forms,
-  instructions and publications through both PDF routes print the same. On a page of
-  labels over a grid of split-shaped figures the positional reader costs
-  what the PR as opened did.
+  `_above` only mask more with more runs and labels; `_under` starts a
+  column at its first entry, so it reads the page both as main does and
+  with split runs as entries, their own words no longer text across the
+  column, and with the wrapped labels only a split value ends. A split
+  figure before a wrapped label does not stop it reading as one, which
+  the PR as opened let it do.
+- The overlay pass keeps on the page the runs a label governs, and a run
+  kept there can print beside a label in page text and read as its
+  value. It keeps only what main's reader governs: one governed only
+  through a split run below a label, kept beside it, left the SSN on the
+  next line of text whole.
+- Over 4,000 random layouts with split values and wrapped labels (26,089
+  synthetic SSNs) the result masks 1,915 that main prints and prints none
+  that main masks; 4,000 layouts without them, 114 filled official forms
+  and 19 IRS forms, instructions and publications through both PDF routes
+  print the same. On a page of labels over a grid of split-shaped figures
+  the positional reader costs what the PR as opened did.

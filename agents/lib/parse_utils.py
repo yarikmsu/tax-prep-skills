@@ -597,7 +597,7 @@ def _overlaid_digits(chars: list[dict], tick, protected=frozenset()) -> set[int]
                 cover = phrase
             covers.append(cover)
     for rows in rows_by_frame:
-        covers.extend(phrase + tail for _, tail, phrase in _wrapped_label_words(rows, tick))
+        covers.extend(phrase + tail for _, tail, phrase, by_split in _wrapped_label_words(rows, tick) if not by_split)
     for label, cover in enumerate(covers):
         tick()
         for word in cover:
@@ -741,7 +741,9 @@ def _safe_pdf_page(page, tick):
     if not hidden:
         return page
     words = page.extract_words()
-    governed = prepare_runs(_governed_runs(words, tick)).spelling
+    # Kept on the page, a run can read as a label's value in its text, so
+    # only what the reader governs without split runs is kept (AA96).
+    governed = prepare_runs(_governed_runs(words, tick, split=False)).spelling
     protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
                  for raw, box in _page_identifiers(words, tick)[1]
                  if "".join(re.findall(r"[0-9]", raw)) in governed}
@@ -889,8 +891,9 @@ def _wrapped_label_words(rows: list[list[dict]], tick) -> list:
     "number" (Form 1040-NR's). A label starts in the upper phrase and ends
     the lower one, optionally followed by its value, and starts no further below the
     upper than it is tall. Return its matched upper words, lower words,
-    and complete upper phrase: overlap detection includes "Your" before
-    the match, while the positional reader keeps the match's own box.
+    complete upper phrase, and whether only a split value after it ends its
+    lower phrase: overlap detection includes "Your" before the match, while
+    the positional reader keeps the match's own box.
     Only an upper phrase's last `_WRAP` characters are read, where such a
     label starts."""
     labels = []
@@ -918,19 +921,31 @@ def _wrapped_label_words(rows: list[list[dict]], tick) -> list:
             match = next(((cut + start, end) for start, end, _ in found
                           if start < len(head_text) - cut < end
                           and _LABEL_TAIL.fullmatch(joined, end, limit)), None)
+            by_split = False
+            if match is None:
+                # A split value after the label ends its phrase as the other
+                # spellings do. Only after it: a split-shaped figure before
+                # the label must not stop it reading as one.
+                splits = [start for start, _ in split_spans(joined)]
+                match = next(((cut + start, end) for start, end, _ in found
+                              if start < len(head_text) - cut < end
+                              and _LABEL_TAIL.fullmatch(joined, end, min([limit, *(s for s in splits if s >= end)]))),
+                             None)
+                by_split = match is not None
             if match is not None:
                 low, end = match
                 _, tail_starts = _row_text(tail)
                 label_tail = _covered(tail, tail_starts, 0, end - (len(head_text) - cut + 1))
-                labels.append((_covered(heads[j], starts, low, len(head_text)), label_tail, heads[j]))
+                labels.append((_covered(heads[j], starts, low, len(head_text)), label_tail, heads[j], by_split))
     return labels
 
 
 def _wrapped_labels(rows: list[list[dict]], tick) -> list:
     labels = []
-    for head, tail, _ in _wrapped_label_words(rows, tick):
+    for head, tail, _, by_split in _wrapped_label_words(rows, tick):
         box = {**_box(head + tail), "top": tail[0]["top"], "bottom": max(w["bottom"] for w in tail)}
         box["row_x1"] = max(w["x1"] for w in tail)
+        box["split_tail"] = by_split
         labels.append((box, False, box["row_x1"]))
     return labels
 
@@ -1291,11 +1306,14 @@ def _paragraph_labels(words: list[dict], labels: list, tick, boundaries: list | 
     return out
 
 
-def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
+def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True) -> set[str]:
     """The text of each identifier-shaped run the page prints in an
     identifier label's box, whatever order the page's text puts them in.
-    `tick` is the caller's time budget, checked as the page is read."""
+    `tick` is the caller's time budget, checked as the page is read.
+    Without `split`, neither split runs nor a label only a split value ends."""
     labels, values, spelled, covered, splits = _page_identifiers(words, tick)
+    if not split:
+        labels, splits = [entry for entry in labels if not entry[0].get("split_tail")], []
     if not labels or not (values or splits):
         return set()
     items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
@@ -1313,13 +1331,16 @@ def _governed_runs(words: list[dict], tick=lambda: None) -> set[str]:
     extra = _paragraph_labels(words, lone, tick, boundaries=labels)
     # A split run is masked where a label governs it, and decides nothing
     # else: not that a label's value prints under it (`under`), nor that a
-    # label is lone. `_beside` and `_above` only mask more with more runs;
-    # `_under` starts a column at its first entry, so it reads the page both
-    # without them and with them as entries, their words no longer printed
-    # across the column.
+    # label is lone. `_beside` and `_above` only mask more with more runs
+    # and labels; `_under` starts a column at its first entry, so it reads
+    # the page both as main does, without split runs or a label only a split
+    # value ends, and with them, split runs as entries whose words are no
+    # longer printed across the column.
     targets = items + [(box, raw, False) for raw, box, _ in splits]
+    plain = [k for k, (label, *_) in enumerate(labels) if not label.get("split_tail")]
     runs = (_beside(labels + extra, targets + placeholders, under + [[] for _ in extra], tick)
-            | _under(labels, items, under, printed, tick) | _above(lone, targets, tick))
+            | _under([labels[k] for k in plain], items, [under[k] for k in plain], printed, tick)
+            | _above(lone, targets, tick))
     if splits:
         split_words = set().union(*(ids for *_, ids in splits))
         runs |= _under(labels, targets, under, [w for w in printed if id(w) not in split_words], tick)

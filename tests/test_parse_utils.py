@@ -1295,6 +1295,30 @@ class TestMaskingByPosition:
         for out in self._routes(tmp_path, [(36, 100 if layout == "beside" else 120, 7, "SSN"), (*at, 9, value)]):
             assert MASKED in out and value not in out
 
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("before", ["Your social", "Rate 250 - 15 - 1200 Your social"])
+    def test_a_split_value_ends_a_wrapped_labels_phrase(self, tmp_path, sep, before):
+        """A label wrapped over two rows reads as one only when its lower
+        phrase ends at it or at a value. A split value after it ends the
+        phrase; a split-shaped figure before it in the upper phrase does not
+        stop it reading as a label."""
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        for out in self._routes(tmp_path, [(36, 100, 7, before), (36, 109, 7, f"security number {value}")]):
+            assert MASKED in out and value not in out
+
+    def test_a_run_governed_through_a_split_keeps_no_overlay_on_the_page(self, tmp_path):
+        """A figure drawn over "RECIPIENT'S TIN" leaves the page with the
+        label's own digits. The same figure prints again down the label's
+        column, which a split-shaped figure carries to it, but kept on the
+        page for that it would print beside the label in page text, read as
+        its value, and leave the SSN on the next line of text whole."""
+        figure = " ".join(("125", "50", "2025"))
+        value = "".join(("000", "00", LAST4))
+        items = [(70, 261, 9, value), (416, 330, 9, "$1,234.56. 2025"), (416, 380, 10, figure),
+                 (470, 227, 9, figure), (420, 224, 8, "RECIPIENT'S TIN")]
+        for out in self._routes(tmp_path, items):
+            assert MASKED in out and value not in out
+
     def test_a_split_match_cannot_hide_an_existing_whitespace_match(self):
         from agents.lib.secure_fs import mask_row_runs, mask_runs
         value = _with_separator_gaps(("000", "00", LAST4), "-", (" ",) * 4)
