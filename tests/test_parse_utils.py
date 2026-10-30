@@ -719,8 +719,8 @@ class TestMaskSsn:
     def test_a_label_above_its_value_masks_the_value_line(self):
         """A W-2 box and every 1099 print the label on one line and the number
         on the next; pdfplumber keeps that layout. The W-2 also prints "OMB
-        No. 1545-0008" to the right of the box label, so the rule is "no
-        identifier-shaped run after the label", not "no digits"."""
+        No. 1545-0008" to the right of the box label. Only a value straight
+        after the label belongs to it; other columns do not fill the box."""
         page = f"a Employee's social security number OMB No. 1545-0008\n{_ssn('')} 50,000.00"
         assert mask_ssn(page) == \
             f"a Employee's social security number OMB No. 1545-0008\n{MASKED} 50,000.00"
@@ -737,6 +737,34 @@ class TestMaskSsn:
             assert out.endswith(f"\nRouting {ROUTING}"), out
         out = mask_ssn(f"Employer identification number\n{ROUTING}")
         assert out == f"Employer identification number\n{ROUTING}"
+
+    @pytest.mark.parametrize("figure", [" ".join(("Wages 850", "00", "2026")), "-".join(("Wages 850", "00", "2026")),
+                                         "Routing " + ROUTING, "Prior XXX-XX-1111"])
+    @pytest.mark.parametrize("value", [_ssn(""), _ssn(" "), " ".join(_ssn(""))])
+    def test_a_figure_across_the_label_row_does_not_supply_its_value(self, figure, value):
+        from agents.lib.secure_fs import identifier_spans
+        heading = f"SSN {figure}"
+        assert not identifier_spans(heading)[0][0][2]
+        assert mask_ssn(f"{heading}\n{value}").endswith(f"\n{MASKED}")
+        assert mask_table([[heading], [value]])[1] == [MASKED]
+
+    @pytest.mark.parametrize("value", [_ssn(""), _ssn(" "), _ssn("-"),
+                                       " ".join(_ssn("")), MASKED, "***-**-1234"])
+    @pytest.mark.parametrize("between", [" ", ": ", " # ", ". ", "\u00a0"])
+    def test_only_an_adjacent_value_stops_the_label_governing_below(self, value, between):
+        from agents.lib.secure_fs import identifier_spans
+        heading = f"SSN{between}{value}"
+        assert identifier_spans(heading)[0][0][2]
+        assert mask_ssn(f"{heading}\nRouting {ROUTING}").endswith(f"\nRouting {ROUTING}")
+        assert mask_table([[heading], [ROUTING]])[1] == [ROUTING]
+
+    @pytest.mark.parametrize("label", ["SSN or ITIN", "SSN/ITIN", "social security number (SSN)"])
+    def test_aliases_share_their_adjacent_value(self, label):
+        from agents.lib.secure_fs import identifier_spans
+        heading = f"{label}: {MASKED}"
+        assert all(carries for _, _, carries in identifier_spans(heading)[0])
+        assert mask_ssn(f"{heading}\nRouting {ROUTING}").endswith(f"\nRouting {ROUTING}")
+        assert mask_table([[heading], [ROUTING]])[1] == [ROUTING]
 
     @pytest.mark.parametrize("box", [
         "3 Social security wages", "4 Social security tax withheld",
@@ -1139,6 +1167,30 @@ class TestMaskingByPosition:
         with pdfplumber.open(str(pdf)) as document:
             raw = document.pages[0].extract_text()
         return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
+    @pytest.mark.parametrize("figure", [" ".join(("Wages 850", "00", "2026")), "-".join(("Wages 850", "00", "2026"))])
+    @pytest.mark.parametrize("between", [False, True])
+    def test_a_figure_across_a_labels_row_leaves_its_value_masked(self, tmp_path, route, figure, between):
+        from agents.lib import parse_utils
+        # The margin glyph separates the label and value in page text, so
+        # that variant exercises the positional carries flag as well.
+        items = [(36, 100, 7, "SSN"), (300, 100, 7, figure), (36, 116, 9, _ssn(""))]
+        if between:
+            items.append((570, 109, 5, "R"))
+        pdf = _draw(tmp_path / "form.pdf", items)
+        out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
+        assert _ssn("") not in out and MASKED in out
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
+    @pytest.mark.parametrize("label", ["SSN", "SSN or ITIN", "SSN/ITIN", "social security number (SSN)"])
+    @pytest.mark.parametrize("value", [_ssn(""), _ssn(" "), _ssn("-"), MASKED])
+    def test_an_adjacent_value_leaves_the_routing_number_below_alone(self, tmp_path, route, label, value):
+        from agents.lib import parse_utils
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, f"{label}: {value}"),
+                                           (36, 116, 9, f"Routing {ROUTING}")])
+        out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
+        assert ROUTING in out and MASKED in out
 
     @pytest.mark.parametrize("between", [
         [(570, 108, 5, "R")],                         # Form 540: a margin glyph
@@ -1546,9 +1598,10 @@ class TestMaskingByPosition:
             return Measured(text), starts
 
         monkeypatch.setattr(parse_utils, "_row_text", measured)
-        text = "/".join(["SSN"] * 1000)
+        text = "/".join(["SSN"] * 1000) + ": XXX-XX-1234"
         word = {"text": text, "x0": 36.0, "x1": 50.0, "top": 100.0, "bottom": 107.0}
-        assert len(parse_utils._page_identifiers([word], lambda: None)[0]) == 1000
+        labels = parse_utils._page_identifiers([word], lambda: None)[0]
+        assert len(labels) == 1000 and all(carries for _, carries, _ in labels)
         assert sum(copied) <= len(text) * 4, "work must grow with the word, not its labels times its length"
 
     def test_repeated_numbered_heads_do_not_walk_overlapping_paragraphs(self):

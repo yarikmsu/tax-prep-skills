@@ -4414,3 +4414,24 @@ telephone numbers, EINs and vertical whitespace stay outside it.
   AA96. Main also prints the SSN under a label whose row carries a figure
   in the whitespace or delimited spelling, a wage with its cents in their
   own column and then a year: the mechanism review used, AA97.
+
+
+## AA97 — A figure across a label's row does not fill its box
+
+A label has its own value only immediately after it, allowing horizontal
+whitespace and one colon, number sign or period. Both the text/table label
+reader and the positional reader use that rule. A wage with its cents in a
+separate column followed by a year, a delimited figure, an account number or
+a masked identifier across the row no longer stops the SSN below the label
+from masking.
+
+Review also covered aliases naming one field: "SSN or ITIN", "SSN/ITIN"
+and "social security number (SSN)" share their adjacent value. The alias
+walk is backwards and linear, so a crafted chain does not rescan each suffix.
+A label with its own adjacent value still leaves the routing number below
+alone. The split spelling retains AA95's label-only rule; positional split
+runs remain AA96.
+
+Regression coverage pins both decisions in text and tables and through PDF
+text and word extraction, with a margin glyph separating label and value in
+page text to exercise the positional reader independently.
