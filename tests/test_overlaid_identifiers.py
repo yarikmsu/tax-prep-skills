@@ -167,6 +167,25 @@ def test_a_retained_copy_cannot_unmask_the_number_above_a_nearby_label(tmp_path,
                    for item in word.get('identity_identifiers', []))
 
 
+@pytest.mark.parametrize('route', ['text', 'words', 'identity'])
+def test_a_removed_split_copy_still_masks_its_other_copy(tmp_path, route):
+    """The label above governs this SSN only as a split run, which the
+    protection does not read, so the copy drawn over the second label is
+    removed. Its digits are still a run the original page governs, so the
+    copy printed far down the page masks."""
+    pdf = _draw(tmp_path / 'split-copy.pdf', [(150, 84, 7, "RECIPIENT'S TIN"), (100, 60, 7, 'SSN'),
+                                             (100, 74, 10, _ssn(' - ')), (300, 588, 7, _ssn(' ')),
+                                             (170, 348, 7, '850.00')])
+    if route == 'text':
+        extracted = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+    else:
+        extracted = extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=route == 'identity')
+    out = str(extracted)
+    assert _ssn('') not in _digits(out), 'the copy must mask once the overlaid one is removed'
+    assert 'XXX-XX-6789' in out
+    assert '850.00' in out
+
+
 def test_a_preceding_financial_amount_is_preserved(tmp_path):
     pdf = _draw(tmp_path / 'preceding.pdf', [(200, 100, 9, 'SSN'), (200, 100, 9, _ssn('')),
                                              (170, 100, 9, '1234')])

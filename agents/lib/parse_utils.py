@@ -731,13 +731,15 @@ def _labels_crossed(glyphs: list[dict], index: dict, lines: dict[int, int], tick
 
 
 def _safe_pdf_page(page, tick):
-    """A fresh derived page and the original runs whose masking it must keep.
-    The page omits the digits of an identifier drawn over
-    its label and the delimiters between them, so the label reads whole
-    again and governs its own box. FilteredPage owns its objects mapping;
-    the source page and every non-character object (table rules) stay intact.
-    Cleanup can change which labels govern a retained value, so every reader
-    also masks the runs used to decide which overlay values to protect.
+    """The page to read, and runs its labels govern before cleanup that every
+    route also masks. With no identifier drawn over its label, or each one
+    kept, that is the source page. Otherwise it is a fresh derived page
+    without that identifier's digits, nor the delimiters between them, so
+    the label reads whole again and governs its own box. FilteredPage owns
+    its objects mapping; the source page and every non-character object
+    (table rules) stay intact. Cleanup can change which label governs a
+    value kept on the page, so the runs are those the protection was decided
+    from and those the original page's labels govern, split runs included.
     """
     tick()
     hidden = _overlaid_digits(page.chars, tick)
@@ -758,7 +760,10 @@ def _safe_pdf_page(page, tick):
     safe = page.filter(lambda obj: True)
     safe.objects["char"] = [c for c in page.chars if id(c) not in hidden]
     tick()
-    return safe, governed
+    # Read in full before cleanup: a removed copy no longer shows the
+    # cleaned page's reader that a label governs its digits, and the
+    # protection's own reading leaves out split runs.
+    return safe, governed | _governed_runs(words, tick)
 
 
 def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, str]:
@@ -1397,7 +1402,8 @@ def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool
                   preserved_runs: set[str] | None = None) -> list[dict]:
     """`mask_ssn` over the page's rows, top to bottom, so a label governs the
     row printed under it whatever order the content stream drew them in, then
-    the runs a label governs by position. A row the masker changes comes back
+    the runs a label governs by position, and `preserved_runs`, those
+    `_safe_pdf_page` read before cleanup. A row the masker changes comes back
     as ONE word spanning it, holding the masked row: no position inside it
     can come back without the identifier."""
     rows = _word_rows(words)
