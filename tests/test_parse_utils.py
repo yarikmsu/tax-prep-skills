@@ -1195,35 +1195,42 @@ class TestMaskingByPosition:
         assert _ssn("") not in out and MASKED in out, "the SSN under the label must be masked"
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
-    @pytest.mark.parametrize("heights, governs", [(11.5, False), (12.0, False), (12.5, True)],
-                             ids=["within", "edge", "beyond"])
-    def test_a_value_is_its_labels_own_within_its_beside_reach(self, tmp_path, route, heights, governs):
+    @pytest.mark.parametrize("heights, leader, governs", [(11.5, False, False), (12.0, False, False),
+                                                         (12.5, False, True), (11.5, True, False)],
+                             ids=["within", "edge", "beyond", "leader"])
+    def test_a_value_is_its_labels_own_within_its_beside_reach(self, tmp_path, route, heights, leader, governs):
         """Page text joins a value to its label from any distance. Within
-        `_BESIDE` heights of the label, the value is the label's own and the
-        routing number under it stays. Beyond that reach the label is empty
-        and governs the line under it."""
+        `_BESIDE` heights of the label, or of the end of its dot leader, the
+        value is the label's own and the routing number under it stays.
+        Beyond that reach the label is empty and governs the line under it."""
         from reportlab.pdfbase.pdfmetrics import stringWidth
         from agents.lib import parse_utils
-        x = 36 + stringWidth("SSN", "Helvetica", 9) + heights * 9
-        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, "SSN"), (x, 100, 9, _ssn("")),
-                                           (36, 116, 9, f"Routing {ROUTING}")])
+        x = 36 + stringWidth("SSN", "Helvetica", 9)
+        items = [(36, 100, 9, "SSN"), (36, 116, 9, f"Routing {ROUTING}")]
+        if leader:
+            items.append((x + 4, 100, 9, "."))
+            x += 4 + stringWidth(".", "Helvetica", 9)
+        pdf = _draw(tmp_path / "form.pdf", items + [(x + heights * 9, 100, 9, _ssn(""))])
         out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
         assert (ROUTING not in out) is governs
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
-    def test_a_label_freed_by_a_far_figure_leaves_a_headings_column_whole(self, tmp_path, route):
+    @pytest.mark.parametrize("sep", ["", " - "], ids=["bare", "split"])
+    def test_a_label_freed_by_a_far_figure_leaves_a_headings_column_whole(self, tmp_path, route, sep):
         """Once its far figure stops counting, the small label beside the
         heading's column is empty and governs the entry just under it. In
         doing so it takes over the column, lined up with that entry and
-        measured in its own smaller height. The entry printed a little
-        further along, lined up with the column's first entry, is still the
-        heading's."""
+        measured in its own smaller height. The entry printed further down,
+        lined up with the column's first entry, is still the heading's, in the
+        split spelling too, which `_under` reads in a pass of its own."""
+        import re
         entries = ["".join(("000", "00", f"{n:04d}")) for n in range(1001, 1010)]
-        items = [(100, 100, 9, "SSN")] + [(100, 120 + 20 * i, 9, entry) for i, entry in enumerate(entries[:7])]
+        spelled = [sep.join((entry[:3], entry[3:5], entry[5:])) for entry in entries]
+        items = [(100, 100, 9, "SSN")] + [(100, 120 + 20 * i, 9, entry) for i, entry in enumerate(spelled[:7])]
         items += [(82, 245, 7, "SSN"), (400, 245, 7, " ".join(("850", "00", "2026"))),
-                  (102.5, 256, 9, entries[7]), (99.5, 362, 9, entries[8])]
+                  (102.5, 256, 9, spelled[7]), (99.5, 362, 9, spelled[8])]
         pdf = _draw(tmp_path / "form.pdf", items)
-        out = repr(self._extract(route, pdf, tmp_path))
+        out = re.sub(r"[\s./-]+", "", repr(self._extract(route, pdf, tmp_path)))
         assert not [entry[-4:] for entry in entries if entry in out], "every entry of the column must be masked"
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])

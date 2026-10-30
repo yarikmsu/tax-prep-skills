@@ -4551,4 +4551,10 @@ and the routing number on the next line stays.
   copies when the overlay pass removes the one under that label.
 - Over the same 10,442 synthetic pages as AA99 it masks 3,217 SSNs that
   AA99 alone prints and prints none that it masks. 19 IRS forms,
-  instructions and publications print the same.
+  instructions and publications print the same. A second review drew
+  6,550 more pages holding 75,207 SSNs, far figures from a third of a
+  height to 50 heights out: none prints an SSN main masks.
+- The second `_under` view runs only on a page with a far-value label. On
+  a stress page of 192 such labels the positional reader takes about two
+  thirds longer and the text route under a tenth longer; a page whose
+  labels carry their values costs what it did.

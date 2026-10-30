@@ -765,7 +765,8 @@ def _safe_pdf_page(page, tick):
     tick()
     # Read in full before cleanup: a removed copy no longer shows the
     # cleaned page's reader that a label governs its digits, and the
-    # protection's own reading leaves out split runs and far values.
+    # protection's own reading leaves out split runs and what a label
+    # measured empty past a far value governs.
     return safe, governed | _governed_runs(words, tick)
 
 
@@ -1379,8 +1380,9 @@ def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True, 
     runs = (_beside(labels + extra, targets + placeholders, under + [[] for _ in extra], tick)
             | _above(lone, targets, tick))
     # A `far_value` label, empty because its value prints out of reach, is
-    # free only in `_under`: `_lone_labels` still sees that value beside it.
-    # There it can be the first label to govern an entry of another
+    # free in `_under`, and lone where no item prints beside it, which only
+    # adds to `_beside` and `_above`. `_under` hands a column to its first
+    # label, so there it can be the first to govern an entry of another
     # heading's column and take that column over, lined up with that entry
     # and measured in its own height, leaving later entries the heading's
     # column would have reached. So `_under` also reads the page with those
