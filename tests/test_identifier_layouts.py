@@ -94,7 +94,7 @@ def test_an_overlay_on_the_authorization_heading(tmp_path):
     pdf = _draw(tmp_path / 'authorization-overlay.pdf', [(200, 100, 9, 'Taxpayer identification number(s)'),
                                                        (200, 100, 9, _value(0))])
     with pdfplumber.open(pdf) as document:
-        assert not any(c['text'].isdigit() for c in _safe_pdf_page(document.pages[0], lambda: None).chars)
+        assert not any(c['text'].isdigit() for c in _safe_pdf_page(document.pages[0], lambda: None)[0].chars)
 
 
 @pytest.mark.parametrize('form', ['f2848', 'f8821'])

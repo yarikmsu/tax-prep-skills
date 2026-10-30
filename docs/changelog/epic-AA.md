@@ -4489,3 +4489,33 @@ refusal and the redactor keep their spellings.
   and 19 IRS forms, instructions and publications through both PDF routes
   print the same. On a page of labels over a grid of split-shaped figures
   the positional reader costs what the PR as opened did.
+
+## AA99 — cleanup keeps the original page's masks (#97)
+
+`_safe_pdf_page` removes the digits of an identifier drawn over its label
+and keeps on the page any copy whose digits a label governs there. Each
+route then read the governed runs again on the cleaned page alone, and
+cleanup can change which label governs what. Removing the overlay could
+end the column that governed the kept copy, so its nine digits printed
+whole. Or the kept copy could print beside a nearby label and read as its
+value, so a different SSN just above that label printed whole. Main
+printed both, in the whitespace and bare spellings.
+
+- `_safe_pdf_page` also returns the runs it decided the protection from,
+  read on the original page, and the runs that page's labels govern in
+  full. The text, words, identity-metadata and table routes mask both
+  alongside the cleaned page's own. Masking only grows: a run governed on
+  either page is masked.
+- As opened, the routes masked only the protection's runs, which leave
+  out split runs (AA96). A split SSN its label governs only by position,
+  drawn over a second label, was removed, and its other copy printed
+  whole, as on main. Review added the full reading.
+- Over 10,442 synthetic pages holding 55,023 SSNs (label-and-column
+  layouts, overlay layouts, and 114 official forms filled at three field
+  offsets), it masks 178 SSNs that main prints and prints none that main
+  masks. 19 IRS forms, instructions and publications print the same
+  through all four routes.
+- On official forms whose fields were shifted onto their labels, a figure
+  whose digits match a run governed on the original page masks wherever
+  it prints, as a cleaned-page run's digits already do: the safe
+  direction.
