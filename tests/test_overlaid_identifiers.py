@@ -792,6 +792,16 @@ def test_tilted_values_with_words_between_stay(tmp_path, items):
         assert _digits(out) == ''.join(_digits(item[3]) for item in items)
 
 
+def test_a_split_shape_across_words_cannot_extend_an_overlay(tmp_path):
+    """Only the first figure touches SSN. The overlay's digits-and-marks
+    view drops Rate and Year, joining all three figures into a split shape;
+    that view must not remove the separate figures along with the overlay."""
+    pdf = _draw(tmp_path / 'figures.pdf', [(200, 100, 9, 'SSN'), (196, 98, 9, '125.'),
+                                         (227, 98, 9, 'Rate 50.'), (254, 98, 9, 'Year 2025')])
+    for out in (extract_pdf_text(str(pdf))[0], ' '.join(w['text'] for w in extract_pdf_words(str(pdf))[0])):
+        assert _digits(out) == '502025'
+
+
 @pytest.mark.parametrize('row', ['Dividends 250 - 15 - 1200', 'Tax was $1,234.56. 2025 payments'])
 @pytest.mark.parametrize('value', [_ssn(''), _ssn(' ')])
 def test_a_split_shape_on_a_labels_row_leaves_its_ssn_masked(tmp_path, row, value):

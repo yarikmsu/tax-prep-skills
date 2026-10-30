@@ -1112,11 +1112,13 @@ def test_split_delimited_ssns_at_extraction_boundary(tmp_path, route, sep, label
     assert all(v in out for v in (date, phone, "12-3456789", "850.00"))
 
 
-def _draw(path, items):
+def _draw(path, items, *, boxes=()):
     """A one-page PDF of (x, top, size, text[, angle]) items, drawn in the
     order given, which is the order pdfplumber meets them in the stream."""
     from reportlab.pdfgen import canvas
     page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, top, width, height in boxes:
+        page.rect(x, 792 - top - height, width, height)
     for x, top, size, text, *angle in items:
         page.saveState()
         page.setFont("Helvetica", size)
@@ -1191,6 +1193,153 @@ class TestMaskingByPosition:
                                            (36, 116, 9, f"Routing {ROUTING}")])
         out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
         assert ROUTING in out and MASKED in out
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("itin", [False, True])
+    @pytest.mark.parametrize("label", ["SSN", "Account"])
+    def test_a_split_value_governed_only_by_position(self, tmp_path, route, sep, itin, label):
+        import pdfplumber
+        from agents.lib import parse_utils
+        groups = ("900", "70", LAST4) if itin else ("000", "00", LAST4)
+        value = _with_separator_gaps(groups, sep, (" ", "", " ", " "))
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 7, label), (570, 109, 5, "R"),
+                                           (36, 116, 9, value), (170, 116, 9, ROUTING)],
+                    boxes=[(32, 112, 124, 28), (156, 112, 134, 28)])
+        with pdfplumber.open(str(pdf)) as document:
+            raw = document.pages[0].extract_text()
+        assert value in mask_ssn(raw), "page text must separate the label and value"
+        if route == "identity_words":
+            extracted = parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=True)
+        else:
+            extracted = getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path))
+        out = ("\n".join(" ".join(word["text"] for word in page) for page in extracted.values())
+               if route in {"extract_pdf_words", "identity_words"} else repr(extracted))
+        assert ROUTING in out
+        if label == "SSN":
+            assert value not in out and MASKED in out
+            if route == "identity_words":
+                assert any(item["text"] == MASKED for word in extracted[0]
+                           for item in word.get("identity_identifiers", []))
+        else:
+            assert value in out
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_split_runs_mask_the_separators_and_digits_together(self, sep):
+        from itertools import product
+        from agents.lib.secure_fs import identifier_spans, mask_runs, prepare_runs, split_spans
+        for gaps in product(("", " ", "\t", "\u00a0"), repeat=4):
+            value = _with_separator_gaps(("000", "00", LAST4), sep, gaps)
+            assert split_spans(value) == ([(0, len(value))] if any(gaps) else [])
+            assert identifier_spans(value)[1] == []
+            runs = prepare_runs({value})
+            assert runs.spelling[_ssn("")] == MASKED
+            assert mask_runs(f"Before {value} After", runs) == f"Before {MASKED} After"
+            assert mask_runs(_ssn(""), runs) == MASKED
+            assert mask_runs(value, {_ssn("")}) == MASKED
+            for longer in ("1" + value, value + "1"):
+                assert mask_runs(longer, runs) == longer
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_a_split_run_across_cells_keeps_only_its_last_four(self, sep):
+        from agents.lib.secure_fs import mask_row_runs
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        cells = ["000", sep, "00", sep, LAST4, None, "Wages"]
+        assert mask_row_runs(cells, {value}) == ["XXX", sep, "XX", sep, LAST4, None, "Wages"]
+
+    def test_positionally_known_digits_do_not_join_other_delimited_shapes(self):
+        from agents.lib.secure_fs import mask_runs
+        runs = {_ssn("")}
+        for value in ("01 - 31 - 2026", "415 - 555 - 0100",
+                      f"000 - 00 / {LAST4}", f"000\n- 00 - {LAST4}", f"000 -\r00 - {LAST4}"):
+            assert mask_runs(value, runs) == value
+
+    @staticmethod
+    def _routes(tmp_path, items):
+        from agents.lib import parse_utils
+        pdf = _draw(tmp_path / "form.pdf", items)
+        words = parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path))
+        return (parse_utils.extract_pdf_text(str(pdf), workspace=str(tmp_path))[0],
+                " ".join(word["text"] for word in words[0]))
+
+    @pytest.mark.parametrize("figure", ["$1,234.56. 2025", "250 - 15 - 1200"])
+    def test_a_split_figure_under_a_label_leaves_its_raised_value_masked(self, tmp_path, figure):
+        """Raised off its label's line, the value prints before it in page
+        text, so only position masks it. A split-shaped figure in the box
+        under the label is no value of the label's: were it one, the label
+        would read as one whose value prints below, and govern nothing beside."""
+        for out in self._routes(tmp_path, [(36, 100, 7, "SSN"), (60, 95, 9, _ssn(" ")), (36, 109, 9, figure)]):
+            assert MASKED in out and _ssn(" ") not in out
+
+    @pytest.mark.parametrize("figure", ["100 / 25 / 1000", "250 - 15 - 1200"])
+    def test_a_split_figure_beside_an_empty_label_leaves_the_number_above_masked(self, tmp_path, figure):
+        """A signature line's number prints just above its empty label. A
+        split-shaped figure further along the label's row does not fill it."""
+        for out in self._routes(tmp_path, [(36, 120, 7, "SSN"), (40, 109, 9, _ssn(" ")), (300, 120, 7, figure)]):
+            assert MASKED in out and _ssn(" ") not in out
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_split_values_down_a_column_mask_past_the_labels_reach(self, tmp_path, sep):
+        """Each split entry carries the column to the next, as a whitespace
+        one does: its own words are no text printed across the column."""
+        values = [_with_separator_gaps(("000", "00", f"{1001 + n}"), sep, (" ",) * 4) for n in range(8)]
+        items = [(36, 100, 7, "SSN")] + [(36, 116 + 20 * n, 9, value) for n, value in enumerate(values)]
+        for out in self._routes(tmp_path, items):
+            assert all(f"XXX-XX-{1001 + n}" in out and value not in out for n, value in enumerate(values))
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("layout", ["beside", "above"])
+    def test_a_split_value_beside_or_above_its_label(self, tmp_path, sep, layout):
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        at = (80, 95) if layout == "beside" else (40, 109)
+        for out in self._routes(tmp_path, [(36, 100 if layout == "beside" else 120, 7, "SSN"), (*at, 9, value)]):
+            assert MASKED in out and value not in out
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("before", ["Your social", "Rate 250 - 15 - 1200 Your social"])
+    def test_a_split_value_ends_a_wrapped_labels_phrase(self, tmp_path, sep, before):
+        """A label wrapped over two rows reads as one only when its lower
+        phrase ends at it or at a value. A split value after it ends the
+        phrase; a split-shaped figure before it in the upper phrase does not
+        stop it reading as a label."""
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        for out in self._routes(tmp_path, [(36, 100, 7, before), (36, 109, 7, f"security number {value}")]):
+            assert MASKED in out and value not in out
+
+    def test_a_run_governed_through_a_split_keeps_no_overlay_on_the_page(self, tmp_path):
+        """A figure drawn over "RECIPIENT'S TIN" leaves the page with the
+        label's own digits. The same figure prints again down the label's
+        column, which a split-shaped figure carries to it, but kept on the
+        page for that it would print beside the label in page text, read as
+        its value, and leave the SSN on the next line of text whole."""
+        figure = " ".join(("125", "50", "2025"))
+        value = "".join(("000", "00", LAST4))
+        items = [(70, 261, 9, value), (416, 330, 9, "$1,234.56. 2025"), (416, 380, 10, figure),
+                 (470, 227, 9, figure), (420, 224, 8, "RECIPIENT'S TIN")]
+        for out in self._routes(tmp_path, items):
+            assert MASKED in out and value not in out
+
+    @pytest.mark.parametrize("other", [" - ".join(("000", "12", "3000")), "".join(("000", "123", "000"))])
+    def test_a_run_sharing_digits_cannot_swallow_the_start_of_another(self, other):
+        """Another governed run's digits end on the first group of an SSN
+        the page prints next to them. Taken alone, that match would keep its
+        last four, which are that group, and leave the SSN's other groups
+        printed after it: all nine digits readable. Both are masked whole."""
+        from agents.lib.secure_fs import mask_row_runs, mask_runs
+        value = " ".join(("000", "00", LAST4))
+        text = f"000123 {value}"
+        assert mask_runs(text, {value, other}) == "XXX-XX-XXXX"
+        assert mask_row_runs(text.split(" "), {value, other}) == ["XXXXXX", "XXX", "XX", "XXXX"]
+
+    def test_a_split_match_cannot_hide_an_existing_whitespace_match(self):
+        from agents.lib.secure_fs import mask_row_runs, mask_runs
+        value = _with_separator_gaps(("000", "00", LAST4), "-", (" ",) * 4)
+        prior = "".join(("123", "456", "000"))
+        text = f"123456 {value}"
+        assert mask_runs(text, {prior}) == f"XXX-XX-{prior[-4:]}{value[3:]}"
+        assert mask_runs(text, {prior, value}) == "XXX-XX-XXXX"
+        assert mask_row_runs(["123456", "000", "-", "00", "-", LAST4], {prior, value}) == [
+            "XXXXXX", "XXX", "-", "XX", "-", "XXXX"]
 
     @pytest.mark.parametrize("between", [
         [(570, 108, 5, "R")],                         # Form 540: a margin glyph
