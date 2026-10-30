@@ -30,7 +30,7 @@ def test_other_identifier_labels_and_source_page_are_protected(tmp_path, label):
     with pdfplumber.open(pdf) as document:
         page = document.pages[0]
         before = [dict(c) for c in page.chars]
-        safe = _safe_pdf_page(page, lambda: None)
+        safe, _ = _safe_pdf_page(page, lambda: None)
         assert safe is not page
         assert page.chars == before
         assert sum(c['text'].isdigit() for c in safe.chars) == 0
@@ -111,6 +111,60 @@ def test_a_normal_copy_cannot_exempt_an_overlapping_copy(tmp_path):
     for out in (extract_pdf_text(str(pdf), workspace=str(tmp_path))[0],
                 str(extract_pdf_words(str(pdf), workspace=str(tmp_path)))):
         assert _ssn('') not in ''.join(re.findall(r'[0-9]', out))
+
+
+@pytest.mark.parametrize('route', ['text', 'words', 'identity', 'tables'])
+@pytest.mark.parametrize('sep', ['', ' '], ids=['bare', 'spaced'])
+def test_cleanup_keeps_the_original_column_masks(tmp_path, route, sep):
+    """Cleaning the overlaid copy changes the column governing the other
+    copy. Its original masking decision still applies to the retained copy,
+    including a table whose cells contain no identifier label."""
+    value = _ssn(sep)
+    pdf = _draw(tmp_path / 'column-copy.pdf', [(150, 140, 9, 'SSN'), (165, 137, 10, value),
+                                              (170, 280, 7, value), (90, 110, 8, "RECIPIENT'S TIN"),
+                                              (90, 150, 9, _SECOND), (270, 280, 7, '850.00')],
+                boxes=[(166, 276, 100, 20), (266, 276, 100, 20)])
+    if route == 'text':
+        extracted = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+    elif route == 'tables':
+        extracted = extract_tables(str(pdf), workspace=str(tmp_path))
+        assert extracted, 'the fixture must exercise table extraction'
+    else:
+        extracted = extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=route == 'identity')
+    out = str(extracted)
+    assert _ssn('') not in _digits(out), 'the retained SSN must stay masked after cleanup'
+    assert 'XXX-XX-6789' in out
+    assert '850.00' in out
+
+
+@pytest.mark.parametrize('route', ['text', 'words', 'identity', 'tables'])
+@pytest.mark.parametrize('sep', ['', ' '], ids=['bare', 'spaced'])
+def test_a_retained_copy_cannot_unmask_the_number_above_a_nearby_label(tmp_path, route, sep):
+    """Before cleanup the two comb copies form one run starting left of
+    the nearby SSN label. Removing the overlay leaves a raised value beside
+    that label, so it no longer masks the different SSN just above it.
+    The original page's masking decision must survive that change too."""
+    copy = ' '.join(_ssn(''))
+    value = sep.join((_SECOND[:3], _SECOND[3:5], _SECOND[5:]))
+    pdf = _draw(tmp_path / 'signature-copy.pdf', [(200, 100, 9, 'SSN'), (36, 150, 9, 'Other information'),
+                                                 (200, 200, 9, 'SSN'), (200, 196, 9, copy),
+                                                 (340, 196, 9, copy), (300, 200, 9, 'SSN'),
+                                                 (300, 189, 9, value), (400, 189, 9, '850.00')],
+                boxes=[(296, 187, 100, 13), (396, 187, 100, 13)])
+    if route == 'text':
+        extracted = extract_pdf_text(str(pdf), workspace=str(tmp_path))
+    elif route == 'tables':
+        extracted = extract_tables(str(pdf), workspace=str(tmp_path))
+        assert extracted, 'the fixture must exercise table extraction'
+    else:
+        extracted = extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=route == 'identity')
+    out = str(extracted)
+    assert _SECOND not in _digits(out), 'cleanup must preserve the original signature mask'
+    assert 'XXX-XX-1111' in out
+    assert '850.00' in out
+    if route == 'identity':
+        assert any(item['text'] == 'XXX-XX-1111' for word in extracted[0]
+                   for item in word.get('identity_identifiers', []))
 
 
 def test_a_preceding_financial_amount_is_preserved(tmp_path):
@@ -328,7 +382,7 @@ def test_rotated_split_groups_and_the_source_page(tmp_path, angle):
     with pdfplumber.open(pdf) as document:
         page = document.pages[0]
         before = [dict(c) for c in page.chars]
-        safe = _safe_pdf_page(page, lambda: None)
+        safe, _ = _safe_pdf_page(page, lambda: None)
         assert not any(c['text'].isdigit() for c in safe.chars)
         assert page.chars == before
     assert pdf.read_bytes() == original
@@ -570,7 +624,7 @@ def test_a_label_and_overlay_rotated_together(tmp_path, angle, sep):
     with pdfplumber.open(pdf) as document:
         page = document.pages[0]
         before = [dict(g) for g in page.chars]
-        assert not any(g['text'].isdigit() for g in _safe_pdf_page(page, lambda: None).chars)
+        assert not any(g['text'].isdigit() for g in _safe_pdf_page(page, lambda: None)[0].chars)
         assert page.chars == before
     assert pdf.read_bytes() == original
 
