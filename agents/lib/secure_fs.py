@@ -430,10 +430,12 @@ def prepare_runs(runs) -> Runs:
 def _run_spans(text: str, runs: Runs) -> list:
     """Where the digits of `runs` print in `text`, however they are spaced:
     `(start, end, digits)`, each starting and ending on a group of digits'
-    edge, the longest whitespace run first at each place. A second pass
-    includes the marks of a split 3-2-4 value. Overlapping matches merge,
-    with an empty `digits` sentinel: their boundaries disagree, so none of
-    their digits can safely be kept."""
+    edge, the longest whitespace run at each place. A match inside the last
+    one taken is the same run read again (a comb row's nine); one running
+    past its end is another run sharing its digits, and is taken too. A
+    second pass includes the marks of a split 3-2-4 value. Overlapping
+    matches merge, with an empty `digits` sentinel: their boundaries
+    disagree, so none of their digits can safely be kept."""
     found = []
     for sequence in _DIGIT_GROUPS.finditer(text):
         groups = [(sequence.start() + m.start(), sequence.start() + m.end())
@@ -443,16 +445,14 @@ def _run_spans(text: str, runs: Runs) -> list:
         for a, b in groups:
             edges.append(edges[-1] + b - a)
         group_at = {edge: k for k, edge in enumerate(edges)}
-        k = 0
-        while k < len(groups):
+        reach = 0   # the group the last match taken ends before
+        for k in range(len(groups)):
             start = edges[k]
             stop = next((group for length in runs.lengths if (group := group_at.get(start + length)) is not None
                          and digits[start:start + length] in runs.spelling), None)
-            if stop is None:
-                k += 1
-                continue
-            found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
-            k = stop
+            if stop is not None and stop > reach:
+                found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
+                reach = stop
     for match in _ID_SPLIT_VALUE.finditer(text):
         digits = re.sub(r"[^0-9]", "", match[0])
         if digits in runs.spelling:

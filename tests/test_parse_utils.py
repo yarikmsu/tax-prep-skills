@@ -1319,6 +1319,18 @@ class TestMaskingByPosition:
         for out in self._routes(tmp_path, items):
             assert MASKED in out and value not in out
 
+    @pytest.mark.parametrize("other", [" - ".join(("000", "12", "3000")), "".join(("000", "123", "000"))])
+    def test_a_run_sharing_digits_cannot_swallow_the_start_of_another(self, other):
+        """Another governed run's digits end on the first group of an SSN
+        the page prints next to them. Taken alone, that match would keep its
+        last four, which are that group, and leave the SSN's other groups
+        printed after it: all nine digits readable. Both are masked whole."""
+        from agents.lib.secure_fs import mask_row_runs, mask_runs
+        value = " ".join(("000", "00", LAST4))
+        text = f"000123 {value}"
+        assert mask_runs(text, {value, other}) == "XXX-XX-XXXX"
+        assert mask_row_runs(text.split(" "), {value, other}) == ["XXXXXX", "XXX", "XX", "XXXX"]
+
     def test_a_split_match_cannot_hide_an_existing_whitespace_match(self):
         from agents.lib.secure_fs import mask_row_runs, mask_runs
         value = _with_separator_gaps(("000", "00", LAST4), "-", (" ",) * 4)

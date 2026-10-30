@@ -4475,6 +4475,14 @@ refusal and the redactor keep their spellings.
   value. It keeps only what main's reader governs: one governed only
   through a split run below a label, kept beside it, left the SSN on the
   next line of text whole.
+- `_run_spans`' first pass took the longest match at a group and skipped
+  past it. Split runs put more digits in play, and a match ending on an
+  SSN's first group masked it as its own last four and left the SSN's
+  other groups printed after it, all nine readable; main does the same
+  with two whitespace runs. The pass now also takes a match running past
+  the last one's end, and the merge masks both whole; one inside it, a
+  comb row's nine, is the same run read again. Over 60,000 generated
+  strings the PR as opened printed 14 such SSNs that main masks; none now.
 - Over 4,000 random layouts with split values and wrapped labels (26,089
   synthetic SSNs) the result masks 1,915 that main prints and prints none
   that main masks; 4,000 layouts without them, 114 filled official forms
