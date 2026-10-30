@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA97** — stop a figure across an SSN label's row handing back the SSN under it. **AA96** — mask a split SSN a label governs only by position. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91. | AA97 prints a full SSN on main wherever page text joins a label to a figure across its row in the whitespace or delimited spelling; AA96 needs an OCR split and a layout only position reads. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA98** — stop a figure far across an SSN label's row, with nothing printed between, handing back the SSN under it. **AA99** — stop an overlay copy of a governed SSN the parser keeps on the page printing it, or another, whole. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94. | AA98 prints a full SSN on main wherever page text puts an identifier-shaped figure straight after an SSN label, however far apart they print. AA99 needs one SSN printed twice on a page, one copy over a label, as a multi-copy W-2 can. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -199,27 +199,32 @@ Trigger and range behavior is documented in
   gate closed until the missing covered-year inputs and the planner's CA
   contracts can be reviewed; do not derive them from the announced inflation
   percentage or substitute TY2025 values. Found by the same review.
-- **AA97 (P2, S): Stop a figure across an SSN label's row handing back
-  the SSN under it.** #91's review drew a figure in the whitespace or
-  delimited spelling across the row from an SSN label: a wage with its
-  cents in their own column and then a year, or a three-two-four figure
-  with hyphens. `_label_ends`, and `identifier_spans`' carries flag, count
-  any identifier-shaped run anywhere after a label on its page-text row
-  as the label's own value, and page text joins a label to the columns
-  across the page, so on main the SSN printed under the label prints
-  whole through the text and words routes. Count a value as the label's
-  only straight after it, as AA95's split rule does, or by position; pin
-  both ways: the SSN under such a label masks, and a label carrying its
-  own value still leaves the next line's routing number alone.
+- **AA98 (P2, S): Stop a figure far across an SSN label's row handing
+  back the SSN under it.** AA97 (#93) counts a value as a label's own only
+  straight after it in page text. Page text, and the positional reader's
+  `_row_text`, join a row's words with one space however far apart they
+  print, so an identifier-shaped figure in a far column with nothing
+  printed between it and the label (nine bare digits, or a three-two-four
+  figure grouped by spaces or hyphens) still reads as the label's value,
+  and the SSN printed under the label prints whole through the text and
+  words routes. Found by #94's review. The positional reader knows the
+  gap: count a value as the label's own only within its beside reach
+  (`_BESIDE`), and pin it both ways: the SSN under such a label masks, and
+  a label whose value prints beside it still leaves the next line's
+  routing number alone.
 
-- **AA96 (P3, S): Mask a split SSN a label governs only by position.**
-  AA95 masks an OCR split under a label in page text, straight after it
-  or on the line under it. The PDF routes' positional reader takes only
-  the whitespace and bare spellings (`identifier_spans` values), and
-  `_run_spans` finds digits grouped by whitespace alone, so a split a
-  label governs by position, with something page text prints between
-  them, prints whole. Teach the positional runs the split spelling, its
-  marks included, and pin it on a layout where page text separates them.
+- **AA99 (P2, S): Stop an overlay copy of a governed SSN printing it, or
+  another, whole.** `_safe_pdf_page` removes the digits of an identifier
+  drawn over its label, but keeps (`protected`) any value whose digits a
+  label governs on the original page; each route then reads the governed
+  runs again on the cleaned page. When one SSN prints twice, once over a
+  label, the copy is kept because the other copy is governed, and on the
+  cleaned page that can change: removing the overlay can end the column
+  that governed the copy, so its nine digits print whole, and the kept copy
+  can make a nearby label read as filled, so a different SSN just above
+  that label prints whole. Found by #94's review; main prints both, in the
+  whitespace and bare spellings. Mask with the runs the protection was
+  decided from, or decide it on the cleaned page, and pin both layouts.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
@@ -522,7 +527,9 @@ merge.
 | AA93 | #88 | A bare nine-digit EIN in Form 2848's EIN field, beside its SSN fields, masks as an SSN, the safe direction; hyphenated it stays. |
 | AA92 | #87 | Still printing, as on main: an SSN tracked past a word's gap, or with a space glyph drawn elsewhere between its digits in the stream; split beside a separator on a level page, which AA95 (#91) masks under a label only. A date joined to a number by position alone, at 90 degrees or more, goes as an SSN would, the safe direction. Form 1042-S's "Recipient's U.S. TIN" was no label until AA94 (#90). |
 | AA94 | #90 | Only box 13i's dotted "U.S." before TIN labels; recipient GIIN and FTIN headings, and "Payer's TIN", stay unlabelled. |
-| AA95 | #91 | Label-only: an unlabelled split prints whole, as do one only position ties to its label (AA96) and one page text breaks across lines on a steep page. A split-shaped figure on the line under a label, or in a cell a label governs, masks as an SSN, the safe direction. The delimiter pattern, filename refusal, redactor and pre-commit gate keep the contiguous spellings. |
+| AA95 | #91 | Label-only: an unlabelled split prints whole, as does one page text breaks across lines on a steep page; one only position ties to its label printed whole until AA96 (#94). A split-shaped figure on the line under a label, or in a cell a label governs, masks as an SSN, the safe direction. The delimiter pattern, filename refusal, redactor and pre-commit gate keep the contiguous spellings. |
+| AA97 | #93 | A value is a label's own only straight after it. One further along its row, or after other words ("SSN (last 4): XXX-XX-1234"), leaves the label governing the line under it, which masks an identifier-shaped figure there, the safe direction. A split straight after its label never counts as its value (AA95). Still printing: the SSN under a label whose row prints an identifier-shaped figure far across it with nothing between, which page text joins straight after the label (AA98). |
+| AA96 | #94 | Split runs are positional targets only, never a sign that a label's value is there. Still printing: an unlabelled split. On a tilted page the overlay pass drops a split under a label whole, as on main, so its last four is lost. A split-shaped figure a label governs by position masks as an SSN, and one after a heading wrapped onto "number" makes the heading a label, which then masks nine-digit figures down its column, the safe direction. Two governed runs sharing digits mask whole, their neighbour's digits included. |
 | AA87 | #74 | Identifiers past its reaches (FTB 3532, Forms 1095-A/B/C, Schedule EIC, Form 8332, IT-201's dependents 6 and 7) are AA89, and an SSN drawn over its own label is AA88; a page that masks its first dependent and prints the next in full still leaks. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
