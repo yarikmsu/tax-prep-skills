@@ -1241,6 +1241,21 @@ class TestMaskingByPosition:
         out = repr(self._extract(route, pdf, tmp_path))
         assert _ssn("") not in re.sub(r"[\s./-]+", "", out) and MASKED in out, "the raised SSN must be masked"
 
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    def test_a_far_figures_label_still_masks_a_removed_copys_twin(self, tmp_path, route):
+        """Measured empty past its far figure, the label governs the comb
+        under it, but the overlay pass reads it as its row's text does and
+        removes that comb, drawn over a second label. The comb's digits are
+        still a run the original page governs, so its copy further up the
+        page masks."""
+        import re
+        comb = " ".join(_ssn(""))
+        items = [(300, 660, 9, "SSN"), (431, 661, 9, " ".join(_SECOND)), (303, 676, 9, comb),
+                 (300, 672, 9, "(2) SSN"), (300, 468, 9, comb)]
+        pdf = _draw(tmp_path / "form.pdf", items)
+        out = repr(self._extract(route, pdf, tmp_path))
+        assert _ssn("") not in re.sub(r"[\s./-]+", "", out) and MASKED in out, "the copy must be masked"
+
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
     @pytest.mark.parametrize("label", ["SSN", "SSN or ITIN", "SSN/ITIN", "social security number (SSN)"])
     @pytest.mark.parametrize("value", [_ssn(""), _ssn(" "), _ssn("-"), MASKED])

@@ -4519,3 +4519,36 @@ printed both, in the whitespace and bare spellings.
   whose digits match a run governed on the original page masks wherever
   it prints, as a cleaned-page run's digits already do: the safe
   direction.
+
+## AA98 — a far value does not fill its label's box (#96)
+
+AA97 counts a value as a label's own only straight after it in page text,
+and page text joins a row's words with one space however far apart they
+print. The positional reader now also asks where that value prints: it
+must start within the label's beside reach, `_BESIDE` heights from the
+label or the end of its dot leader, the reach `_beside` measures its first
+value from. A label whose value prints further along its row is empty
+(`far_value`) and governs the SSN printed under it, through text, words,
+identity metadata and tables, whether the far figure is bare, spaced,
+hyphenated or masked. Within the reach the value is still the label's own,
+and the routing number on the next line stays.
+
+- As opened, it printed 11 SSNs that main masks over 8,000 random
+  label-and-column layouts. `_under` hands a column to the first label
+  that governs an entry, so an empty label beside another heading's column
+  could take the column over, lined up with that entry and measured in its
+  own smaller height, and lose entries the heading's column reached.
+  `_under` now also reads the page with far-value labels carrying, as their
+  row's text does, and unions the two.
+- The overlay pass keeps a copy drawn over a label when a label governs
+  its digits on the original page. The newly empty label governed a comb
+  drawn over the label below it, so the comb was kept; on the cleaned page
+  it printed under the empty label, which `_beside` then read as having no
+  value on its row, so the raised SSN on that row printed whole.
+  Protection now reads labels as their row's text does (`measured=False`)
+  and keeps what it kept before. The runs AA99 preserves are the full
+  reading, so an SSN only an empty label governs still masks its other
+  copies when the overlay pass removes the one under that label.
+- Over the same 10,442 synthetic pages as AA99 it masks 3,217 SSNs that
+  AA99 alone prints and prints none that it masks. 19 IRS forms,
+  instructions and publications print the same.
