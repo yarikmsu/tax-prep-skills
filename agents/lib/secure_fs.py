@@ -431,8 +431,9 @@ def _run_spans(text: str, runs: Runs) -> list:
     """Where the digits of `runs` print in `text`, however they are spaced:
     `(start, end, digits)`, each starting and ending on a group of digits'
     edge, the longest whitespace run at each place. A match inside the last
-    one taken is the same run read again (a comb row's nine); one running
-    past its end is another run sharing its digits, and is taken too. A
+    one taken is the same run read again only at a nine-digit boundary
+    (a comb row's nine). An offset match, or one running past its end, is
+    another run sharing its digits, and is taken too. A
     second pass includes the marks of a split 3-2-4 value. Overlapping
     matches merge, with an empty `digits` sentinel: their boundaries
     disagree, so none of their digits can safely be kept."""
@@ -445,14 +446,16 @@ def _run_spans(text: str, runs: Runs) -> list:
         for a, b in groups:
             edges.append(edges[-1] + b - a)
         group_at = {edge: k for k, edge in enumerate(edges)}
-        reach = 0   # the group the last match taken ends before
+        reach = 0   # the group the last extending match ends before
+        origin = 0  # that match's starting digit offset, not its group index
         for k in range(len(groups)):
             start = edges[k]
             stop = next((group for length in runs.lengths if (group := group_at.get(start + length)) is not None
                          and digits[start:start + length] in runs.spelling), None)
-            if stop is not None and stop > reach:
+            if stop is not None and (stop > reach or (start - origin) % 9):
                 found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
-                reach = stop
+                if stop > reach:
+                    reach, origin = stop, start
     for match in _ID_SPLIT_VALUE.finditer(text):
         digits = re.sub(r"[^0-9]", "", match[0])
         if digits in runs.spelling:

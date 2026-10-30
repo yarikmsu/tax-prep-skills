@@ -1971,6 +1971,58 @@ class TestMaskingByPosition:
         row = " ".join(_ssn("") + second)
         assert mask_runs(row, {row, " ".join(_ssn(""))}) == f"{MASKED} XXX-XX-1111"
 
+    @pytest.mark.parametrize("offset", range(10))
+    @pytest.mark.parametrize("gap", [" ", "\t", "\u00a0"])
+    @pytest.mark.parametrize("grouped", [False, True])
+    def test_a_contained_run_keeps_digits_only_at_a_nines_boundary(self, offset, gap, grouped):
+        """AA100: an offset copy must not reveal a fifth digit alongside
+        the identifier's own last four. Aligned dependents keep theirs.
+        Count DIGITS, not the whitespace groups in a different spelling."""
+        from agents.lib.secure_fs import mask_row_runs, mask_runs, prepare_runs
+        digits = "2" * offset + _ssn("") + "3" * (9 - offset)
+        comb = " ".join(digits)
+        runs = prepare_runs({comb, _ssn(" ")})
+        groups = (["2" * offset, "000", "00", LAST4, "3" * (9 - offset)]
+                  if grouped else list(digits))
+        groups = [group for group in groups if group]
+        row = gap.join(groups)
+        aligned = offset % 9 == 0
+        expected = " ".join(f"XXX-XX-{digits[i + 5:i + 9]}" for i in (0, 9)) if aligned else "XXX-XX-XXXX"
+        assert mask_runs(f"Before {row}; Copy {_ssn(' ')}; Wages 850.00", runs) == (
+            f"Before {expected}; Copy {MASKED}; Wages 850.00")
+        cells = ["SSN", *groups, None, "Wages 850.00"]
+        masked = mask_row_runs(cells, runs)
+        assert masked[0] == "SSN" and masked[-2:] == [None, "Wages 850.00"]
+        kept, count = [], 0
+        for group in groups:
+            kept.append("".join(digit if aligned and (count + n) % 9 >= 5 else "X"
+                                for n, digit in enumerate(group)))
+            count += len(group)
+        assert masked[1:-2] == kept
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+    def test_a_governed_comb_containing_an_offset_copy_keeps_no_digits(self, tmp_path, route):
+        """The far figure leaves AA98's label governing a long comb row;
+        a separate governed SSN is inside it at an offset of three digits."""
+        digits = "222" + _ssn("") + "333333"
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, "SSN"), (400, 100, 9, "XXX-XX-2026"),
+                                           (36, 116, 9, " ".join(digits)),
+                                           (290, 116, 9, "850.00"),
+                                           (36, 200, 9, f"SSN {_ssn(' ')}")],
+                    boxes=[(32, 112, 250, 28), (282, 112, 100, 28)])
+        extracted = self._extract(route, pdf, tmp_path)
+        if route == "extract_pdf_text":
+            assert "XXX-XX-XXXX" in extracted[0] and MASKED in extracted[0]
+            assert f"XXX-XX-{digits[5:9]}" not in extracted[0]
+        elif route in {"extract_pdf_words", "identity_words"}:
+            text = " ".join(word["text"] for word in extracted[0])
+            assert "XXX-XX-XXXX" in text and MASKED in text
+            assert f"XXX-XX-{digits[5:9]}" not in text
+        else:
+            row = extracted[0][0][0][0]
+            assert row == "XXX-XX-XXXX"
+            assert extracted[0][0][0][1] == "850.00"
+
     def test_mask_runs_masks_a_run_however_it_is_spaced(self):
         from agents.lib.secure_fs import mask_runs
         comb = " ".join(_ssn(""))
