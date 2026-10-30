@@ -367,7 +367,7 @@ _ID_SPELLED = re.compile(
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
-def identifier_spans(row: str, *, split_values: bool = True) -> tuple[list, list, list, list]:
+def identifier_spans(row: str) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
     identifier-shaped run still to mask, an identifier spelled another way
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
@@ -376,9 +376,7 @@ def identifier_spans(row: str, *, split_values: bool = True) -> tuple[list, list
     `carries` says whether a value immediately follows the label on its row, `masked`
     whether the page masked that identifier itself (`XXX-XX-1234`). A reader
     that knows where the row sits on the page decides which label governs
-    which run; `mask_runs` masks them. Split values are positional candidates
-    only: the overlay reader disables them in its digits-and-marks view,
-    which omits the words that distinguish a figure from an identifier."""
+    which run; `mask_runs` masks them."""
     labels = [(m.start(), m.end(), bool(_ID_ADJACENT_VALUE.match(row, m.end())))
               for m in _ID_LABEL_RE.finditer(row)]
     # "SSN or ITIN", "SSN/ITIN" and "social security number (SSN)"
@@ -388,12 +386,21 @@ def identifier_spans(row: str, *, split_values: bool = True) -> tuple[list, list
         low, high, _ = labels[i]
         if labels[i + 1][2] and _ID_ALIAS.fullmatch(row, high, labels[i + 1][0]):
             labels[i] = (low, high, True)
-    values = {(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)}
-    if split_values:
-        values.update((m.start(), m.end()) for m in _ID_SPLIT_VALUE.finditer(row)
-                      if not _ID_DELIMITED.fullmatch(row, m.start(), m.end()))
-    return (labels, sorted(values), [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
+    values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
+    return (labels, values, [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
             [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
+
+
+def split_spans(row: str) -> list:
+    """Where one row of page text prints a delimited value split beside its
+    marks (`_ID_SPLIT`), `[(start, end)]`: runs a positional reader masks
+    where a label governs them by position. They are kept apart from
+    `identifier_spans`' values because the readers also take a value as a
+    sign that a label's box is filled, and in that role a split-shaped
+    figure, an amount ending a sentence before a year, would leave the SSN
+    the label governs unmasked."""
+    return [(m.start(), m.end()) for m in _ID_SPLIT_VALUE.finditer(row)
+            if not _ID_DELIMITED.fullmatch(row, m.start(), m.end())]
 
 
 _LABEL_NOTE = re.compile(r"\(see instructions\)", re.IGNORECASE)

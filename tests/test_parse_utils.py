@@ -1227,13 +1227,11 @@ class TestMaskingByPosition:
     @pytest.mark.parametrize("sep", ["-", ".", "/"])
     def test_split_runs_mask_the_separators_and_digits_together(self, sep):
         from itertools import product
-        from agents.lib.secure_fs import identifier_spans, mask_runs, prepare_runs
+        from agents.lib.secure_fs import identifier_spans, mask_runs, prepare_runs, split_spans
         for gaps in product(("", " ", "\t", "\u00a0"), repeat=4):
             value = _with_separator_gaps(("000", "00", LAST4), sep, gaps)
-            spans = identifier_spans(value)[1]
-            if any(gaps):
-                assert spans == [(0, len(value))]
-                assert identifier_spans(value, split_values=False)[1] == []
+            assert split_spans(value) == ([(0, len(value))] if any(gaps) else [])
+            assert identifier_spans(value)[1] == []
             runs = prepare_runs({value})
             assert runs.spelling[_ssn("")] == MASKED
             assert mask_runs(f"Before {value} After", runs) == f"Before {MASKED} After"
@@ -1255,6 +1253,47 @@ class TestMaskingByPosition:
         for value in ("01 - 31 - 2026", "415 - 555 - 0100",
                       f"000 - 00 / {LAST4}", f"000\n- 00 - {LAST4}", f"000 -\r00 - {LAST4}"):
             assert mask_runs(value, runs) == value
+
+    @staticmethod
+    def _routes(tmp_path, items):
+        from agents.lib import parse_utils
+        pdf = _draw(tmp_path / "form.pdf", items)
+        words = parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path))
+        return (parse_utils.extract_pdf_text(str(pdf), workspace=str(tmp_path))[0],
+                " ".join(word["text"] for word in words[0]))
+
+    @pytest.mark.parametrize("figure", ["$1,234.56. 2025", "250 - 15 - 1200"])
+    def test_a_split_figure_under_a_label_leaves_its_raised_value_masked(self, tmp_path, figure):
+        """Raised off its label's line, the value prints before it in page
+        text, so only position masks it. A split-shaped figure in the box
+        under the label is no value of the label's: were it one, the label
+        would read as one whose value prints below, and govern nothing beside."""
+        for out in self._routes(tmp_path, [(36, 100, 7, "SSN"), (60, 95, 9, _ssn(" ")), (36, 109, 9, figure)]):
+            assert MASKED in out and _ssn(" ") not in out
+
+    @pytest.mark.parametrize("figure", ["100 / 25 / 1000", "250 - 15 - 1200"])
+    def test_a_split_figure_beside_an_empty_label_leaves_the_number_above_masked(self, tmp_path, figure):
+        """A signature line's number prints just above its empty label. A
+        split-shaped figure further along the label's row does not fill it."""
+        for out in self._routes(tmp_path, [(36, 120, 7, "SSN"), (40, 109, 9, _ssn(" ")), (300, 120, 7, figure)]):
+            assert MASKED in out and _ssn(" ") not in out
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    def test_split_values_down_a_column_mask_past_the_labels_reach(self, tmp_path, sep):
+        """Each split entry carries the column to the next, as a whitespace
+        one does: its own words are no text printed across the column."""
+        values = [_with_separator_gaps(("000", "00", f"{1001 + n}"), sep, (" ",) * 4) for n in range(8)]
+        items = [(36, 100, 7, "SSN")] + [(36, 116 + 20 * n, 9, value) for n, value in enumerate(values)]
+        for out in self._routes(tmp_path, items):
+            assert all(f"XXX-XX-{1001 + n}" in out and value not in out for n, value in enumerate(values))
+
+    @pytest.mark.parametrize("sep", ["-", ".", "/"])
+    @pytest.mark.parametrize("layout", ["beside", "above"])
+    def test_a_split_value_beside_or_above_its_label(self, tmp_path, sep, layout):
+        value = _with_separator_gaps(("000", "00", LAST4), sep, (" ",) * 4)
+        at = (80, 95) if layout == "beside" else (40, 109)
+        for out in self._routes(tmp_path, [(36, 100 if layout == "beside" else 120, 7, "SSN"), (*at, 9, value)]):
+            assert MASKED in out and value not in out
 
     def test_a_split_match_cannot_hide_an_existing_whitespace_match(self):
         from agents.lib.secure_fs import mask_row_runs, mask_runs

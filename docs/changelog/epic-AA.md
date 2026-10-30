@@ -4436,29 +4436,39 @@ the row no longer stops the SSN below the label from masking.
   whole on Forms 1099-B, 1099-G and 1098-E wherever a figure in an
   identifier spelling shared the TIN headings' row; this masks it. Over
   4,000 random label-and-column layouts holding 22,605 synthetic SSNs, it
-  masks 206 that main prints and prints none that main masks. 0 of 999 IRS
+  masks 103 that main prints and prints none that main masks. 0 of 999 IRS
   publication pages mask differently, and the figures it masks that main
   kept are identifier-shaped ones under a label, the safe direction.
 
-## AA96 — Split identifiers governed only by position
+## AA96 — split identifiers governed only by position (#94)
 
-The positional reader now recognizes the same 3-2-4 split spelling as
-AA95's label-only text rule. A margin glyph between the label and its value
-in page text no longer makes PDF text, words, identity metadata or tables
-hand back the whole identifier. The split's marks belong to its span;
-prepared runs produce the canonical masked spelling, and table rows keep
-only the last four digits even when the groups and marks occupy separate
-cells.
+The positional reader masks a delimited SSN or ITIN split beside its marks
+where a label governs it by position: text, words, identity metadata and
+tables, with something page text prints between the label and the value
+(a margin glyph). `split_spans` finds the split, marks included;
+`prepare_runs` spells it `XXX-XX-` and its last four, `_run_spans` finds it
+in a second pass after the whitespace one, and where the two passes'
+matches overlap their boundaries disagree, so the merged span keeps no
+digit. Table rows keep only the last four when the groups and marks fill
+separate cells. Unlabelled, a split still prints as printed, and the
+overlay's digits-and-marks view, filename refusal and the redactor keep
+their spellings.
 
-Whitespace runs retain their existing pass. Split runs are found separately,
-then overlapping matches merge and keep no digits, since their boundaries
-disagree. Review caught that treating every split shape as one numeric token
-could hide a whitespace match the old reader recognized. A 2,880-case
-comparison preserves every digit the previous table-run masker hid.
-
-The overlay's digits-and-marks view explicitly keeps its earlier spellings:
-removing words from a page can join separate figures into a split shape.
-A regression with only the first figure touching a label retains the other
-figures; enabling split recognition there makes that regression fail.
-Unlabelled splits still print as printed. Filename refusal, the error
-redactor and the text-only masking rules retain their previous scope.
+- As opened, the split joined `identifier_spans`' values. The positional
+  reader also reads a value as a sign that a label's box is filled: a
+  split-shaped figure just under a label ("$1,234.56. 2025") made
+  `_beside` take the label for one whose value prints below and skip the
+  SSN beside it, and one along an empty label's row stopped `_above`
+  masking the number printed above that label. Over 2,000 random layouts
+  it printed 28 SSNs that main masks.
+- A split run is therefore a target only, never evidence: it stays out of
+  `identifier_spans`, `under` and the lone-label test. `_beside` and
+  `_above` only mask more with more runs; `_under` starts a column at its
+  first entry, so it reads the page both without split runs and with
+  them as entries, their own words no longer text across the column.
+- Over the same layouts (13,665 synthetic SSNs) the result masks 1,163
+  that main prints and prints none that main masks; 2,000 stacked-column
+  layouts without splits, 114 filled official forms and 19 IRS forms,
+  instructions and publications through both PDF routes print the same. On a page of
+  labels over a grid of split-shaped figures the positional reader costs
+  what the PR as opened did.
