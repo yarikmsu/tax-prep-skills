@@ -742,8 +742,11 @@ def _safe_pdf_page(page, tick):
         return page
     words = page.extract_words()
     # Kept on the page, a run can read as a label's value in its text, so
-    # only what the reader governs without split runs is kept (AA96).
-    governed = prepare_runs(_governed_runs(words, tick, split=False)).spelling
+    # only what the reader governs without split runs is kept (AA96). A kept
+    # run printed under a label also leaves that label no value on its row
+    # (`_beside`), so labels are read here as their row's text reads them:
+    # one measured empty past a far value (AA98) keeps no more either.
+    governed = prepare_runs(_governed_runs(words, tick, split=False, measured=False)).spelling
     protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
                  for raw, box in _page_identifiers(words, tick)[1]
                  if "".join(re.findall(r"[0-9]", raw)) in governed}
@@ -970,6 +973,16 @@ def _leader_end(label: dict, row: list[dict], k: int) -> float:
     return end
 
 
+def _in_reach(row: list[dict], starts: list[int], value_starts: list[int], end: int, reach: float,
+              height: float) -> bool:
+    """The first value page text puts after `end`, a label's, starts within
+    `_BESIDE` heights of `reach`, where `_beside` measures that label's
+    first value from."""
+    at = bisect.bisect_left(value_starts, end)
+    return (at < len(value_starts)
+            and row[bisect.bisect_right(starts, value_starts[at]) - 1]["x0"] - reach <= _BESIDE * height)
+
+
 def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, list]:
     """The page's identifier labels (box, carries, where its row's reach
     starts), runs still to mask (text, box), identifiers spelled another way
@@ -1017,12 +1030,11 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, l
                 leaders[key] = _leader_end(box, row, k)
             # Page text joins distant columns with one space. A value only
             # fills this label's box when it also prints within its beside
-            # reach; otherwise the label still governs the SSN below it.
+            # reach; otherwise the label still governs the SSN below it, and
+            # is marked `far_value`: page text alone reads it as carrying.
             if carries:
-                at = bisect.bisect_left(value_starts, high)
-                carries = (at < len(value_starts)
-                           and row[bisect.bisect_right(starts, value_starts[at]) - 1]["x0"] - leaders[key]
-                           <= _BESIDE * (box["bottom"] - box["top"]))
+                carries = _in_reach(row, starts, value_starts, high, leaders[key], box["bottom"] - box["top"])
+                box["far_value"] = not carries
             labels.append((box, carries, leaders[key]))
         for low, high in found_values:
             cover = _covered(row, starts, low, high)
@@ -1315,14 +1327,22 @@ def _paragraph_labels(words: list[dict], labels: list, tick, boundaries: list | 
     return out
 
 
-def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True) -> set[str]:
+def _far_values_carry(labels: list) -> list:
+    """`labels` with each `far_value` one carrying, as its row's text reads it."""
+    return [(label, carries or label.get("far_value", False), start) for label, carries, start in labels]
+
+
+def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True, measured: bool = True) -> set[str]:
     """The text of each identifier-shaped run the page prints in an
     identifier label's box, whatever order the page's text puts them in.
     `tick` is the caller's time budget, checked as the page is read.
-    Without `split`, neither split runs nor a label only a split value ends."""
+    Without `split`, neither split runs nor a label only a split value ends.
+    Without `measured`, a `far_value` label carries that value."""
     labels, values, spelled, covered, splits = _page_identifiers(words, tick)
     if not split:
         labels, splits = [entry for entry in labels if not entry[0].get("split_tail")], []
+    if not measured:
+        labels = _far_values_carry(labels)
     if not labels or not (values or splits):
         return set()
     items = [(box, raw, False) for raw, box in values] + [(box, None, masked) for box, masked in spelled]
@@ -1348,11 +1368,23 @@ def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True) 
     targets = items + [(box, raw, False) for raw, box, _ in splits]
     plain = [k for k, (label, *_) in enumerate(labels) if not label.get("split_tail")]
     runs = (_beside(labels + extra, targets + placeholders, under + [[] for _ in extra], tick)
-            | _under([labels[k] for k in plain], items, [under[k] for k in plain], printed, tick)
             | _above(lone, targets, tick))
-    if splits:
-        split_words = set().union(*(ids for *_, ids in splits))
-        runs |= _under(labels, targets, under, [w for w in printed if id(w) not in split_words], tick)
+    # A `far_value` label, empty because its value prints out of reach, is
+    # free only in `_under`: `_lone_labels` still sees that value beside it.
+    # There it can be the first label to govern an entry of another
+    # heading's column and take that column over, lined up with that entry
+    # and measured in its own height, leaving later entries the heading's
+    # column would have reached. So `_under` also reads the page with those
+    # labels carrying, as their row's text does.
+    views = [labels]
+    if measured and any(label.get("far_value") for label, *_ in labels):
+        views.append(_far_values_carry(labels))
+    split_words = set().union(*(ids for *_, ids in splits))
+    unsplit = [w for w in printed if id(w) not in split_words]
+    for view in views:
+        runs |= _under([view[k] for k in plain], items, [under[k] for k in plain], printed, tick)
+        if splits:
+            runs |= _under(view, targets, under, unsplit, tick)
     return runs
 
 

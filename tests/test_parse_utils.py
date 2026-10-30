@@ -1170,13 +1170,20 @@ class TestMaskingByPosition:
             raw = document.pages[0].extract_text()
         return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
 
+    @staticmethod
+    def _extract(route, pdf, tmp_path):
+        """`route` over `pdf`; `identity_words` is the words route with identity layout."""
+        from agents.lib import parse_utils
+        if route == "identity_words":
+            return parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=True)
+        return getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path))
+
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
     @pytest.mark.parametrize("figure", [" ".join(("Wages 850", "00", "2026")), "-".join(("Wages 850", "00", "2026")),
                                        "".join(("850", "00", "2026")), " ".join(("850", "00", "2026")),
                                        "-".join(("850", "00", "2026")), "XXX-XX-2026"])
     @pytest.mark.parametrize("between", [False, True])
     def test_a_figure_across_a_labels_row_leaves_its_value_masked(self, tmp_path, route, figure, between):
-        from agents.lib import parse_utils
         # The margin glyph separates the label and value in page text, so
         # that variant exercises the positional carries flag as well.
         items = [(36, 100, 7, "SSN"), (300, 100, 7, figure), (36, 116, 9, _ssn(""))]
@@ -1184,10 +1191,55 @@ class TestMaskingByPosition:
             items.append((570, 109, 5, "R"))
         pdf = _draw(tmp_path / "form.pdf", items + [(170, 116, 9, "850.00")],
                     boxes=[(32, 112, 124, 28), (156, 112, 134, 28)])
-        extracted = (parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=True)
-                     if route == "identity_words" else getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
-        out = repr(extracted)
+        out = repr(self._extract(route, pdf, tmp_path))
         assert _ssn("") not in out and MASKED in out, "the SSN under the label must be masked"
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
+    @pytest.mark.parametrize("heights, governs", [(11.5, False), (12.0, False), (12.5, True)],
+                             ids=["within", "edge", "beyond"])
+    def test_a_value_is_its_labels_own_within_its_beside_reach(self, tmp_path, route, heights, governs):
+        """Page text joins a value to its label from any distance. Within
+        `_BESIDE` heights of the label, the value is the label's own and the
+        routing number under it stays. Beyond that reach the label is empty
+        and governs the line under it."""
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        from agents.lib import parse_utils
+        x = 36 + stringWidth("SSN", "Helvetica", 9) + heights * 9
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, "SSN"), (x, 100, 9, _ssn("")),
+                                           (36, 116, 9, f"Routing {ROUTING}")])
+        out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
+        assert (ROUTING not in out) is governs
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    def test_a_label_freed_by_a_far_figure_leaves_a_headings_column_whole(self, tmp_path, route):
+        """Once its far figure stops counting, the small label beside the
+        heading's column is empty and governs the entry just under it. In
+        doing so it takes over the column, lined up with that entry and
+        measured in its own smaller height. The entry printed a little
+        further along, lined up with the column's first entry, is still the
+        heading's."""
+        entries = ["".join(("000", "00", f"{n:04d}")) for n in range(1001, 1010)]
+        items = [(100, 100, 9, "SSN")] + [(100, 120 + 20 * i, 9, entry) for i, entry in enumerate(entries[:7])]
+        items += [(82, 245, 7, "SSN"), (400, 245, 7, " ".join(("850", "00", "2026"))),
+                  (102.5, 256, 9, entries[7]), (99.5, 362, 9, entries[8])]
+        pdf = _draw(tmp_path / "form.pdf", items)
+        out = repr(self._extract(route, pdf, tmp_path))
+        assert not [entry[-4:] for entry in entries if entry in out], "every entry of the column must be masked"
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    def test_a_far_figure_keeps_no_more_of_an_overlay(self, tmp_path, route):
+        """The comb drawn over the lower label is removed unless a label
+        governs it. Measured empty past its far figure, the upper label would
+        govern the comb and keep it. Kept, the comb would print under that
+        label, which `_beside` then reads as having no value on its row, so
+        the raised SSN on that row would print whole."""
+        import re
+        items = [(310, 363, 9, " ".join(_SECOND)), (520, 353, 9, "-".join(("850", "00", "2026"))),
+                 (300, 352, 9, "social security number (SSN)"), (300, 371, 7, "Your social security number"),
+                 (450, 345, 9, _ssn(" "))]
+        pdf = _draw(tmp_path / "form.pdf", items)
+        out = repr(self._extract(route, pdf, tmp_path))
+        assert _ssn("") not in re.sub(r"[\s./-]+", "", out) and MASKED in out, "the raised SSN must be masked"
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
     @pytest.mark.parametrize("label", ["SSN", "SSN or ITIN", "SSN/ITIN", "social security number (SSN)"])
