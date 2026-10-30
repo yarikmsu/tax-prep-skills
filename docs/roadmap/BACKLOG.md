@@ -212,6 +212,8 @@ Trigger and range behavior is documented in
   (`_BESIDE`), and pin it both ways: the SSN under such a label masks, and
   a label whose value prints beside it still leaves the next line's
   routing number alone.
+  **Implementation awaiting owner review:** [PR #96](https://github.com/yarikmsu/tax-prep-skills/pull/96).
+  Keep this item open until the PR merges.
 
 - **AA99 (P2, S): Stop an overlay copy of a governed SSN printing it, or
   another, whole.** `_safe_pdf_page` removes the digits of an identifier
