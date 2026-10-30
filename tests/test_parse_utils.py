@@ -2016,6 +2016,65 @@ class TestMaskingByPosition:
         itin = _itin().replace("-", "")
         assert mask_table([["SSN"], [int(itin)]], {itin}) == [["SSN"], [MASKED]]
 
+    @pytest.mark.parametrize("offset", range(10))
+    @pytest.mark.parametrize("layout", ["above", "beside", "cell_above", "cell_beside", "column", "right"])
+    def test_a_text_governed_comb_resolves_a_known_subrun_before_rewriting(self, offset, layout):
+        """A positional reader may know only a nine inside a textual comb.
+        Its replacement must not fragment the original eighteen digits into
+        short, unmasked pieces, or change which last fours are safe to keep."""
+        digits = _ssn("") + _SECOND
+        comb = " ".join(digits)
+        runs = {" ".join(digits[offset:offset + 9])}
+        expected = f"{MASKED} XXX-XX-1111" if offset % 9 == 0 else "XXX-XX-XXXX"
+        if layout in {"above", "beside", "cell_above", "cell_beside"}:
+            prefix = "SSN\n" if layout.endswith("above") else "SSN "
+            raw = f"{prefix}{comb}; Wages 850.00"
+            masked = f"{prefix}{expected}; Wages 850.00"
+            if layout.startswith("cell_"):
+                assert mask_table([[raw]], runs) == [[masked]]
+            else:
+                assert mask_ssn(raw, runs) == masked
+        elif layout == "column":
+            assert mask_table([["SSN", "Wages"], [comb, "850.00"]], runs) == [
+                ["SSN", "Wages"], [expected, "850.00"]]
+        else:
+            assert mask_table([["SSN", comb, "850.00"]], runs) == [["SSN", expected, "850.00"]]
+
+    def test_a_cells_textual_comb_survives_an_overlapping_run_across_cells(self):
+        """The across-cell pass must see the cell's text-governed comb
+        before replacing conflicting runs that start inside it."""
+        digits = _ssn("") + _SECOND + "222"
+        runs = {" ".join(digits[3:21]), " ".join(digits[6:15])}
+        row = ["SSN " + " ".join(digits[:18]), " ".join(digits[18:]), "Wages 850.00"]
+        assert mask_table([row], runs) == [["SSN " + " ".join("X" * 18), "X X X", "Wages 850.00"]]
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    @pytest.mark.parametrize("layout", ["above", "beside"])
+    @pytest.mark.parametrize("offset", [0, 3, 9])
+    def test_pdf_textual_comb_outside_positional_reach_keeps_its_boundaries(self, tmp_path, route, layout, offset):
+        from agents.lib.parse_utils import _governed_runs
+        import pdfplumber
+
+        digits = _ssn("") + _SECOND
+        comb = " ".join(digits)
+        copy = digits[offset:offset + 9]
+        pdf = _draw(tmp_path / "form.pdf", [
+            (36, 116 if layout == "beside" else 100, 9, "SSN"),
+            (300, 116, 9, comb),
+            (450, 116, 9, "Wages 850.00"),
+            (36, 200, 9, f"SSN {' '.join(copy)}")])
+        with pdfplumber.open(str(pdf)) as document:
+            # This is deliberately TEXT-only governance of the long comb;
+            # the page's positional evidence covers only the separate copy.
+            runs = _governed_runs(document.pages[0].extract_words())
+            assert runs and {"".join(c for c in run if c.isdigit()) for run in runs} == {copy}
+        extracted = self._extract(route, pdf, tmp_path)[0]
+        text = extracted if route == "extract_pdf_text" else "\n".join(word["text"] for word in extracted)
+        lines = text.splitlines()
+        expected = f"{MASKED} XXX-XX-1111" if offset % 9 == 0 else "XXX-XX-XXXX"
+        assert ("SSN " if layout == "beside" else "") + expected + " Wages 850.00" in lines
+        assert f"SSN XXX-XX-{copy[5:]}" in lines
+
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
     @pytest.mark.parametrize("layout", ["far", "above", "beside", "column"])
     def test_a_governed_comb_containing_an_offset_copy_keeps_no_digits(self, tmp_path, route, layout):

@@ -347,22 +347,29 @@ def _mask_spaced_after_labels(text: str, runs=None) -> str:
     return "\n".join(lines)
 
 
+def _under_label_lines(text: str) -> list[int]:
+    """Lines governed by an above-value label, decided on original text."""
+    raw = text.split("\n")
+    starts = [0]
+    for line in raw:
+        starts.append(starts[-1] + len(line) + 1)
+    governed = []
+    for i in range(1, len(raw)):
+        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
+        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
+            governed.append(i)
+    return governed
+
+
 def _mask_under_labels(text: str, runs=None, original=None) -> str:
     """Mask every identifier-shaped run on a line whose PREVIOUS line carries
     an identifier label with no value after it — the label-above-value box of
     a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
     value the same-line pass has just rewritten still counts as present."""
-    original = text if original is None else original
-    raw = original.split("\n")
     lines = text.split("\n")
-    starts = [0]
-    for line in raw:
-        starts.append(starts[-1] + len(line) + 1)
-    for i in range(1, len(raw)):
-        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
-        if _label_ends(original, starts[above], starts[above] + len(raw[above])):
-            value = mask_runs(lines[i], runs) if runs is not None else lines[i]
-            lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", value))
+    for i in _under_label_lines(text if original is None else original):
+        value = mask_runs(lines[i], runs) if runs is not None else lines[i]
+        lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", value))
     return "\n".join(lines)
 
 
@@ -433,6 +440,31 @@ def prepare_runs(runs) -> Runs:
             for i in range(0, len(digits), 9):
                 spelling.setdefault(digits[i:i + 9], f"XXX-XX-{digits[i + 5:i + 9]}")
     return Runs(tuple(sorted({len(digits) for digits in spelling}, reverse=True)), spelling)
+
+
+def _include_text_combs(text: str, runs: Runs, *, only_labeled=False) -> Runs:
+    """Keep a text-governed comb's original boundaries alongside positional
+    evidence. Replacing only a known subrun first would leave short fragments
+    that neither the comb nor nine-digit patterns can subsequently mask."""
+    if only_labeled:
+        governed = set(_under_label_lines(text))
+        raw: set[str] = set()
+        for i, line in enumerate(text.split("\n")):
+            label = _ID_LABEL_RE.search(line)
+            if i in governed:
+                start = 0
+            elif label is not None:
+                start = label.end()
+            else:
+                continue
+            raw.update(match[0] for match in _ID_SPACED.finditer(line, start))
+    else:
+        raw = {match[0] for match in _ID_SPACED.finditer(text)}
+    combs = prepare_runs(raw)
+    if not combs.spelling:
+        return runs
+    return Runs(tuple(sorted(set(runs.lengths) | set(combs.lengths), reverse=True)),
+                {**combs.spelling, **runs.spelling})
 
 
 def _run_spans(text: str, runs: Runs) -> list:
@@ -557,6 +589,8 @@ def mask_ssn(value, runs=None, *, _original=None):
     if not isinstance(value, str) or len(value) < 9:
         return value
     runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
+    if runs is not None:
+        runs = _include_text_combs(value, runs, only_labeled=True)
     out = _mask_under_labels(value, runs, _original)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
     out = _mask_spaced_after_labels(out, runs)
@@ -629,7 +663,7 @@ def _mask_id_value(cell, runs=None):
         return cell
     original = text
     if runs is not None:
-        text = mask_runs(text, runs)
+        text = mask_runs(text, _include_text_combs(text, runs))
     masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
                                            _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
     return masked if masked != original else cell
@@ -651,19 +685,29 @@ def mask_table(rows, runs=None):
         if not isinstance(row, (list, tuple)):
             masked.append(mask_ssn(row, runs))
             continue
-        positioned = mask_row_runs(list(row), runs, _cross_cell_conflicts=True) if runs is not None else row
-        out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None)
+        labels = [column for column, cell in enumerate(row) if _is_id_label_cell(cell)]
+        row_runs = runs
+        if row_runs is not None:
+            for cell in row:
+                if isinstance(cell, str):
+                    row_runs = _include_text_combs(cell, row_runs, only_labeled=True)
+            # The table's own labels govern these ORIGINAL cells. Include
+            # their combs before mask_ssn can replace a positional subrun.
+            for column in governed | {column + 1 for column in labels}:
+                if column < len(row) and isinstance(row[column], str):
+                    row_runs = _include_text_combs(row[column], row_runs)
+        positioned = mask_row_runs(list(row), row_runs, _cross_cell_conflicts=True) if row_runs is not None else row
+        out = [mask_ssn(cell, row_runs, _original=original if isinstance(original, str) else None)
                for cell, original in zip(positioned, row)]
         # The columns a PREVIOUS row's label governs, before this row's own
         # labels are read: a header governs what is under it, never itself.
         for column in governed:
             if column < len(out):
-                out[column] = _mask_id_value(out[column], runs)
-        for column, cell in enumerate(row):
-            if _is_id_label_cell(cell):
-                governed.add(column)
-                if column + 1 < len(out):
-                    out[column + 1] = _mask_id_value(out[column + 1], runs)
+                out[column] = _mask_id_value(out[column], row_runs)
+        for column in labels:
+            governed.add(column)
+            if column + 1 < len(out):
+                out[column + 1] = _mask_id_value(out[column + 1], row_runs)
         masked.append(out)
     return masked
 
