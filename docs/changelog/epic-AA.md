@@ -4415,23 +4415,27 @@ telephone numbers, EINs and vertical whitespace stay outside it.
   in the whitespace or delimited spelling, a wage with its cents in their
   own column and then a year: the mechanism review used, AA97.
 
+## AA97 — a figure across a label's row does not fill its box (#93)
 
-## AA97 — A figure across a label's row does not fill its box
+A label has its own value only straight after it: horizontal whitespace,
+the parenthesis closing "social security number (SSN)", and one colon,
+number sign or period between. The text and table readers (`_label_ends`)
+and the positional reader (`identifier_spans`' carries flag) share that
+rule. A wage with its cents in a separate column followed by a year, a
+delimited figure, a routing number or a masked identifier further along
+the row no longer stops the SSN below the label from masking.
 
-A label has its own value only immediately after it, allowing horizontal
-whitespace and one colon, number sign or period. Both the text/table label
-reader and the positional reader use that rule. A wage with its cents in a
-separate column followed by a year, a delimited figure, an account number or
-a masked identifier across the row no longer stops the SSN below the label
-from masking.
-
-Review also covered aliases naming one field: "SSN or ITIN", "SSN/ITIN"
-and "social security number (SSN)" share their adjacent value. The alias
-walk is backwards and linear, so a crafted chain does not rescan each suffix.
-A label with its own adjacent value still leaves the routing number below
-alone. The split spelling retains AA95's label-only rule; positional split
-runs remain AA96.
-
-Regression coverage pins both decisions in text and tables and through PDF
-text and word extraction, with a margin glyph separating label and value in
-page text to exercise the positional reader independently.
+- Aliases naming one field, "SSN or ITIN", "SSN/ITIN" and "social
+  security number (SSN)", share their adjacent value, so a label carrying
+  its own value still leaves the routing number on the next line alone.
+  The alias walk runs backwards once, so a crafted chain does not rescan
+  each suffix. The split spelling keeps AA95's label-only rule and never
+  counts as a label's value; positional split runs are AA96.
+- Review filled every text field of 114 official IRS, FTB and NY forms
+  with SSN-shaped values and figures. Main printed the recipient's SSN
+  whole on Forms 1099-B, 1099-G and 1098-E wherever a figure in an
+  identifier spelling shared the TIN headings' row; this masks it. Over
+  4,000 random label-and-column layouts holding 22,605 synthetic SSNs, it
+  masks 206 that main prints and prints none that main masks. 0 of 999 IRS
+  publication pages mask differently, and the figures it masks that main
+  kept are identifier-shaped ones under a label, the safe direction.

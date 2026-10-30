@@ -264,9 +264,10 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 # is masked only under a label: unlabelled, the same shape is an amount
 # ending a sentence before a year ("$1,234.56. 2025"), a dash standing for
 # zero between two figures, a subtraction. Nor does it tell a label its
-# value is there: a label whose row also prints such an
-# amount would give up the SSN printed under it. The same mark twice, and no
-# capture of its own, so the last four stays the pattern's one group.
+# value is there (`_ID_ADJACENT_VALUE`): straight after a label it may
+# still be a figure page text joined to it, and the SSN printed under the
+# label would print whole. The same mark twice, and no capture of its own,
+# so the last four stays the pattern's one group.
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
                      for mark in "-./")
@@ -283,10 +284,11 @@ _ID_LABELED_SAME_LINE = re.compile(
 _ID_LABELED_SPLIT = re.compile(
     rf"({_ID_LABEL}[^\S\n]*(?:[:#.][^\S\n]*)?)(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
     re.IGNORECASE)
-# A value belongs to the label only immediately after it, with the same
-# punctuation the split spelling permits. A PDF's page-text row also holds
-# figures in unrelated columns; finding one anywhere on that row must not
-# stop masking the identifier under the label.
+# A value is the label's own only straight after it: spaces, the ")"
+# closing "social security number (SSN)", and one ":", "#" or ".". Page
+# text joins a label to the columns across the page, so an identifier-shaped
+# figure further along its row, a wage with its cents apart and then a year,
+# is no sign the label has its value, and the SSN printed under it masks.
 _ID_ADJACENT_VALUE = re.compile(
     rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX))", re.IGNORECASE)
@@ -294,8 +296,8 @@ _ID_ALIAS = re.compile(r"[^\S\n]*(?:/|or|\()[^\S\n]*", re.IGNORECASE)
 
 
 def _label_ends(text: str, start: int | None = None, end: int | None = None) -> bool:
-    """A label line that already carries its value — in any spelling, or
-    already masked, in either case — is a same-line layout, and the line
+    """A label line whose last label is followed straight by its value — in
+    any spelling, or already masked — is a same-line layout, and the line
     under it is something else. The line is `text[start:end]`, by default its
     last line (a table cell can hold two); the text around it stays visible
     to the labels' lookbehinds. Only its LAST label decides: one scan, where
