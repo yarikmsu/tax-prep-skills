@@ -731,30 +731,39 @@ def _labels_crossed(glyphs: list[dict], index: dict, lines: dict[int, int], tick
 
 
 def _safe_pdf_page(page, tick):
-    """A fresh derived page without the digits of an identifier drawn over
-    its label, nor the delimiters between them, so the label reads whole
-    again and governs its own box. FilteredPage owns its objects mapping;
-    the source page and every non-character object (table rules) stay intact.
+    """The page to read, and runs its labels govern before cleanup that every
+    route also masks. With no identifier drawn over its label, or each one
+    kept, that is the source page. Otherwise it is a fresh derived page
+    without that identifier's digits, nor the delimiters between them, so
+    the label reads whole again and governs its own box. FilteredPage owns
+    its objects mapping; the source page and every non-character object
+    (table rules) stay intact. Cleanup can change which label governs a
+    value kept on the page, so the runs are those the protection was decided
+    from and those the original page's labels govern, split runs included.
     """
     tick()
     hidden = _overlaid_digits(page.chars, tick)
     if not hidden:
-        return page
+        return page, set()
     words = page.extract_words()
     # Kept on the page, a run can read as a label's value in its text, so
     # only what the reader governs without split runs is kept (AA96).
-    governed = prepare_runs(_governed_runs(words, tick, split=False)).spelling
+    governed = _governed_runs(words, tick, split=False)
+    spelling = prepare_runs(governed).spelling
     protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
                  for raw, box in _page_identifiers(words, tick)[1]
-                 if "".join(re.findall(r"[0-9]", raw)) in governed}
+                 if "".join(re.findall(r"[0-9]", raw)) in spelling}
     if protected:
         hidden = _overlaid_digits(page.chars, tick, protected=protected)
     if not hidden:
-        return page
+        return page, governed
     safe = page.filter(lambda obj: True)
     safe.objects["char"] = [c for c in page.chars if id(c) not in hidden]
     tick()
-    return safe
+    # Read in full before cleanup: a removed copy no longer shows the
+    # cleaned page's reader that a label governs its digits, and the
+    # protection's own reading leaves out split runs.
+    return safe, governed | _governed_runs(words, tick)
 
 
 def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, str]:
@@ -795,11 +804,11 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            page, preserved_runs = _safe_pdf_page(pdf.pages[i], budget.tick)
             text = page.extract_text() or ""
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
-            runs = _governed_runs(page.extract_words(), budget.tick)
+            runs = _governed_runs(page.extract_words(), budget.tick) | preserved_runs
             result[i] = mask_runs(mask_ssn(text), runs)
     budget.tick()
     return result
@@ -1389,17 +1398,20 @@ def _identity_identifiers(row: list[dict], safe: str) -> list[dict]:
     return list(out.values())
 
 
-def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool = False) -> list[dict]:
+def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool = False,
+                  preserved_runs: set[str] | None = None) -> list[dict]:
     """`mask_ssn` over the page's rows, top to bottom, so a label governs the
     row printed under it whatever order the content stream drew them in, then
-    the runs a label governs by position. A row the masker changes comes back
+    the runs a label governs by position, and `preserved_runs`, those
+    `_safe_pdf_page` read before cleanup. A row the masker changes comes back
     as ONE word spanning it, holding the masked row: no position inside it
     can come back without the identifier."""
     rows = _word_rows(words)
     if not rows:   # every glyph left the page as an overlay
         return []
     texts = [" ".join(word["text"] for word in row) for row in rows]
-    masked = mask_runs(mask_ssn("\n".join(texts)), _governed_runs(words, tick)).split("\n")
+    runs = _governed_runs(words, tick) | (preserved_runs or set())
+    masked = mask_runs(mask_ssn("\n".join(texts)), runs).split("\n")
     if len(masked) != len(rows):
         raise RuntimeError("masking changed the page's row count")
     out = []
@@ -1454,12 +1466,13 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            page, preserved_runs = _safe_pdf_page(pdf.pages[i], budget.tick)
             words = page.extract_words()
             budget.tick()
             for word in words:
                 budget.charge_cell(word["text"])
-            result[i] = _masked_words(words, budget.tick, identity_layout=identity_layout)
+            result[i] = _masked_words(words, budget.tick, identity_layout=identity_layout,
+                                      preserved_runs=preserved_runs)
             if identity_layout:
                 for word in result[i]:
                     budget.charge_cell(word["text"])
@@ -1504,7 +1517,7 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
                     f"Page {i} out of range for {redact(path)} "
                     f"({num_pages} pages)")
             budget.tick()
-            page = _safe_pdf_page(pdf.pages[i], budget.tick)
+            page, preserved_runs = _safe_pdf_page(pdf.pages[i], budget.tick)
             tables = page.extract_tables() or []
             # AFTER the extraction, and outside the `if`: a page that yields no
             # table is the one that charges nothing, and the last such page had
@@ -1512,7 +1525,7 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
             budget.tick()
             if tables:
                 _charge_deep(budget, tables)
-                runs = prepare_runs(_governed_runs(page.extract_words(), budget.tick))
+                runs = prepare_runs(_governed_runs(page.extract_words(), budget.tick) | preserved_runs)
                 result[i] = [_mask_table_runs(mask_table(table), runs, budget.tick) for table in tables]
     budget.tick()
     return result
