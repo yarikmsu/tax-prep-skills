@@ -987,6 +987,7 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, l
         tick()
         text, starts = _row_text(row)
         found_labels, found_values, found_spelled, notes = identifier_spans(text)
+        value_starts = sorted({low for low, _ in found_values} | {low for low, _, _ in found_spelled})
         row_top = min(w["top"] for w in row)
         phrases = _phrases(row)
         phrase_of: dict[int, tuple[list[dict], str, int]] = {}   # a word's phrase, its text, and where it ends in the row's
@@ -1014,6 +1015,14 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, l
             key = (k, box["x1"], box["bottom"] - box["top"])
             if key not in leaders:
                 leaders[key] = _leader_end(box, row, k)
+            # Page text joins distant columns with one space. A value only
+            # fills this label's box when it also prints within its beside
+            # reach; otherwise the label still governs the SSN below it.
+            if carries:
+                at = bisect.bisect_left(value_starts, high)
+                carries = (at < len(value_starts)
+                           and row[bisect.bisect_right(starts, value_starts[at]) - 1]["x0"] - leaders[key]
+                           <= _BESIDE * (box["bottom"] - box["top"]))
             labels.append((box, carries, leaders[key]))
         for low, high in found_values:
             cover = _covered(row, starts, low, high)

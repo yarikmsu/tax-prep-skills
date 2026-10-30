@@ -1170,8 +1170,10 @@ class TestMaskingByPosition:
             raw = document.pages[0].extract_text()
         return raw, extract_pdf_text(str(pdf), workspace=str(tmp_path))[0]
 
-    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
-    @pytest.mark.parametrize("figure", [" ".join(("Wages 850", "00", "2026")), "-".join(("Wages 850", "00", "2026"))])
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+    @pytest.mark.parametrize("figure", [" ".join(("Wages 850", "00", "2026")), "-".join(("Wages 850", "00", "2026")),
+                                       "".join(("850", "00", "2026")), " ".join(("850", "00", "2026")),
+                                       "-".join(("850", "00", "2026")), "XXX-XX-2026"])
     @pytest.mark.parametrize("between", [False, True])
     def test_a_figure_across_a_labels_row_leaves_its_value_masked(self, tmp_path, route, figure, between):
         from agents.lib import parse_utils
@@ -1180,9 +1182,12 @@ class TestMaskingByPosition:
         items = [(36, 100, 7, "SSN"), (300, 100, 7, figure), (36, 116, 9, _ssn(""))]
         if between:
             items.append((570, 109, 5, "R"))
-        pdf = _draw(tmp_path / "form.pdf", items)
-        out = repr(getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
-        assert _ssn("") not in out and MASKED in out
+        pdf = _draw(tmp_path / "form.pdf", items + [(170, 116, 9, "850.00")],
+                    boxes=[(32, 112, 124, 28), (156, 112, 134, 28)])
+        extracted = (parse_utils.extract_pdf_words(str(pdf), workspace=str(tmp_path), identity_layout=True)
+                     if route == "identity_words" else getattr(parse_utils, route)(str(pdf), workspace=str(tmp_path)))
+        out = repr(extracted)
+        assert _ssn("") not in out and MASKED in out, "the SSN under the label must be masked"
 
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words"])
     @pytest.mark.parametrize("label", ["SSN", "SSN or ITIN", "SSN/ITIN", "social security number (SSN)"])
