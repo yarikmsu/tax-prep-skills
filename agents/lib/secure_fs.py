@@ -264,9 +264,10 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 # is masked only under a label: unlabelled, the same shape is an amount
 # ending a sentence before a year ("$1,234.56. 2025"), a dash standing for
 # zero between two figures, a subtraction. Nor does it tell a label its
-# value is there (`_ID_ANY_VALUE`): a label whose row also prints such an
-# amount would give up the SSN printed under it. The same mark twice, and no
-# capture of its own, so the last four stays the pattern's one group.
+# value is there (`_ID_ADJACENT_VALUE`): straight after a label it may
+# still be a figure page text joined to it, and the SSN printed under the
+# label would print whole. The same mark twice, and no capture of its own,
+# so the last four stays the pattern's one group.
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
                      for mark in "-./")
@@ -283,14 +284,20 @@ _ID_LABELED_SAME_LINE = re.compile(
 _ID_LABELED_SPLIT = re.compile(
     rf"({_ID_LABEL}[^\S\n]*(?:[:#.][^\S\n]*)?)(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
     re.IGNORECASE)
-_ID_ANY_VALUE = re.compile(
-    rf"{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
-    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)", re.IGNORECASE)
+# A value is the label's own only straight after it: spaces, the ")"
+# closing "social security number (SSN)", and one ":", "#" or ".". Page
+# text joins a label to the columns across the page, so an identifier-shaped
+# figure further along its row, a wage with its cents apart and then a year,
+# is no sign the label has its value, and the SSN printed under it masks.
+_ID_ADJACENT_VALUE = re.compile(
+    rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
+    rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX))", re.IGNORECASE)
+_ID_ALIAS = re.compile(r"[^\S\n]*(?:/|or|\()[^\S\n]*", re.IGNORECASE)
 
 
 def _label_ends(text: str, start: int | None = None, end: int | None = None) -> bool:
-    """A label line that already carries its value — in any spelling, or
-    already masked, in either case — is a same-line layout, and the line
+    """A label line whose last label is followed straight by its value — in
+    any spelling, or already masked — is a same-line layout, and the line
     under it is something else. The line is `text[start:end]`, by default its
     last line (a table cell can hold two); the text around it stays visible
     to the labels' lookbehinds. Only its LAST label decides: one scan, where
@@ -300,7 +307,7 @@ def _label_ends(text: str, start: int | None = None, end: int | None = None) -> 
     last = None
     for last in _ID_LABEL_RE.finditer(text, start, end):
         pass
-    return last is not None and not _ID_ANY_VALUE.search(text, last.end(), end)
+    return last is not None and not _ID_ADJACENT_VALUE.match(text, last.end(), end)
 
 
 # A label wrapped onto a second row hands it to the row after: Schedule B
@@ -364,12 +371,19 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
     printed under FTB 3506's SSN heading): `[(start, end, carries)]`,
     `[(start, end)]`, `[(start, end, masked)]` and `[(start, end)]`.
-    `carries` says whether a value follows the label on its row, `masked`
+    `carries` says whether a value immediately follows the label on its row, `masked`
     whether the page masked that identifier itself (`XXX-XX-1234`). A reader
     that knows where the row sits on the page decides which label governs
     which run; `mask_runs` masks them."""
-    last = max((m.start() for m in _ID_ANY_VALUE.finditer(row)), default=-1)
-    labels = [(m.start(), m.end(), last >= m.end()) for m in _ID_LABEL_RE.finditer(row)]
+    labels = [(m.start(), m.end(), bool(_ID_ADJACENT_VALUE.match(row, m.end())))
+              for m in _ID_LABEL_RE.finditer(row)]
+    # "SSN or ITIN", "SSN/ITIN" and "social security number (SSN)"
+    # name one field. Walk aliases backwards once, without scanning or
+    # copying the remaining row for each label in a crafted long chain.
+    for i in range(len(labels) - 2, -1, -1):
+        low, high, _ = labels[i]
+        if labels[i + 1][2] and _ID_ALIAS.fullmatch(row, high, labels[i + 1][0]):
+            labels[i] = (low, high, True)
     values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
     return (labels, values, [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
             [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
