@@ -813,7 +813,7 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
             budget.tick()   # the page itself may have crossed the deadline
             budget.charge(text)
             runs = _governed_runs(page.extract_words(), budget.tick) | preserved_runs
-            result[i] = mask_ssn(text, runs)
+            result[i] = mask_ssn(text, runs, tick=budget.tick)
     budget.tick()
     return result
 
@@ -1406,7 +1406,8 @@ def _mask_table_runs(table: list, runs, tick) -> list:
     for row in table:
         tick()
         if isinstance(row, list):
-            row = mask_row_runs([mask_runs(cell, runs) if isinstance(cell, str) else cell for cell in row], runs)
+            row = mask_row_runs([mask_runs(cell, runs, tick=tick) if isinstance(cell, str) else cell for cell in row],
+                                runs, tick=tick)
         out.append(row)
     return out
 
@@ -1454,7 +1455,7 @@ def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool
         return []
     texts = [" ".join(word["text"] for word in row) for row in rows]
     runs = _governed_runs(words, tick) | (preserved_runs or set())
-    masked = mask_ssn("\n".join(texts), runs).split("\n")
+    masked = mask_ssn("\n".join(texts), runs, tick=tick).split("\n")
     if len(masked) != len(rows):
         raise RuntimeError("masking changed the page's row count")
     out = []
@@ -1569,7 +1570,8 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
             if tables:
                 _charge_deep(budget, tables)
                 runs = prepare_runs(_governed_runs(page.extract_words(), budget.tick) | preserved_runs)
-                result[i] = [_mask_table_runs(mask_table(table, runs), runs, budget.tick) for table in tables]
+                result[i] = [_mask_table_runs(mask_table(table, runs, tick=budget.tick), runs, budget.tick)
+                             for table in tables]
     budget.tick()
     return result
 

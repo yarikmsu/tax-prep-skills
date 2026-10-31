@@ -2127,6 +2127,103 @@ class TestMaskingByPosition:
         assert mask_ssn(raw, {_SECOND}) == mask_ssn(raw)
         assert mask_ssn(raw, set()) == mask_ssn(raw)
 
+    @pytest.mark.parametrize("size", [9000, 18000])
+    @pytest.mark.parametrize("side", ["before", "after"])
+    @pytest.mark.parametrize("table", [False, True])
+    def test_long_numeric_tokens_only_probe_windows_touching_an_identifier(self, size, side, table):
+        """A known long comb elsewhere on the page must not cause a long
+        substring copy/hash at every offset of an unrelated numeric token.
+        Count probes instead of relying on a machine-dependent time limit."""
+        from agents.lib.secure_fs import Runs, prepare_runs
+
+        class Probes(dict):
+            long = 0
+
+            def __contains__(self, value):
+                if len(value) == size:
+                    self.long += 1
+                    assert self.long <= 50, "unbounded long-token substring probes"
+                return super().__contains__(value)
+
+        comb = " ".join("2" * size)
+        prepared = prepare_runs({comb, _ssn(" ")})
+        probes = Probes(prepared.spelling)
+        runs = Runs(prepared.lengths, probes)
+        token = "3" * (size * 2)
+        raw = f"{token} {_ssn('')}" if side == "before" else f"{_ssn('')} {token}"
+        safe = f"{token} {MASKED}" if side == "before" else f"{MASKED} {token}"
+        if table:
+            result = mask_table([["SSN"], [comb], ["SSN"], [raw]], runs)
+            assert result[-1][0] == safe
+        else:
+            result = mask_ssn(f"SSN {comb}\nSSN\n{raw}", runs)
+            assert result.splitlines()[-1] == safe
+        assert probes.long > 0, "the known long run must participate"
+
+    def test_the_deadline_is_checked_between_interior_run_probes(self):
+        from agents.lib.parse_utils import ParseBudgetError
+        from agents.lib.secure_fs import Runs, prepare_runs
+
+        class Probes(dict):
+            long = 0
+
+            def __contains__(self, value):
+                if len(value) == 999:
+                    self.long += 1
+                return super().__contains__(value)
+
+        prepared = prepare_runs({" ".join("2" * 999), _ssn(" ")})
+        probes = Probes(prepared.spelling)
+
+        def tick():
+            if probes.long:
+                raise ParseBudgetError("interior search expired")
+
+        with pytest.raises(ParseBudgetError, match="interior search expired"):
+            mask_ssn(f"SSN {_ssn('')} " + "3" * 2000,
+                     Runs(prepared.lengths, probes), tick=tick)
+        assert probes.long == 1, "no second long substring is copied after expiry"
+
+    @pytest.mark.parametrize("route,table_pass", [
+        ("extract_pdf_text", "native"), ("extract_pdf_words", "native"), ("identity_words", "native"),
+        ("extract_tables", "native"), ("extract_tables", "positional")])
+    def test_pdf_routes_stop_inside_masking_when_the_deadline_expires(self, tmp_path, monkeypatch, route, table_pass):
+        """Expire the real extraction budget DURING the run search. A final
+        page check after masking finishes would already have paid its cost."""
+        from agents.lib import parse_utils, secure_fs
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, f"SSN {_ssn(' ')}")])
+        state = {"ticks": 0, "expired": False, "returned_after_expiry": False}
+        real_search = secure_fs._run_spans
+
+        def search(text, runs, *, tick=lambda: None, **kwargs):
+            def advance():
+                state["ticks"] += 1
+                if state["ticks"] >= 3:
+                    state["expired"] = True
+                tick()
+
+            result = real_search(text, runs, tick=advance, **kwargs)
+            state["returned_after_expiry"] |= state["expired"]
+            return result
+
+        monkeypatch.setattr(secure_fs, "_run_spans", search)
+        monkeypatch.setattr(parse_utils.time, "monotonic", lambda: 1000.0 if state["expired"] else 0.0)
+        if route == "extract_tables":
+            # Keep the real PDF reader and budget; supply a table at the
+            # extraction boundary so both masking passes run deterministically.
+            import pdfplumber.page
+            monkeypatch.setattr(pdfplumber.page.Page, "extract_tables",
+                                lambda self: [[['SSN', _ssn(' ')]]])
+            if table_pass == "positional":
+                monkeypatch.setattr(parse_utils, "mask_table", lambda rows, runs, **kwargs: rows)
+            call = lambda: parse_utils.extract_tables(str(pdf), workspace=str(tmp_path))  # noqa: E731
+        else:
+            call = lambda: self._extract(route, pdf, tmp_path)  # noqa: E731
+        with pytest.raises(parse_utils.ParseBudgetError, match="still running"):
+            call()
+        assert state["ticks"] >= 3
+        assert not state["returned_after_expiry"], "the run search finished beyond its deadline"
+
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
     @pytest.mark.parametrize("layout", ["above", "beside"])
     @pytest.mark.parametrize("offset", [0, 3, 9])
