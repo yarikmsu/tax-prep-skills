@@ -2048,6 +2048,85 @@ class TestMaskingByPosition:
         row = ["SSN " + " ".join(digits[:18]), " ".join(digits[18:]), "Wages 850.00"]
         assert mask_table([row], runs) == [["SSN " + " ".join("X" * 18), "X X X", "Wages 850.00"]]
 
+    @pytest.mark.parametrize("sep,side,layout", [
+        (sep, side, layout)
+        for sep in ("", " ", "\t", "\u00a0", "-", ".", "/", " - ", " . ", " / ")
+        for side in ("before", "after")
+        for layout in ("above", "beside", "cell_above", "cell_beside", "column", "right")
+        # A same-line label does not govern past an intervening number.
+        if side == "after" or layout not in {"beside", "cell_beside"} or sep in {"-", ".", "/"}
+    ])
+    def test_non_comb_identifiers_resolve_overlaps_before_positional_rewriting(self, sep, side, layout):
+        """A known nine overlaps an original 3-2-4 identifier. Masking
+        either one first would fragment the other and expose its digits."""
+        value = _ssn(sep)
+        if side == "after":
+            raw = value + " 22222"
+            copy = LAST4 + "22222"
+        else:
+            raw = "222222 " + value
+            copy = "222222" + _ssn("")[:3]
+        runs = {copy}
+        expected = "XXX-XX-XXXX"
+        if layout in {"above", "beside", "cell_above", "cell_beside"}:
+            prefix = "SSN\n" if layout.endswith("above") else "SSN "
+            original = f"{prefix}{raw}; Wages 850.00"
+            masked = f"{prefix}{expected}; Wages 850.00"
+            if layout.startswith("cell_"):
+                assert mask_table([[original]], runs) == [[masked]]
+            else:
+                assert mask_ssn(original, runs) == masked
+        elif layout == "column":
+            assert mask_table([["SSN", "Wages"], [raw, "850.00"]], runs) == [
+                ["SSN", "Wages"], [expected, "850.00"]]
+        else:
+            assert mask_table([["SSN", raw, "850.00"]], runs) == [["SSN", expected, "850.00"]]
+
+    @pytest.mark.parametrize("sep", ["", " ", "-", " - ", ".", "/"])
+    @pytest.mark.parametrize("layout", ["above", "beside", "column", "right"])
+    def test_non_comb_identifier_conflicts_across_table_cells(self, sep, layout):
+        value = _ssn(sep)
+        copy = LAST4 + "22222"
+        prefix = "SSN\n" if layout == "above" else "SSN " if layout == "beside" else ""
+        row = [prefix + value, "22222", "Wages 850.00"]
+        expected = [prefix + re.sub(r"[0-9]", "X", value), "XXXXX", "Wages 850.00"]
+        if layout == "column":
+            header = ["SSN", "Other", "Wages"]
+            assert mask_table([header, row], {copy}) == [header, expected]
+        elif layout == "right":
+            assert mask_table([["SSN", *row]], {copy}) == [["SSN", *expected]]
+        else:
+            assert mask_table([row], {copy}) == [expected]
+
+    @pytest.mark.parametrize("sep", ["-", " ", " - "])
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    @pytest.mark.parametrize("side", ["before", "after"])
+    def test_pdf_non_comb_identifier_outside_positional_reach_preserves_its_span(self, tmp_path, sep, route, side):
+        from agents.lib.parse_utils import _governed_runs
+        import pdfplumber
+
+        value = _ssn(sep)
+        raw = value + " 22222" if side == "after" else "222222 " + value
+        copy = LAST4 + "22222" if side == "after" else "222222" + _ssn("")[:3]
+        pdf = _draw(tmp_path / "form.pdf", [
+            (36, 100, 9, "SSN"), (300, 116, 9, raw),
+            (450, 116, 9, "Wages 850.00"), (36, 200, 9, f"SSN {copy}")])
+        with pdfplumber.open(str(pdf)) as document:
+            runs = _governed_runs(document.pages[0].extract_words())
+            assert runs and {re.sub(r"[^0-9]", "", run) for run in runs} == {copy}
+        extracted = self._extract(route, pdf, tmp_path)[0]
+        text = extracted if route == "extract_pdf_text" else "\n".join(word["text"] for word in extracted)
+        assert "XXX-XX-XXXX Wages 850.00" in text.splitlines()
+        assert f"SSN XXX-XX-{copy[5:]}" in text.splitlines()
+
+    @pytest.mark.parametrize("sep", ["", " ", "-", " - "])
+    def test_textual_identifier_evidence_does_not_mask_unrelated_numeric_copies(self, sep):
+        """Textual span protection must not turn other unlabeled copies
+        into positional evidence, including amounts and routing numbers."""
+        raw = f"SSN {_ssn(sep)}\nAmount {_ssn('')}; Routing {_ssn(' ')}"
+        assert mask_ssn(raw, {_SECOND}) == mask_ssn(raw)
+        assert mask_ssn(raw, set()) == mask_ssn(raw)
+
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
     @pytest.mark.parametrize("layout", ["above", "beside"])
     @pytest.mark.parametrize("offset", [0, 3, 9])
