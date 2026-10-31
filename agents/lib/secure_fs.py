@@ -58,6 +58,7 @@ appear to be. An ordinary failure does not stop it.
 # any supported syntax; this one may not.
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 import contextlib
 import errno
 import math
@@ -277,8 +278,10 @@ _ID_GOVERNED = re.compile(
 _ID_SPLIT_VALUE = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
+# A fully masked value still fills its label's box. Do not walk past it
+# through a digit-free prefix and take the next nine-digit amount as the SSN.
 _ID_LABELED_SAME_LINE = re.compile(
-    rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
+    rf"({_ID_LABEL}(?:(?!XXX-XX-XXXX)[^0-9\n]){{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
 # spaces and one ":", "#" or "." between: page text joins a label to columns
 # across the page ("SSN Dividends 250 - 15 - 1200"), and prose names a label
@@ -337,24 +340,33 @@ def _mask_spaced_after_labels(text: str) -> str:
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if label := _ID_LABEL_RE.search(line):
-            lines[i] = line[:label.end()] + _mask_spaced(line[label.end():])
+            value = line[label.end():]
+            lines[i] = line[:label.end()] + _mask_spaced(value)
     return "\n".join(lines)
 
 
-def _mask_under_labels(text: str) -> str:
+def _under_label_lines(text: str) -> list[int]:
+    """Lines governed by an above-value label, decided on original text."""
+    raw = text.split("\n")
+    starts = [0]
+    for line in raw:
+        starts.append(starts[-1] + len(line) + 1)
+    governed = []
+    for i in range(1, len(raw)):
+        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
+        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
+            governed.append(i)
+    return governed
+
+
+def _mask_under_labels(text: str, original=None) -> str:
     """Mask every identifier-shaped run on a line whose PREVIOUS line carries
     an identifier label with no value after it — the label-above-value box of
     a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
     value the same-line pass has just rewritten still counts as present."""
-    raw = text.split("\n")
-    lines = list(raw)
-    starts = [0]
-    for line in raw:
-        starts.append(starts[-1] + len(line) + 1)
-    for i in range(1, len(raw)):
-        above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
-        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
-            lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", raw[i]))
+    lines = text.split("\n")
+    for i in _under_label_lines(text if original is None else original):
+        lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", lines[i]))
     return "\n".join(lines)
 
 
@@ -427,17 +439,55 @@ def prepare_runs(runs) -> Runs:
     return Runs(tuple(sorted({len(digits) for digits in spelling}, reverse=True)), spelling)
 
 
-def _run_spans(text: str, runs: Runs) -> list:
+def _text_identifier_spans(text: str, *, governed=False, original=None) -> list:
+    """Original spans the text/table rules mask, before a positional rewrite
+    can fragment them. They apply only at these locations: a textual label
+    must not turn an unrelated amount or routing-number copy into evidence."""
+    spans = {(m.start(), m.end()) for m in _ID_DELIMITED.finditer(text)}
+    under = set(_under_label_lines(text if original is None else original))
+    offset = 0
+    for i, line in enumerate(text.split("\n")):
+        if governed or i in under:
+            spans.update((offset + m.start(), offset + m.end()) for m in _ID_GOVERNED.finditer(line))
+            start = 0
+        elif label := _ID_LABEL_RE.search(line):
+            start = label.end()
+        else:
+            start = len(line)
+        spans.update((offset + m.start(), offset + m.end()) for m in _ID_SPACED.finditer(line, start))
+        offset += len(line) + 1
+    for pattern in (_ID_LABELED_SAME_LINE, _ID_LABELED_SPLIT):
+        spans.update((m.end(1), m.end()) for m in pattern.finditer(text))
+    return sorted(spans)
+
+
+def _run_spans(text: str, runs: Runs, *, _spans=(), tick=lambda: None) -> list:
     """Where the digits of `runs` print in `text`, however they are spaced:
     `(start, end, digits)`, each starting and ending on a group of digits'
     edge, the longest whitespace run at each place. A match inside the last
-    one taken is the same run read again (a comb row's nine); one running
-    past its end is another run sharing its digits, and is taken too. A
+    one taken is the same run read again only at a nine-digit boundary
+    (a comb row's nine). An offset match, or one running past its end, is
+    another run sharing its digits, and is taken too. A
     second pass includes the marks of a split 3-2-4 value. Overlapping
     matches merge, with an empty `digits` sentinel: their boundaries
-    disagree, so none of their digits can safely be kept."""
+    disagree, so none of their digits can safely be kept. Original textual
+    `_spans` join the same conflict resolution, without making their digits
+    positional evidence elsewhere in the text. `tick` checks the caller's
+    deadline while candidate windows are searched, before slicing them."""
     found = []
+    spans = sorted(set(_spans))
+    starts: list[int] = []
+    ends: list[int] = []
+    for start, end in spans:
+        starts.append(start)
+        ends.append(max(end, ends[-1] if ends else 0))
+
+    def overlaps(start, end):
+        i = bisect_right(starts, end - 1) - 1
+        return i >= 0 and ends[i] > start
+
     for sequence in _DIGIT_GROUPS.finditer(text):
+        tick()
         groups = [(sequence.start() + m.start(), sequence.start() + m.end())
                   for m in re.finditer(r"[0-9]+", sequence[0])]
         digits = "".join(text[a:b] for a, b in groups)
@@ -445,50 +495,111 @@ def _run_spans(text: str, runs: Runs) -> list:
         for a, b in groups:
             edges.append(edges[-1] + b - a)
         group_at = {edge: k for k, edge in enumerate(edges)}
-        reach = 0   # the group the last match taken ends before
+        reach = 0   # the group the last extending match ends before
+        origin = 0  # that match's starting digit offset, not its group index
         for k in range(len(groups)):
+            tick()
             start = edges[k]
             stop = next((group for length in runs.lengths if (group := group_at.get(start + length)) is not None
                          and digits[start:start + length] in runs.spelling), None)
-            if stop is not None and stop > reach:
-                found.append((groups[k][0], groups[stop - 1][1], digits[start:edges[stop]]))
-                reach = stop
+            if stop is not None and (stop > reach or (start - origin) % 9):
+                value = digits[start:edges[stop]]
+                # A different spelling can join groups that were separate in
+                # the governed comb. Its known SSN still conflicts at an offset.
+                if any(value[i:i + 9] in runs.spelling for i in range(1, len(value) - 8) if i % 9):
+                    value = ""
+                found.append((groups[k][0], groups[stop - 1][1], value))
+                if stop > reach:
+                    reach, origin = stop, start
+        if overlaps(sequence.start(), sequence.end()):
+            # A known copy can overlap a textual identifier inside a digit
+            # group (a bare nine beside another group). Admit those offsets
+            # only where the original identifier span supplies the boundary;
+            # ordinary longer amounts retain the group-edge rule above.
+            positions = [sequence.start() + m.start() for m in re.finditer(r"[0-9]", sequence[0])]
+            for length in runs.lengths:
+                tick()
+                if length <= 0 or length > len(digits):
+                    continue
+                checked = 0
+                for i in range(bisect_right(ends, sequence.start()),
+                               bisect_left(starts, sequence.end())):
+                    tick()
+                    # Bound starts by overlap BEFORE copying/hashing a run.
+                    # A short identifier beside a long numeric token supplies
+                    # only a few windows, even when another known comb is long.
+                    first = max(checked, bisect_left(positions, spans[i][0]) - length + 1, 0)
+                    last = min(bisect_left(positions, spans[i][1]) - 1, len(digits) - length)
+                    for start in range(first, last + 1):
+                        tick()
+                        stop = start + length
+                        if start in group_at and stop in group_at:
+                            continue
+                        value = digits[start:stop]
+                        if value in runs.spelling:
+                            found.append((positions[start], positions[stop - 1] + 1, value))
+                    checked = max(checked, last + 1)
     for match in _ID_SPLIT_VALUE.finditer(text):
         digits = re.sub(r"[^0-9]", "", match[0])
         if digits in runs.spelling:
             found.append((match.start(), match.end(), digits))
+    found.extend((start, end, re.sub(r"[^0-9]", "", text[start:end])) for start, end in spans)
+    # Count once across the text, rather than rescanning a long outer comb
+    # for every aligned nine it contains.
+    digit_offsets, cursor, count = {}, 0, 0
+    for start in sorted({start for start, _, _ in found}):
+        count += sum(c in "0123456789" for c in text[cursor:start])
+        digit_offsets[start] = count
+        cursor = start
     merged: list[tuple[int, int, str]] = []
-    for start, end, digits in sorted(found):
+    for start, end, digits in sorted(set(found), key=lambda item: (item[0], -item[1])):
         if merged and start < merged[-1][1]:
-            low, high, _ = merged[-1]
+            low, high, previous = merged[-1]
+            # Identical matches and aligned dependents describe the same
+            # boundaries. An offset overlap cannot keep either last four.
+            if digits and previous and end <= high and len(digits) % 9 == len(previous) % 9 == 0:
+                if (digit_offsets[start] - digit_offsets[low]) % 9 == 0:
+                    continue
             merged[-1] = (low, max(high, end), "")
         else:
             merged.append((start, end, digits))
     return merged
 
 
-def mask_runs(text: str, runs) -> str:
+def mask_runs(text: str, runs, *, _spans=(), tick=lambda: None) -> str:
     """Mask each of `runs` (run texts, or `prepare_runs` of them),
     identifier-shaped text a layout reader found in an identifier label's
     box, wherever its digits occur in `text` however they are spaced, in the
     spelling `mask_ssn` writes."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
+    spelling = {**prepare_runs(text[start:end] for start, end in _spans).spelling, **runs.spelling}
     out, last = [], 0
-    for start, end, digits in _run_spans(text, runs):
-        out += [text[last:start], runs.spelling[digits] if digits else "XXX-XX-XXXX"]
+    for start, end, digits in _run_spans(text, runs, _spans=_spans, tick=tick):
+        out += [text[last:start], spelling[digits] if digits else "XXX-XX-XXXX"]
         last = end
     return "".join(out) + text[last:]
 
 
-def mask_row_runs(cells: list, runs) -> list:
+def mask_row_runs(cells: list, runs, *, _cross_cell_conflicts=False, _spans=(), tick=lambda: None) -> list:
     """`mask_runs` across one table row, whose cells can split a run: Form
     1040's comb boxes come out of a table as "000 | 00 | 1234". Each digit is
     masked in place, a whole nine keeping its last four, so every cell keeps
-    its own text around them."""
+    its own text around them. `mask_table` resolves only conflicts spanning
+    cells first, before a cell's own mask could hide the row's boundaries."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     texts = [cell if isinstance(cell, str) else "" for cell in cells]
     chars = list(" ".join(texts))
-    for start, end, digits in _run_spans("".join(chars), runs):
+    boundaries, offset = [], 0
+    if _cross_cell_conflicts:
+        for text in texts[:-1]:
+            offset += len(text)
+            boundaries.append(offset)
+            offset += 1
+    for start, end, digits in _run_spans("".join(chars), runs, _spans=_spans, tick=tick):
+        if _cross_cell_conflicts:
+            edge = bisect_right(boundaries, start)
+            if digits or edge == len(boundaries) or boundaries[edge] >= end:
+                continue
         positions = [i for i in range(start, end) if chars[i] in "0123456789"]
         whole = bool(digits) and len(positions) % 9 == 0
         for n, i in enumerate(positions):
@@ -501,7 +612,7 @@ def mask_row_runs(cells: list, runs) -> list:
     return out
 
 
-def mask_ssn(value):
+def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: None):
     """Mask every SSN/ITIN shape in extracted document text to `XXX-XX-{last4}`.
 
     The extraction boundary is where this runs — every string
@@ -518,16 +629,28 @@ def mask_ssn(value):
     to text to look for one would change what the worker reads. A cell whose
     COLUMN carries the label is `mask_table`'s case below — it is the one place
     the shape is unambiguous, and the only place a number is masked.
+
+    Optional positional `runs` and original textual spans resolve overlapping
+    copies together, before either can hide the other's boundaries. Label
+    reach still reads the original text. `_governed` includes a table cell's
+    identifier shapes when its label is in another cell.
+    `mask_table` supplies `_original` when its across-cell pass has already
+    masked digits in place, preserving each cell's length and line breaks.
     """
     # Nine bare digits is the shortest maskable shape; every shorter cell
     # (most of a CSV) skips both regex passes.
     if not isinstance(value, str) or len(value) < 9:
         return value
-    out = _mask_under_labels(value)
+    runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
+    if runs is not None:
+        spans = _text_identifier_spans(value, governed=_governed, original=_original)
+        return mask_runs(value, runs, _spans=spans, tick=tick)
+    out = _mask_under_labels(value, original=_original)
     out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
     out = _mask_spaced_after_labels(out)
     out = _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
-    return _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
+    out = _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
+    return out
 
 
 def first_non_finite(node, _path: tuple = ()) -> "str | None":
@@ -573,7 +696,7 @@ def _is_id_label_cell(cell) -> bool:
     return isinstance(cell, str) and _label_ends(cell)
 
 
-def _mask_id_value(cell):
+def _mask_id_value(cell, runs=None, *, tick=lambda: None):
     """Mask every identifier-shaped run in a cell a label GOVERNS.
 
     An integer is masked here and nowhere else. `mask_ssn` leaves a numeric
@@ -592,12 +715,15 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
+    original = text
+    if runs is not None:
+        text = mask_runs(text, runs, _spans=_text_identifier_spans(text, governed=True), tick=tick)
     masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
                                            _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
-    return masked if masked != text else cell
+    return masked if masked != original else cell
 
 
-def mask_table(rows):
+def mask_table(rows, runs=None, *, tick=lambda: None):
     """`mask_ssn` over every cell, plus the labels only the TABLE can see.
 
     Rows of cells in, rows of cells out — every extraction route that returns
@@ -606,23 +732,38 @@ def mask_table(rows):
     sequence is masked as a value, so a malformed table cannot slip past
     untouched.
     """
+    runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
     masked = []
     governed: set = set()
     for row in rows:
+        tick()
         if not isinstance(row, (list, tuple)):
-            masked.append(mask_ssn(row))
+            masked.append(mask_ssn(row, runs, tick=tick))
             continue
-        out = [mask_ssn(cell) for cell in row]
+        labels = [column for column, cell in enumerate(row) if _is_id_label_cell(cell)]
+        cell_governed = governed | {column + 1 for column in labels}
+        spans, offset = [], 0
+        if runs is not None:
+            for column, cell in enumerate(row):
+                if isinstance(cell, str):
+                    spans.extend((offset + start, offset + end) for start, end in
+                                 _text_identifier_spans(cell, governed=column in cell_governed))
+                    offset += len(cell)
+                offset += 1
+        positioned = (mask_row_runs(list(row), runs, _cross_cell_conflicts=True, _spans=spans, tick=tick)
+                      if runs is not None else row)
+        out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None,
+                        _governed=column in cell_governed, tick=tick)
+               for column, (cell, original) in enumerate(zip(positioned, row))]
         # The columns a PREVIOUS row's label governs, before this row's own
         # labels are read: a header governs what is under it, never itself.
         for column in governed:
             if column < len(out):
-                out[column] = _mask_id_value(out[column])
-        for column, cell in enumerate(row):
-            if _is_id_label_cell(cell):
-                governed.add(column)
-                if column + 1 < len(out):
-                    out[column + 1] = _mask_id_value(out[column + 1])
+                out[column] = _mask_id_value(out[column], runs, tick=tick)
+        for column in labels:
+            governed.add(column)
+            if column + 1 < len(out):
+                out[column + 1] = _mask_id_value(out[column + 1], runs, tick=tick)
         masked.append(out)
     return masked
 

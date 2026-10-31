@@ -1971,6 +1971,315 @@ class TestMaskingByPosition:
         row = " ".join(_ssn("") + second)
         assert mask_runs(row, {row, " ".join(_ssn(""))}) == f"{MASKED} XXX-XX-1111"
 
+    @pytest.mark.parametrize("offset", range(10))
+    @pytest.mark.parametrize("gap", [" ", "\t", "\u00a0"])
+    @pytest.mark.parametrize("grouped", [False, True])
+    def test_a_contained_run_keeps_digits_only_at_a_nines_boundary(self, offset, gap, grouped):
+        """AA100: an offset copy must not reveal a fifth digit alongside
+        the identifier's own last four. Aligned dependents keep theirs.
+        Count DIGITS, not the whitespace groups in a different spelling."""
+        from agents.lib.secure_fs import mask_row_runs, mask_runs, prepare_runs
+        digits = "2" * offset + _ssn("") + "3" * (9 - offset)
+        comb = " ".join(digits)
+        runs = prepare_runs({comb, _ssn(" ")})
+        groups = (["2" * offset, "000", "00", LAST4, "3" * (9 - offset)]
+                  if grouped else list(digits))
+        groups = [group for group in groups if group]
+        row = gap.join(groups)
+        aligned = offset % 9 == 0
+        expected = " ".join(f"XXX-XX-{digits[i + 5:i + 9]}" for i in (0, 9)) if aligned else "XXX-XX-XXXX"
+        assert mask_runs(f"Before {row}; Copy {_ssn(' ')}; Wages 850.00", runs) == (
+            f"Before {expected}; Copy {MASKED}; Wages 850.00")
+        assert mask_runs(digits, runs) == expected
+        cells = ["SSN", *groups, None, "Wages 850.00"]
+        masked = mask_row_runs(cells, runs)
+        assert masked[0] == "SSN" and masked[-2:] == [None, "Wages 850.00"]
+        kept, count = [], 0
+        for group in groups:
+            kept.append("".join(digit if aligned and (count + n) % 9 >= 5 else "X"
+                                for n, digit in enumerate(group)))
+            count += len(group)
+        assert masked[1:-2] == kept
+        if not aligned:
+            assert mask_table([cells], runs) == [masked]
+
+    def test_positional_masking_preserves_the_original_labels_reach(self):
+        """A bare 18-digit value does not fill its label's box in text.
+        Masking it first would make it a value and leave the next row raw."""
+        digits = "222" + _ssn("") + "333333"
+        runs = {" ".join(digits), _ssn(" ")}
+        assert mask_ssn(f"SSN {digits}\n{_SECOND}", runs) == "SSN XXX-XX-XXXX\nXXX-XX-1111"
+        figure = "".join(("850", "00", "2026"))
+        row = " ".join(digits)
+        assert mask_ssn(f"SSN {row}; Wages {figure}", runs) == f"SSN XXX-XX-XXXX; Wages {figure}"
+        assert mask_ssn(f"SSN XXX-XX-XXXX; Wages {figure}") == f"SSN XXX-XX-XXXX; Wages {figure}"
+        itin = _itin().replace("-", "")
+        assert mask_table([["SSN"], [int(itin)]], {itin}) == [["SSN"], [MASKED]]
+
+    @pytest.mark.parametrize("offset", range(10))
+    @pytest.mark.parametrize("layout", ["above", "beside", "cell_above", "cell_beside", "column", "right"])
+    def test_a_text_governed_comb_resolves_a_known_subrun_before_rewriting(self, offset, layout):
+        """A positional reader may know only a nine inside a textual comb.
+        Its replacement must not fragment the original eighteen digits into
+        short, unmasked pieces, or change which last fours are safe to keep."""
+        digits = _ssn("") + _SECOND
+        comb = " ".join(digits)
+        runs = {" ".join(digits[offset:offset + 9])}
+        expected = f"{MASKED} XXX-XX-1111" if offset % 9 == 0 else "XXX-XX-XXXX"
+        if layout in {"above", "beside", "cell_above", "cell_beside"}:
+            prefix = "SSN\n" if layout.endswith("above") else "SSN "
+            raw = f"{prefix}{comb}; Wages 850.00"
+            masked = f"{prefix}{expected}; Wages 850.00"
+            if layout.startswith("cell_"):
+                assert mask_table([[raw]], runs) == [[masked]]
+            else:
+                assert mask_ssn(raw, runs) == masked
+        elif layout == "column":
+            assert mask_table([["SSN", "Wages"], [comb, "850.00"]], runs) == [
+                ["SSN", "Wages"], [expected, "850.00"]]
+        else:
+            assert mask_table([["SSN", comb, "850.00"]], runs) == [["SSN", expected, "850.00"]]
+
+    def test_a_cells_textual_comb_survives_an_overlapping_run_across_cells(self):
+        """The across-cell pass must see the cell's text-governed comb
+        before replacing conflicting runs that start inside it."""
+        digits = _ssn("") + _SECOND + "222"
+        runs = {" ".join(digits[3:21]), " ".join(digits[6:15])}
+        row = ["SSN " + " ".join(digits[:18]), " ".join(digits[18:]), "Wages 850.00"]
+        assert mask_table([row], runs) == [["SSN " + " ".join("X" * 18), "X X X", "Wages 850.00"]]
+
+    @pytest.mark.parametrize("sep,side,layout", [
+        (sep, side, layout)
+        for sep in ("", " ", "\t", "\u00a0", "-", ".", "/", " - ", " . ", " / ")
+        for side in ("before", "after")
+        for layout in ("above", "beside", "cell_above", "cell_beside", "column", "right")
+        # A same-line label does not govern past an intervening number.
+        if side == "after" or layout not in {"beside", "cell_beside"} or sep in {"-", ".", "/"}
+    ])
+    def test_non_comb_identifiers_resolve_overlaps_before_positional_rewriting(self, sep, side, layout):
+        """A known nine overlaps an original 3-2-4 identifier. Masking
+        either one first would fragment the other and expose its digits."""
+        value = _ssn(sep)
+        if side == "after":
+            raw = value + " 22222"
+            copy = LAST4 + "22222"
+        else:
+            raw = "222222 " + value
+            copy = "222222" + _ssn("")[:3]
+        runs = {copy}
+        expected = "XXX-XX-XXXX"
+        if layout in {"above", "beside", "cell_above", "cell_beside"}:
+            prefix = "SSN\n" if layout.endswith("above") else "SSN "
+            original = f"{prefix}{raw}; Wages 850.00"
+            masked = f"{prefix}{expected}; Wages 850.00"
+            if layout.startswith("cell_"):
+                assert mask_table([[original]], runs) == [[masked]]
+            else:
+                assert mask_ssn(original, runs) == masked
+        elif layout == "column":
+            assert mask_table([["SSN", "Wages"], [raw, "850.00"]], runs) == [
+                ["SSN", "Wages"], [expected, "850.00"]]
+        else:
+            assert mask_table([["SSN", raw, "850.00"]], runs) == [["SSN", expected, "850.00"]]
+
+    @pytest.mark.parametrize("sep", ["", " ", "-", " - ", ".", "/"])
+    @pytest.mark.parametrize("layout", ["above", "beside", "column", "right"])
+    def test_non_comb_identifier_conflicts_across_table_cells(self, sep, layout):
+        value = _ssn(sep)
+        copy = LAST4 + "22222"
+        prefix = "SSN\n" if layout == "above" else "SSN " if layout == "beside" else ""
+        row = [prefix + value, "22222", "Wages 850.00"]
+        expected = [prefix + re.sub(r"[0-9]", "X", value), "XXXXX", "Wages 850.00"]
+        if layout == "column":
+            header = ["SSN", "Other", "Wages"]
+            assert mask_table([header, row], {copy}) == [header, expected]
+        elif layout == "right":
+            assert mask_table([["SSN", *row]], {copy}) == [["SSN", *expected]]
+        else:
+            assert mask_table([row], {copy}) == [expected]
+
+    @pytest.mark.parametrize("sep", ["-", " ", " - "])
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    @pytest.mark.parametrize("side", ["before", "after"])
+    def test_pdf_non_comb_identifier_outside_positional_reach_preserves_its_span(self, tmp_path, sep, route, side):
+        from agents.lib.parse_utils import _governed_runs
+        import pdfplumber
+
+        value = _ssn(sep)
+        raw = value + " 22222" if side == "after" else "222222 " + value
+        copy = LAST4 + "22222" if side == "after" else "222222" + _ssn("")[:3]
+        pdf = _draw(tmp_path / "form.pdf", [
+            (36, 100, 9, "SSN"), (300, 116, 9, raw),
+            (450, 116, 9, "Wages 850.00"), (36, 200, 9, f"SSN {copy}")])
+        with pdfplumber.open(str(pdf)) as document:
+            runs = _governed_runs(document.pages[0].extract_words())
+            assert runs and {re.sub(r"[^0-9]", "", run) for run in runs} == {copy}
+        extracted = self._extract(route, pdf, tmp_path)[0]
+        text = extracted if route == "extract_pdf_text" else "\n".join(word["text"] for word in extracted)
+        assert "XXX-XX-XXXX Wages 850.00" in text.splitlines()
+        assert f"SSN XXX-XX-{copy[5:]}" in text.splitlines()
+
+    @pytest.mark.parametrize("sep", ["", " ", "-", " - "])
+    def test_textual_identifier_evidence_does_not_mask_unrelated_numeric_copies(self, sep):
+        """Textual span protection must not turn other unlabeled copies
+        into positional evidence, including amounts and routing numbers."""
+        raw = f"SSN {_ssn(sep)}\nAmount {_ssn('')}; Routing {_ssn(' ')}"
+        assert mask_ssn(raw, {_SECOND}) == mask_ssn(raw)
+        assert mask_ssn(raw, set()) == mask_ssn(raw)
+
+    @pytest.mark.parametrize("size", [9000, 18000])
+    @pytest.mark.parametrize("side", ["before", "after"])
+    @pytest.mark.parametrize("table", [False, True])
+    def test_long_numeric_tokens_only_probe_windows_touching_an_identifier(self, size, side, table):
+        """A known long comb elsewhere on the page must not cause a long
+        substring copy/hash at every offset of an unrelated numeric token.
+        Count probes instead of relying on a machine-dependent time limit."""
+        from agents.lib.secure_fs import Runs, prepare_runs
+
+        class Probes(dict):
+            long = 0
+
+            def __contains__(self, value):
+                if len(value) == size:
+                    self.long += 1
+                    assert self.long <= 50, "unbounded long-token substring probes"
+                return super().__contains__(value)
+
+        comb = " ".join("2" * size)
+        prepared = prepare_runs({comb, _ssn(" ")})
+        probes = Probes(prepared.spelling)
+        runs = Runs(prepared.lengths, probes)
+        token = "3" * (size * 2)
+        raw = f"{token} {_ssn('')}" if side == "before" else f"{_ssn('')} {token}"
+        safe = f"{token} {MASKED}" if side == "before" else f"{MASKED} {token}"
+        if table:
+            result = mask_table([["SSN"], [comb], ["SSN"], [raw]], runs)
+            assert result[-1][0] == safe
+        else:
+            result = mask_ssn(f"SSN {comb}\nSSN\n{raw}", runs)
+            assert result.splitlines()[-1] == safe
+        assert probes.long > 0, "the known long run must participate"
+
+    def test_the_deadline_is_checked_between_interior_run_probes(self):
+        from agents.lib.parse_utils import ParseBudgetError
+        from agents.lib.secure_fs import Runs, prepare_runs
+
+        class Probes(dict):
+            long = 0
+
+            def __contains__(self, value):
+                if len(value) == 999:
+                    self.long += 1
+                return super().__contains__(value)
+
+        prepared = prepare_runs({" ".join("2" * 999), _ssn(" ")})
+        probes = Probes(prepared.spelling)
+
+        def tick():
+            if probes.long:
+                raise ParseBudgetError("interior search expired")
+
+        with pytest.raises(ParseBudgetError, match="interior search expired"):
+            mask_ssn(f"SSN {_ssn('')} " + "3" * 2000,
+                     Runs(prepared.lengths, probes), tick=tick)
+        assert probes.long == 1, "no second long substring is copied after expiry"
+
+    @pytest.mark.parametrize("route,table_pass", [
+        ("extract_pdf_text", "native"), ("extract_pdf_words", "native"), ("identity_words", "native"),
+        ("extract_tables", "native"), ("extract_tables", "positional")])
+    def test_pdf_routes_stop_inside_masking_when_the_deadline_expires(self, tmp_path, monkeypatch, route, table_pass):
+        """Expire the real extraction budget DURING the run search. A final
+        page check after masking finishes would already have paid its cost."""
+        from agents.lib import parse_utils, secure_fs
+        pdf = _draw(tmp_path / "form.pdf", [(36, 100, 9, f"SSN {_ssn(' ')}")])
+        state = {"ticks": 0, "expired": False, "returned_after_expiry": False}
+        real_search = secure_fs._run_spans
+
+        def search(text, runs, *, tick=lambda: None, **kwargs):
+            def advance():
+                state["ticks"] += 1
+                if state["ticks"] >= 3:
+                    state["expired"] = True
+                tick()
+
+            result = real_search(text, runs, tick=advance, **kwargs)
+            state["returned_after_expiry"] |= state["expired"]
+            return result
+
+        monkeypatch.setattr(secure_fs, "_run_spans", search)
+        monkeypatch.setattr(parse_utils.time, "monotonic", lambda: 1000.0 if state["expired"] else 0.0)
+        if route == "extract_tables":
+            # Keep the real PDF reader and budget; supply a table at the
+            # extraction boundary so both masking passes run deterministically.
+            import pdfplumber.page
+            monkeypatch.setattr(pdfplumber.page.Page, "extract_tables",
+                                lambda self: [[['SSN', _ssn(' ')]]])
+            if table_pass == "positional":
+                monkeypatch.setattr(parse_utils, "mask_table", lambda rows, runs, **kwargs: rows)
+            call = lambda: parse_utils.extract_tables(str(pdf), workspace=str(tmp_path))  # noqa: E731
+        else:
+            call = lambda: self._extract(route, pdf, tmp_path)  # noqa: E731
+        with pytest.raises(parse_utils.ParseBudgetError, match="still running"):
+            call()
+        assert state["ticks"] >= 3
+        assert not state["returned_after_expiry"], "the run search finished beyond its deadline"
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
+    @pytest.mark.parametrize("layout", ["above", "beside"])
+    @pytest.mark.parametrize("offset", [0, 3, 9])
+    def test_pdf_textual_comb_outside_positional_reach_keeps_its_boundaries(self, tmp_path, route, layout, offset):
+        from agents.lib.parse_utils import _governed_runs
+        import pdfplumber
+
+        digits = _ssn("") + _SECOND
+        comb = " ".join(digits)
+        copy = digits[offset:offset + 9]
+        pdf = _draw(tmp_path / "form.pdf", [
+            (36, 116 if layout == "beside" else 100, 9, "SSN"),
+            (300, 116, 9, comb),
+            (450, 116, 9, "Wages 850.00"),
+            (36, 200, 9, f"SSN {' '.join(copy)}")])
+        with pdfplumber.open(str(pdf)) as document:
+            # This is deliberately TEXT-only governance of the long comb;
+            # the page's positional evidence covers only the separate copy.
+            runs = _governed_runs(document.pages[0].extract_words())
+            assert runs and {"".join(c for c in run if c.isdigit()) for run in runs} == {copy}
+        extracted = self._extract(route, pdf, tmp_path)[0]
+        text = extracted if route == "extract_pdf_text" else "\n".join(word["text"] for word in extracted)
+        lines = text.splitlines()
+        expected = f"{MASKED} XXX-XX-1111" if offset % 9 == 0 else "XXX-XX-XXXX"
+        assert ("SSN " if layout == "beside" else "") + expected + " Wages 850.00" in lines
+        assert f"SSN XXX-XX-{copy[5:]}" in lines
+
+    @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+    @pytest.mark.parametrize("layout", ["far", "above", "beside", "column"])
+    def test_a_governed_comb_containing_an_offset_copy_keeps_no_digits(self, tmp_path, route, layout):
+        """Both positional and textual labels must see the offset conflict
+        before masking nines. The separate SSN starts three digits into it."""
+        digits = "222" + _ssn("") + "333333"
+        beside = layout == "beside"
+        items = [(36, 116 if beside else 100, 9, "SSN"),
+                 (70 if beside else 36, 116, 9, " ".join(digits)),
+                 (290, 116, 9, "850.00"), (36, 200, 9, f"SSN {_ssn(' ')}")]
+        boxes = [(32, 112, 250, 28), (282, 112, 100, 28)]
+        if layout == "far":
+            items.append((400, 100, 9, "XXX-XX-2026"))
+        elif layout == "column":
+            boxes += [(32, 98, 250, 14), (282, 98, 100, 14)]
+        pdf = _draw(tmp_path / "form.pdf", items, boxes=boxes)
+        extracted = self._extract(route, pdf, tmp_path)
+        if route == "extract_pdf_text":
+            assert "XXX-XX-XXXX" in extracted[0] and MASKED in extracted[0]
+            assert f"XXX-XX-{digits[5:9]}" not in extracted[0]
+        elif route in {"extract_pdf_words", "identity_words"}:
+            text = " ".join(word["text"] for word in extracted[0])
+            assert "XXX-XX-XXXX" in text and MASKED in text
+            assert f"XXX-XX-{digits[5:9]}" not in text
+        else:
+            row = extracted[0][0][-1]
+            assert row[0] == ("SSN " if beside else "") + "XXX-XX-XXXX"
+            assert row[1] == "850.00"
+
     def test_mask_runs_masks_a_run_however_it_is_spaced(self):
         from agents.lib.secure_fs import mask_runs
         comb = " ".join(_ssn(""))
