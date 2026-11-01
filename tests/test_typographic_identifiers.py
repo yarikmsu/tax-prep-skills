@@ -126,13 +126,20 @@ def dash_font():
     import reportlab
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    font = TTFont("AA101Dash", str(Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"))
+    path = str(Path(reportlab.__file__).parent / "fonts" / "Vera.ttf")
+    # Reproduce a full run's ordering: the PDF renderer registers Vera first.
+    # ReportLab aliases fonts by face name, even with different fontName keys,
+    # so our modified face must have its own identity to retain the new cmap.
+    pdfmetrics.registerFont(TTFont("AA101UnmodifiedVera", path))
+    font = TTFont("AA101Dash", path)
+    font.face.name = b"AA101DashFace"
     for mark in MARKS:
         code = ord(mark)
         if code not in font.face.charToGlyph:
             font.face.charToGlyph[code] = font.face.charToGlyph[ord("-")]
             font.face.charWidths[code] = font.face.charWidths[ord("-")]
     pdfmetrics.registerFont(font)
+    assert pdfmetrics.getFont(font.fontName) is font
     return font.fontName
 
 
