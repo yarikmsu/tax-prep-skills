@@ -100,18 +100,24 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # array out of that script so a family added THERE and not here fails too. A
 # prose claim of parity is what let the AWS-secret family sit in the detector
 # alone; the test is the claim now.
-# The same mark at both group edges. PDF text and copied cells can carry a
-# typographic hyphen, dash or minus rather than ASCII "-". Keep the marks in
-# one place so diagnostic redaction and document masking recognize them alike.
-_SSN_MARKS = "-./\u2010\u2011"
-_ID_MARKS = _SSN_MARKS + "\u2012\u2013\u2014\u2212"
-_ID_TYPOGRAPHIC_MARK = re.compile("[" + re.escape(_ID_MARKS[3:]) + "]")
+# PDF text and copied cells can carry a typographic mark rather than ASCII "-".
+# Keep the marks in one place so diagnostic redaction and document masking
+# recognize them alike. The hyphens spell nothing but a hyphen: soft, Unicode,
+# non-breaking, small and fullwidth. The dashes can also spell a range or a
+# subtraction: figure, en, em, horizontal bar, small em, a hyphen bullet and the
+# minus signs.
+_ID_HYPHENS = "\u00ad\u2010\u2011\ufe63\uff0d"
+_ID_DASHES = "\u02d7\u2012\u2013\u2014\u2015\u2043\u2212\u2796\ufe58"
+_ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_HYPHENS}{_ID_DASHES}]")
+_ID_DASH = f"[-{_ID_HYPHENS}{_ID_DASHES}]"
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
-_ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
-                     for mark in _ID_MARKS)
+# Any two dashes, since an OCR layer can read each edge differently; a dot or a
+# slash only with itself, as a date prints.
+_ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GAP}"
+                     for mark in (_ID_DASH, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMS = "(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
-                              for mark in _SSN_MARKS) + ")"
+                              for mark in "-./" + _ID_HYPHENS) + ")"
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
@@ -178,11 +184,11 @@ def redact(text) -> str:
 # masker that fires there corrupts an amount the return is computed from — the
 # over-statement direction AGENTS.md §4 makes a hard error.
 #
-# Only the hyphen (ASCII, U+2010 or U+2011), dot and slash spellings mask
-# UNLABELED. Figure/en/em dashes and a minus can also spell a numeric range
-# or subtraction without spaces, so they need a label, even when unsplit.
-# They never tell a label its value is already there: a figure joined to a
-# label's row must not expose the identifier printed under it. The
+# Only the hyphen (`_ID_HYPHENS` too), dot and slash spellings mask UNLABELED.
+# `_ID_DASHES` can also spell a numeric range or subtraction without spaces, so
+# they need a label, even when unsplit. No new mark tells a label its value is
+# already there: a figure joined to a label's row must not expose the
+# identifier printed under it. The
 # whitespace spelling and the bare nine-digit run are masked only under an
 # identifier label, as is a delimited one an OCR layer split (`_ID_SPLIT`),
 # because each is a shape a document prints for other things: nine bare
@@ -286,8 +292,8 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 # zero between two figures, a subtraction. Nor does it tell a label its
 # value is there (`_ID_ADJACENT_VALUE`): straight after a label it may
 # still be a figure page text joined to it, and the SSN printed under the
-# label would print whole. The same mark twice, and no capture of its own,
-# so the last four stays the pattern's one group.
+# label would print whole. No capture of its own, so the last four stays the
+# pattern's one group.
 # `_ID_SPLIT` is shared with the diagnostic redactor above: a split SSN in
 # a rejected filename must not print in the warning that rejects it.
 # What a label governs: the whitespace spelling, or a delimited one split.
@@ -296,14 +302,19 @@ _ID_GOVERNED = re.compile(
 _ID_SPLIT_VALUE = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
+# Dashes set tight reach as far as the bare spelling does: "Social security
+# number (SSN): ...", "SSN no.: ...". Set apart they could be a column's figures
+# (`_ID_LABELED_SPLIT` below); tight, no amount or date prints that shape.
 _ID_LABELED_SAME_LINE = re.compile(
-    rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
+    rf"({_ID_LABEL}[^0-9\n]{{0,24}})(?<![0-9])[0-9]{{3}}"
+    rf"(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_DASH}[0-9]{{2}}{_ID_DASH})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
-# spaces and one ":", "#" or "." between: page text joins a label to columns
-# across the page ("SSN Dividends 250 - 15 - 1200"), and prose names a label
-# before a figure ("fee per ITIN: $125.50. 2025", "SSN ($100- 25- 1000)").
+# spaces, the ")" closing "social security number (SSN)" and up to two of ":",
+# "#" or "." between: page text joins a label to columns across the page ("SSN
+# Dividends 250 - 15 - 1200"), and prose names a label before a figure ("fee
+# per ITIN: $125.50. 2025", "SSN ($100- 25- 1000)").
 _ID_LABELED_SPLIT = re.compile(
-    rf"({_ID_LABEL}[^\S\n]*(?:[:#.][^\S\n]*)?)(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
+    rf"({_ID_LABEL}[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*){{0,2}})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
     re.IGNORECASE)
 # A value is the label's own only straight after it: spaces, the ")"
 # closing "social security number (SSN)", and one ":", "#" or ".". Page

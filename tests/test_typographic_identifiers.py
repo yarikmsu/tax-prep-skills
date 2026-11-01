@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from agents.lib import parse_utils as P
-from agents.lib.secure_fs import identifier_spans, mask_ssn, mask_table, names_an_identifier, redact
+from agents.lib.secure_fs import identifier_spans, mask_ssn, mask_table, names_an_identifier, redact, split_spans
 from tests.test_parse_utils import LAST4, MASKED, ROUTING, _ssn, _workbook
 
-HYPHENS = ("\u2010", "\u2011")
-AMBIGUOUS = ("\u2012", "\u2013", "\u2014", "\u2212")
+HYPHENS = ("\u00ad", "\u2010", "\u2011", "\ufe63", "\uff0d")
+AMBIGUOUS = ("\u02d7", "\u2012", "\u2013", "\u2014", "\u2015", "\u2043", "\u2212", "\u2796", "\ufe58")
 MARKS = HYPHENS + AMBIGUOUS
 
 
@@ -38,7 +38,7 @@ def test_typographic_hyphens_mask_without_labels(mark, runs):
 def test_ranges_and_subtractions_need_a_label(mark, runs):
     for gap in ("", " ", "\u00a0"):
         value = f"125{gap}{mark}{gap}50{gap}{mark}{gap}2025"
-        for text in (f"Range {value}", f"Loss ${value}", f"SSN Dividends {value}"):
+        for text in (f"Range {value}", f"Loss ${value}") + ((f"SSN Dividends {value}",) if gap else ()):
             assert mask_ssn(text, runs) == text
             assert mask_table([[text]], runs) == [[text]]
         # Even straight after SSN this ambiguous figure cannot close the box.
@@ -50,10 +50,43 @@ def test_ranges_and_subtractions_need_a_label(mark, runs):
 
 @pytest.mark.parametrize("mark", MARKS)
 @pytest.mark.parametrize("runs", [None, ()])
+@pytest.mark.parametrize("label", ["Social security number (SSN): ", "SSN (primary): ", "SSN no.: ", "Taxpayer SSN - ",
+                                   "SSN is ", "Recipient's TIN - ", "ITIN #: ", "SSN on file: "])
+def test_a_tight_mark_reaches_as_far_as_the_bare_spelling(mark, runs, label):
+    # Label wording before the value is the commonest same-line layout.
+    assert mask_ssn(f"{label}{_ssn(mark)}", runs) == f"{label}{MASKED}"
+    assert mask_table([[f"{label}{_ssn(mark)}"]], runs) == [[f"{label}{MASKED}"]]
+
+
+@pytest.mark.parametrize("mark", ["-", *MARKS])
+@pytest.mark.parametrize("runs", [None, ()])
+@pytest.mark.parametrize("label", ["Social security number (SSN): ", "ITIN #: ", "SSN.: "])
+def test_a_split_value_passes_a_closing_parenthesis_and_two_marks(mark, runs, label):
+    assert mask_ssn(f"{label}{_ssn(' ' + mark + ' ')}", runs) == f"{label}{MASKED}"
+
+
+@pytest.mark.parametrize("runs", [None, ()])
+@pytest.mark.parametrize("first, second", [("\u2013", "-"), ("-", "\u2013"), ("\u2013", "\u2014"),
+                                           ("\u2011", "-"), ("\u2212", "\u2013"), ("\u00ad", "\u2010")])
+def test_two_different_dashes_mask_under_a_label(runs, first, second):
+    # An OCR layer reads each edge on its own.
+    for gap in ("", " "):
+        value = f"000{gap}{first}{gap}00{gap}{second}{gap}{LAST4}"
+        assert mask_ssn(f"SSN: {value}", runs) == f"SSN: {MASKED}"
+        assert mask_ssn(f"SSN\n{value}", runs) == f"SSN\n{MASKED}"
+        assert mask_table([["SSN", value]], runs) == [["SSN", MASKED]]
+        assert redact(value) == "[REDACTED]"
+
+
+@pytest.mark.parametrize("mark", MARKS)
+@pytest.mark.parametrize("runs", [None, ()])
 def test_new_spellings_do_not_close_a_labels_reach(mark, runs):
     text = f"SSN {_ssn(mark)}\n{_ssn('')}"
     assert mask_ssn(text, runs).endswith(f"\n{MASKED}")
     assert identifier_spans(f"SSN {_ssn(mark)}")[0] == [(0, 3, False)]
+    # Neither is it spelled for a positional reader, which reads it as a run instead.
+    assert identifier_spans(f"SSN {_ssn(mark)}")[2] == []
+    assert split_spans(f"SSN {_ssn(mark)}") == [(4, 4 + len(_ssn(mark)))]
     assert mask_table([[f"SSN {_ssn(mark)}"], [_ssn("")]], runs)[1] == [MASKED]
 
 
@@ -158,7 +191,17 @@ def _read(route, path, workspace):
     result = reader(str(path), workspace=str(workspace), **options)
     if route in {"extract_pdf_words", "identity_words"}:
         return "\n".join(" ".join(word["text"] for word in words) for words in result.values())
-    return str(result)
+    return "\n".join(_strings(result))
+
+
+def _strings(node):
+    # Not str(result): a list's repr escapes U+00AD, so a whole SSN would pass as absent.
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        yield from (text for child in node.values() for text in _strings(child))
+    elif isinstance(node, (list, tuple)):
+        yield from (text for child in node for text in _strings(child))
 
 
 @pytest.mark.parametrize("mark", MARKS)
@@ -188,8 +231,9 @@ def test_every_extraction_route_masks_typographic_separators(tmp_path, dash_font
 
 
 @pytest.mark.parametrize("mark", MARKS)
+@pytest.mark.parametrize("gap", ["", " "])
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
-def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, mark, route):
+def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, mark, gap, route):
     from reportlab.pdfgen import canvas
     import pdfplumber
     path = tmp_path / "positioned.pdf"
@@ -201,7 +245,7 @@ def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, 
     page.setFont(dash_font, 5)
     page.drawString(570, 678, "Other")
     page.setFont(dash_font, 9)
-    value = _ssn(" " + mark + " ")
+    value = _ssn(gap + mark + gap)
     page.drawString(36, 667, value)
     page.drawString(180, 667, ROUTING)
     for x in (32, 164, 298):
@@ -211,7 +255,8 @@ def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, 
     page.save()
     with pdfplumber.open(path) as document:
         raw = document.pages[0].extract_text()
-    assert value in mask_ssn(raw), "this fixture must need the positional reader"
+    # Except a hyphen set tight, which masks with no label at all.
+    assert (mark in HYPHENS and not gap) or value in mask_ssn(raw), "this fixture must need the positional reader"
     out = _read(route, path, tmp_path)
     assert value not in out and MASKED in out
     assert ROUTING in out
@@ -226,5 +271,5 @@ def test_positional_evidence_masks_other_copies_with_typographic_separators(mark
 
 @pytest.mark.parametrize("mark", MARKS)
 def test_mismatched_marks_and_vertical_gaps_stay_out_of_scope(mark):
-    for text in (f"SSN 000{mark}00/{LAST4}", f"SSN 000{mark}\n00{mark}{LAST4}"):
+    for text in (f"SSN 000{mark}00/{LAST4}", f"SSN 000{mark}\n00{mark}{LAST4}", f"SSN 000.00/{LAST4}"):
         assert mask_ssn(text) == text
