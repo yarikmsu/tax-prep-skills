@@ -60,7 +60,7 @@ def test_a_figure_on_a_labels_row_does_not_fill_its_box(mark, gap, runs):
 def test_an_unrelated_dash_takes_the_source_resolver():
     # A rewrite beside a glued label would hide it from the comb after it.
     text = f"Social security number{_ssn('-')} / {' '.join('000' + '33' + '4444')}\n2025\u20132026"
-    assert mask_ssn(text).endswith(f"XXX-XX-4444\n2025\u20132026")
+    assert mask_ssn(text).endswith("XXX-XX-4444\n2025\u20132026")
 
 
 @pytest.mark.parametrize("mark", ["-", *MARKS])
