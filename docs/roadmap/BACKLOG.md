@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA101** — mask an SSN spelled with a typographic dash. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99. | AA101 prints a whole SSN today, under its label too, wherever a form or statement sets it with a typographic dash. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA102** — mask the identifier spellings AA101 left: a comb with printed marks, marks outside its class, invisible characters, and the PII gate's own patterns. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101. | AA102's comb with printed marks prints a whole SSN under its label today, if a filled form extracts that way. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -199,14 +199,18 @@ Trigger and range behavior is documented in
   gate closed until the missing covered-year inputs and the planner's CA
   contracts can be reviewed; do not derive them from the announced inflation
   percentage or substitute TY2025 values. Found by the same review.
-- **AA101 (P1, S): Mask an SSN spelled with a typographic dash.** `_SSN_DELIMS`
-  and `_ID_SPLIT` take only `-`, `.` and `/`, so an SSN set with an en dash, an
-  em dash, a minus sign or a non-breaking hyphen prints all nine digits on the
-  text route, directly under its label too. Confirmed on a drawn PDF; check the
-  other routes. Found by #99's review; main has it. Widening a value shape can unmask,
-  because the same patterns tell a label its value is there, so measure it
-  against the fuzz corpora and the IRS PDFs, and keep any ambiguous spelling
-  label-only. A date range or a figure may use the same dashes.
+- **AA102 (P2, S): Mask the identifier spellings AA101 left.** Each prints all
+  nine digits on main, found by #101's review. A comb with printed marks between
+  its groups, `0 0 0 - 1 1 - 2 2 2 2`, under its label on the text, words and
+  identity routes, and the likeliest to be real: first find whether a filled form
+  extracts that way. Marks outside AA101's class (U+2500, U+30FC and others), a
+  doubled mark, zero-width characters between digits, fullwidth digits, and an
+  unmapped glyph's `(cid:N)` in place of a mark, which is untested on a real PDF.
+  A value split across lines. A glued label before a comb, on text with no
+  typographic mark: `mask_ssn` takes the sequential passes there, and the source
+  resolver beat them in every fuzz run but one contrived input, so it could take
+  all text. Separately, `scripts/pre-commit-pii-scan.sh` matches ASCII marks only,
+  so a commit holding a dash-spelled SSN passes the gate.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
@@ -514,7 +518,8 @@ merge.
 | AA96 | #94 | Split runs are positional targets only, never a sign that a label's value is there. Still printing: an unlabelled split. On a tilted page the overlay pass drops a split under a label whole, as on main, so its last four is lost. A split-shaped figure a label governs by position masks as an SSN, and one after a heading wrapped onto "number" makes the heading a label, which then masks nine-digit figures down its column, the safe direction. Two governed runs sharing digits mask whole, their neighbour's digits included. |
 | AA99 | #97 | A run governed on neither the original page nor the cleaned one still prints, as on main. A figure whose digits match a run governed on the original page masks wherever it prints, the safe direction. |
 | AA98 | #96 | A value is a label's own only within `_BESIDE` heights of the label or its dot leader. One further along its row leaves the label governing the line under it, which masks an identifier-shaped figure there, the safe direction. The overlay pass still decides which copies to keep as page text reads labels. |
-| AA100 | #99 | Runs and text rules resolve together on the source; boundaries that disagree keep no digit. That can take digits beside an SSN: a number sharing eight of its digits, or the cents of an amount drawn against its box. An SSN with a typographic dash still prints whole (AA101). |
+| AA101 | #101 | Sixteen marks read as a dash; tight they mask with no label, set apart they need one. A real figure in that tight shape masks, as its hyphen spelling does, and a spaced figure-shaped filename refuses with a rename message. Spellings it left are AA102. |
+| AA100 | #99 | Runs and text rules resolve together on the source; boundaries that disagree keep no digit. That can take digits beside an SSN: a number sharing eight of its digits, or the cents of an amount drawn against its box. An SSN with a typographic dash printed whole until AA101. |
 | AA87 | #74 | Identifiers past its reaches (FTB 3532, Forms 1095-A/B/C, Schedule EIC, Form 8332, IT-201's dependents 6 and 7) are AA89, and an SSN drawn over its own label is AA88; a page that masks its first dependent and prints the next in full still leaks. |
 | AA34 | old #207 | AA23 now supplies provisional QBI when re-pricing §68; legacy or unsupported inputs retain the held path and its caveats. |
 | AA32 | old #202 | an agent that types a household line can type its method too; a receipt binding would close it |
