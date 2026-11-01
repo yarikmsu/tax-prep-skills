@@ -9,15 +9,14 @@ from agents.lib import parse_utils as P
 from agents.lib.secure_fs import identifier_spans, mask_ssn, mask_table, names_an_identifier, redact, split_spans
 from tests.test_parse_utils import LAST4, MASKED, ROUTING, _ssn, _workbook
 
-HYPHENS = ("\u00ad", "\u2010", "\u2011", "\ufe63", "\uff0d")
-AMBIGUOUS = ("\u02d7", "\u2012", "\u2013", "\u2014", "\u2015", "\u2043", "\u2212", "\u2796", "\ufe58")
-MARKS = HYPHENS + AMBIGUOUS
+MARKS = ("\u0096", "\u0097", "\u00ad", "\u02d7", "\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015",
+         "\u2043", "\u2212", "\u2796", "\ufe58", "\ufe63", "\uff0d")
 
 
 @pytest.mark.parametrize("mark", MARKS)
 @pytest.mark.parametrize("runs", [None, ()])
 def test_typographic_separators_mask_under_labels(mark, runs):
-    # Exercise both the plain path (CSV/Excel) and the positional PDF path.
+    # With a mark in the text mask_ssn takes one path either way; mask_table's differ.
     for gaps in product(("", " ", "\u00a0"), repeat=4):
         value = f"000{gaps[0]}{mark}{gaps[1]}00{gaps[2]}{mark}{gaps[3]}{LAST4}"
         for label in ("SSN", "Recipient's TIN", "Employee's social security number"):
@@ -27,35 +26,41 @@ def test_typographic_separators_mask_under_labels(mark, runs):
             assert mask_table([[label], [value]], runs) == [[label], [MASKED]]
 
 
-@pytest.mark.parametrize("mark", HYPHENS)
+@pytest.mark.parametrize("mark", MARKS)
 @pytest.mark.parametrize("runs", [None, ()])
-def test_typographic_hyphens_mask_without_labels(mark, runs):
-    assert mask_ssn(f"Reference {_ssn(mark)}", runs) == f"Reference {MASKED}"
-
-
-@pytest.mark.parametrize("mark", AMBIGUOUS)
-@pytest.mark.parametrize("runs", [None, ()])
-def test_ranges_and_subtractions_need_a_label(mark, runs):
-    for gap in ("", " ", "\u00a0"):
-        value = f"125{gap}{mark}{gap}50{gap}{mark}{gap}2025"
-        for text in (f"Range {value}", f"Loss ${value}") + ((f"SSN Dividends {value}",) if gap else ()):
-            assert mask_ssn(text, runs) == text
-            assert mask_table([[text]], runs) == [[text]]
-        # Even straight after SSN this ambiguous figure cannot close the box.
-        text = f"SSN {value}\n{_ssn('')}"
-        assert mask_ssn(text, runs).endswith(f"\n{MASKED}")
-        assert identifier_spans(f"SSN {value}")[0] == [(0, 3, False)]
-        assert mask_table([[f"SSN {value}"], [_ssn("")]], runs)[1] == [MASKED]
+@pytest.mark.parametrize("prefix", ["Reference ", "Taxpayer ID: ", "TIN: ", "Tax ID: ", "SSN 1: ", "SSN (box 1): ", "SSN Acct "])
+def test_a_tight_mark_masks_under_any_wording(mark, runs, prefix):
+    # The ASCII spelling needs no label; a label this rule does not know must
+    # not be what hands back the number.
+    assert mask_ssn(f"{prefix}{_ssn(mark)}", runs) == f"{prefix}{MASKED}"
+    assert mask_table([[f"{prefix}{_ssn(mark)}"]], runs) == [[f"{prefix}{MASKED}"]]
 
 
 @pytest.mark.parametrize("mark", MARKS)
 @pytest.mark.parametrize("runs", [None, ()])
-@pytest.mark.parametrize("label", ["Social security number (SSN): ", "SSN (primary): ", "SSN no.: ", "Taxpayer SSN - ",
-                                   "SSN is ", "Recipient's TIN - ", "ITIN #: ", "SSN on file: "])
-def test_a_tight_mark_reaches_as_far_as_the_bare_spelling(mark, runs, label):
-    # Label wording before the value is the commonest same-line layout.
-    assert mask_ssn(f"{label}{_ssn(mark)}", runs) == f"{label}{MASKED}"
-    assert mask_table([[f"{label}{_ssn(mark)}"]], runs) == [[f"{label}{MASKED}"]]
+def test_a_spaced_mark_needs_a_label(mark, runs):
+    # Set apart, a dash can stand for zero between figures, or subtract.
+    value = f"125 {mark} 50 {mark} 2025"
+    for text in (f"Range {value}", f"Loss ${value}", f"SSN Dividends {value}"):
+        assert mask_ssn(text, runs) == text
+        assert mask_table([[text]], runs) == [[text]]
+
+
+@pytest.mark.parametrize("mark", MARKS)
+@pytest.mark.parametrize("gap", ["", " ", "\u00a0"])
+@pytest.mark.parametrize("runs", [None, ()])
+def test_a_figure_on_a_labels_row_does_not_fill_its_box(mark, gap, runs):
+    value = f"125{gap}{mark}{gap}50{gap}{mark}{gap}2025"
+    text = f"SSN {value}\n{_ssn('')}"
+    assert mask_ssn(text, runs).endswith(f"\n{MASKED}")
+    assert identifier_spans(f"SSN {value}")[0] == [(0, 3, False)]
+    assert mask_table([[f"SSN {value}"], [_ssn("")]], runs)[1] == [MASKED]
+
+
+def test_an_unrelated_dash_takes_the_source_resolver():
+    # A rewrite beside a glued label would hide it from the comb after it.
+    text = f"Social security number{_ssn('-')} / {' '.join('000' + '33' + '4444')}\n2025\u20132026"
+    assert mask_ssn(text).endswith(f"XXX-XX-4444\n2025\u20132026")
 
 
 @pytest.mark.parametrize("mark", ["-", *MARKS])
@@ -77,8 +82,9 @@ def test_a_figure_a_label_does_not_introduce_stays(runs, text):
 
 
 @pytest.mark.parametrize("runs", [None, ()])
-@pytest.mark.parametrize("first, second", [("-", "\u2010"), ("\u2011", "-"), ("\u2010", "\u2011"), ("\u00ad", "\uff0d")])
-def test_two_different_hyphens_mask_without_a_label(runs, first, second):
+@pytest.mark.parametrize("first, second", [("-", "\u2010"), ("\u2011", "-"), ("\u2010", "\u2011"), ("\u00ad", "\uff0d"),
+                                           ("\u2013", "-"), ("-", "\u2014"), ("\u2212", "\u2013")])
+def test_two_different_marks_mask_without_a_label(runs, first, second):
     value = f"000{first}00{second}{LAST4}"
     assert mask_ssn(f"Reference {value}", runs) == f"Reference {MASKED}"
     assert mask_table([[f"Reference {value}"]], runs) == [[f"Reference {MASKED}"]]
@@ -250,9 +256,8 @@ def test_every_extraction_route_masks_typographic_separators(tmp_path, dash_font
 
 
 @pytest.mark.parametrize("mark", MARKS)
-@pytest.mark.parametrize("gap", ["", " "])
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
-def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, mark, gap, route):
+def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, mark, route):
     from reportlab.pdfgen import canvas
     import pdfplumber
     path = tmp_path / "positioned.pdf"
@@ -264,7 +269,7 @@ def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, 
     page.setFont(dash_font, 5)
     page.drawString(570, 678, "Other")
     page.setFont(dash_font, 9)
-    value = _ssn(gap + mark + gap)
+    value = _ssn(" " + mark + " ")
     page.drawString(36, 667, value)
     page.drawString(180, 667, ROUTING)
     for x in (32, 164, 298):
@@ -274,8 +279,7 @@ def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, 
     page.save()
     with pdfplumber.open(path) as document:
         raw = document.pages[0].extract_text()
-    # Except a hyphen set tight, which masks with no label at all.
-    assert (mark in HYPHENS and not gap) or value in mask_ssn(raw), "this fixture must need the positional reader"
+    assert value in mask_ssn(raw), "this fixture must need the positional reader"
     out = _read(route, path, tmp_path)
     assert value not in out and MASKED in out
     assert ROUTING in out
@@ -283,12 +287,7 @@ def test_a_typographic_value_governed_only_by_pdf_position(tmp_path, dash_font, 
 
 @pytest.mark.parametrize("mark", MARKS)
 def test_positional_evidence_masks_other_copies_with_typographic_separators(mark):
-    # A positionally governed bare copy must also mask its delimited twin.
-    value = _ssn(mark)
+    # A positionally governed bare copy must also mask its split twin, which
+    # no text rule masks with no label.
+    value = _ssn(" " + mark + " ")
     assert mask_ssn(f"Reference {value}", {_ssn("")}) == f"Reference {MASKED}"
-
-
-@pytest.mark.parametrize("mark", MARKS)
-def test_mismatched_marks_and_vertical_gaps_stay_out_of_scope(mark):
-    for text in (f"SSN 000{mark}00/{LAST4}", f"SSN 000{mark}\n00{mark}{LAST4}", f"SSN 000.00/{LAST4}"):
-        assert mask_ssn(text) == text

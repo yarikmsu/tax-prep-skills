@@ -100,24 +100,22 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # array out of that script so a family added THERE and not here fails too. A
 # prose claim of parity is what let the AWS-secret family sit in the detector
 # alone; the test is the claim now.
-# PDF text and copied cells can carry a typographic mark rather than ASCII "-".
-# Keep the marks in one place so diagnostic redaction and document masking
-# recognize them alike. The hyphens spell nothing but a hyphen: soft, Unicode,
-# non-breaking, small and fullwidth. The dashes can also spell a range or a
-# subtraction: figure, en, em, horizontal bar, small em, a hyphen bullet and the
-# minus signs.
-_ID_HYPHENS = "\u00ad\u2010\u2011\ufe63\uff0d"
-_ID_DASHES = "\u02d7\u2012\u2013\u2014\u2015\u2043\u2212\u2796\ufe58"
-_ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_HYPHENS}{_ID_DASHES}]")
-_ID_DASH = f"[-{_ID_HYPHENS}{_ID_DASHES}]"
+# PDF text and copied cells can carry a typographic mark rather than ASCII "-":
+# soft, Unicode, non-breaking, small and fullwidth hyphens, figure, en, em, small
+# em and bar dashes, a hyphen bullet, the minus signs, and U+0096 and U+0097,
+# which are en and em dashes from Windows-1252 read as Latin-1. Keep them in one
+# place so diagnostic redaction and document masking recognize them alike.
+_ID_DASHES = ("\u0096\u0097\u00ad\u02d7\u2010\u2011\u2012\u2013\u2014\u2015\u2043\u2212\u2796"
+              "\ufe58\ufe63\uff0d")
+_ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_DASHES}]")
+_ID_DASH = f"[-{_ID_DASHES}]"
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 # Any two dashes, since an OCR layer can read each edge differently; a dot or a
 # slash only with itself, as a date prints.
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GAP}"
                      for mark in (_ID_DASH, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
-_ID_HYPHEN = f"[-{_ID_HYPHENS}]"
-_SSN_DELIMS = rf"(?:{_ID_HYPHEN}[0-9]{{2}}{_ID_HYPHEN}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
+_SSN_DELIMS = rf"(?:{_ID_DASH}[0-9]{{2}}{_ID_DASH}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
@@ -184,10 +182,11 @@ def redact(text) -> str:
 # masker that fires there corrupts an amount the return is computed from — the
 # over-statement direction AGENTS.md §4 makes a hard error.
 #
-# Only the hyphen (`_ID_HYPHENS` too), dot and slash spellings mask UNLABELED.
-# `_ID_DASHES` can also spell a numeric range or subtraction without spaces, so
-# they need a label, even when unsplit. No new mark tells a label its value is
-# already there: a figure joined to a label's row must not expose the
+# Only the dash (`_ID_DASHES` too), dot and slash spellings mask UNLABELED. Most
+# typographic marks tell a range or a subtraction from a hyphen, but set tight
+# this shape is no range a return reads, and a label the rule does not know
+# ("Taxpayer ID:") must not hand back the number. No new mark tells a label its
+# value is already there: a figure joined to a label's row must not expose the
 # identifier printed under it. The
 # whitespace spelling and the bare nine-digit run are masked only under an
 # identifier label, as is a delimited one an OCR layer split (`_ID_SPLIT`),
@@ -302,12 +301,8 @@ _ID_GOVERNED = re.compile(
 _ID_SPLIT_VALUE = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
-# Dashes set tight reach as far as the bare spelling does: "Social security
-# number (SSN): ...", "SSN no.: ...". Set apart they could be a column's figures
-# (`_ID_LABELED_SPLIT` below); tight, no amount or date prints that shape.
 _ID_LABELED_SAME_LINE = re.compile(
-    rf"({_ID_LABEL}[^0-9\n]{{0,24}})(?<![0-9])[0-9]{{3}}"
-    rf"(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_DASH}[0-9]{{2}}{_ID_DASH})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
+    rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
 # spaces, the ")" closing "social security number (SSN)" and one ":", "#" or
 # "." between: page text joins a label to columns across the page ("SSN
@@ -699,7 +694,7 @@ def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: 
     # (most of a CSV) skips both regex passes.
     if not isinstance(value, str) or len(value) < 9:
         return value
-    # A newly recognized hyphen can be glued to its label. Rewriting it in
+    # A newly recognized dash can be glued to its label. Rewriting it in
     # the sequential passes makes "SSN000..." read as "SSNXXX...", hiding
     # that label from the comb pass. Use the existing source-span resolver
     # for new marks too, even when there is no PDF positional evidence.
