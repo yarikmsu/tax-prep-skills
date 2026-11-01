@@ -105,8 +105,12 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # em and bar dashes, a hyphen bullet, the minus signs, and U+0096 and U+0097,
 # which are en and em dashes from Windows-1252 read as Latin-1. Keep them in one
 # place so diagnostic redaction and document masking recognize them alike.
-_ID_DASHES = ("\u0096\u0097\u00ad\u02d7\u2010\u2011\u2012\u2013\u2014\u2015\u2043\u2212\u2796"
-              "\ufe58\ufe63\uff0d")
+# Unicode 16.0 dash punctuation and horizontal-rule lookalikes are included;
+# the commit gate's byte alternatives are pinned against this set by test.
+_ID_DASHES = ("\u0096\u0097\u00ad\u02d7\u058a\u05be\u1400\u1806\u2010\u2011"
+              "\u2012\u2013\u2014\u2015\u2043\u2212\u23af\u2500\u2501\u2550"
+              "\u2796\u2e17\u2e1a\u2e3a\u2e3b\u2e40\u2e5d\u301c\u3030\u30a0"
+              "\u30fc\ufe31\ufe32\ufe58\ufe63\uff0d\U00010d6e\U00010ead")
 _ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_DASHES}]")
 _ID_DASH = f"[-{_ID_DASHES}]"
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
@@ -116,8 +120,11 @@ _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GA
                      for mark in (_ID_DASH, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMS = rf"(?:{_ID_DASH}[0-9]{{2}}{_ID_DASH}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
+# Diagnostics also hide repeated marks, independently of the extraction
+# rules that decide whether a label's own box is filled.
 _SSN_DELIMITED = re.compile(
-    rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
+    rf"[0-9]{{3}}(?:{_ID_GAP}{_ID_DASH}+{_ID_GAP}[0-9]{{2}}{_ID_GAP}{_ID_DASH}+{_ID_GAP}"
+    rf"|{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")

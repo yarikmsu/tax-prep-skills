@@ -212,6 +212,11 @@ Trigger and range behavior is documented in
   all text. Separately, `scripts/pre-commit-pii-scan.sh` matches ASCII marks only,
   so a commit holding a dash-spelled SSN passes the gate.
 
+  **Implementation pending merge:** [extraction PR #107](https://github.com/yarikmsu/tax-prep-skills/pull/107)
+  has passed CI. The independent commit-gate change is on
+  [`aa102-unicode-pii-gate`](https://github.com/yarikmsu/tax-prep-skills/tree/aa102-unicode-pii-gate).
+  Keep AA102 open until both changes merge; neither is recorded as shipped here.
+
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
