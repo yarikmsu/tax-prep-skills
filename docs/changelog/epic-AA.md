@@ -4604,3 +4604,45 @@ search, which only looks at windows touching a span.
   long as main, still linear, and a comb of one repeated digit is quadratic
   but checks the deadline, so it refuses at the budget. Main has no deadline
   in this search at all.
+
+## AA101 — an SSN set with a typographic dash (#101)
+
+The masker's delimiters were ASCII `-`, `.` and `/`. An SSN set with an en dash,
+an em dash, a minus sign or a non-breaking hyphen printed all nine digits, under
+its label too, on every route. So did the same spelling in a warning about a
+filename and in a worksheet's name.
+
+Sixteen marks now read as a dash: the Unicode, soft, non-breaking, small and
+fullwidth hyphens, the figure, en, em, small em and bar dashes, a hyphen bullet,
+the minus signs, and U+0096 and U+0097, which are en and em dashes from
+Windows-1252 read as Latin-1. Each edge is read alone, since an OCR layer can
+read them differently. Set tight, any of them masks with no label, as `-` does.
+Set apart they need a label, as `-` does, because a dash can stand for zero
+between figures.
+
+- A new mark never tells a label its box is filled. `_ID_FILLED_DELIMITED` stays
+  ASCII, or a figure joined to a label's row would expose the SSN under it.
+- Text holding a new mark takes the source resolver from AA100 even with no
+  positional evidence, because a rewrite beside a glued label would hide the
+  label from a comb after it.
+- A filename refuses on every governed shape, with a redacted warning. A
+  worksheet's name masks with no label, and two that mask alike refuse.
+- As opened, a tight en dash needed a label and masked only straight after it,
+  so "Social security number (SSN):", "SSN no.:", "TIN:" and "Taxpayer ID:" all
+  printed the number. That spelling now needs no label. A spaced value also
+  passes the closing parenthesis, and wording that introduces it with `:`, `#`,
+  `=` or "is", up to the bare spelling's reach. A dash does not introduce one,
+  which is what main's tests pin.
+- As opened, `test_mismatched_marks_and_vertical_gaps_stay_out_of_scope` required
+  a whole SSN to print. It is gone. The route test read `str(result)`, whose repr
+  escapes U+00AD, so a whole SSN would have passed as absent; it reads the strings.
+- Accepted: a figure that really is 3-2-4 with tight dashes masks, as the hyphen
+  spelling does on main, and a dollar sign or a leading `1,` does not stop it. A
+  spaced one on a line a label governs masks too. Filenames shaped like a spaced
+  figure now refuse, with a message to rename. One contrived input prints what
+  main masked: a spaced EIN shape under a payer's label glued to a masked comb,
+  which main masked only because its own rewrite hid the payer exclusion.
+- Against main: 240,000 generated texts and tables print no digit main hides.
+  1,600 drawn pages with dash spellings on four routes lose nothing, and 26 IRS
+  forms, instructions and publications read identically on four routes, so the
+  wider shape cost none of them a figure.
