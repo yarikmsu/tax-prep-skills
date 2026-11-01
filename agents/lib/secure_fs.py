@@ -106,12 +106,14 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 _SSN_MARKS = "-./\u2010\u2011"
 _ID_MARKS = _SSN_MARKS + "\u2012\u2013\u2014\u2212"
 _ID_TYPOGRAPHIC_MARK = re.compile("[" + re.escape(_ID_MARKS[3:]) + "]")
+_ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
+_ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
+                     for mark in _ID_MARKS)
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMS = "(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
                               for mark in _SSN_MARKS) + ")"
 _SSN_DELIMITED = re.compile(
-    r"[0-9]{3}(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
-                             for mark in _ID_MARKS) + r"|\s+[0-9]{2}\s+)[0-9]{4}")
+    rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")
@@ -286,9 +288,8 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 # still be a figure page text joined to it, and the SSN printed under the
 # label would print whole. The same mark twice, and no capture of its own,
 # so the last four stays the pattern's one group.
-_ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
-_ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
-                     for mark in _ID_MARKS)
+# `_ID_SPLIT` is shared with the diagnostic redactor above: a split SSN in
+# a rejected filename must not print in the warning that rejects it.
 # What a label governs: the whitespace spelling, or a delimited one split.
 _ID_GOVERNED = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
@@ -822,8 +823,7 @@ def names_an_identifier(name: str) -> bool:
     which is a path that opens nothing and which two different documents can
     collide on.
     """
-    return bool(_ID_DELIMITED.search(name) or _ID_VALUE_RE.search(name)
-                or _ID_SPACED.search(name))
+    return bool(_ID_GOVERNED.search(name) or _ID_SPACED.search(name))
 
 # The window a bare integer may be PRINTED in. Not a validity check — every
 # caller has its own accepted range and applies it after this — but the bound

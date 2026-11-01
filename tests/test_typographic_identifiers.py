@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from agents.lib import parse_utils as P
-from agents.lib.secure_fs import identifier_spans, mask_ssn, mask_table, redact
+from agents.lib.secure_fs import identifier_spans, mask_ssn, mask_table, names_an_identifier, redact
 from tests.test_parse_utils import LAST4, MASKED, ROUTING, _ssn, _workbook
 
 HYPHENS = ("\u2010", "\u2011")
@@ -78,8 +78,44 @@ def test_other_numeric_shapes_survive(mark, runs):
 
 
 @pytest.mark.parametrize("mark", MARKS)
-def test_errors_and_paths_redact_the_new_separators(mark):
-    assert redact(f"documents/{_ssn(mark)}.pdf") == "documents/[REDACTED].pdf"
+@pytest.mark.parametrize("gap", ["", " ", "\u00a0"])
+def test_errors_and_paths_redact_the_new_separators(mark, gap):
+    assert redact(f"documents/{_ssn(gap + mark + gap)}.pdf") == "documents/[REDACTED].pdf"
+
+
+@pytest.mark.parametrize("mark", MARKS)
+@pytest.mark.parametrize("gap", ["", " ", "\u00a0"])
+def test_a_scan_does_not_disclose_an_identifier_filename(tmp_path, capsys, mark, gap):
+    value = _ssn(gap + mark + gap)
+    path = tmp_path / f"{value}.csv"
+    path.write_text("Wages,850.00\n", encoding="utf-8")
+    assert names_an_identifier(path.name)
+    assert P.scan_workspace(str(tmp_path)) == []
+    warning = capsys.readouterr().err
+    assert value not in warning and "[REDACTED]" in warning
+    assert "Rename" in warning
+
+
+@pytest.mark.parametrize("mark", MARKS)
+@pytest.mark.parametrize("gap", ["", " "])
+def test_a_sheet_name_masks_without_a_label(tmp_path, mark, gap):
+    value = _ssn(gap + mark + gap)
+    path = _workbook(tmp_path / "sheets.xlsx", title=value)
+    assert list(P.extract_excel(str(path))) == [MASKED]
+
+
+@pytest.mark.parametrize("mark", MARKS)
+def test_colliding_sheet_names_refuse_instead_of_dropping_a_sheet(tmp_path, mark):
+    import openpyxl
+    path = _workbook(tmp_path / "sheets.xlsx", title=_ssn(mark))
+    workbook = openpyxl.load_workbook(path)
+    other = mark.join(("111", "11", LAST4))
+    workbook.create_sheet(other).append(["Wages", 1234])
+    workbook.save(path)
+    workbook.close()
+    with pytest.raises(ValueError, match="mask to the same name") as failure:
+        P.extract_excel(str(path))
+    assert _ssn(mark) not in str(failure.value) and other not in str(failure.value)
 
 
 @pytest.fixture(scope="module")

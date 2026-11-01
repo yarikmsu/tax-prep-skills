@@ -1643,7 +1643,11 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
         # a return, so that is a refusal rather than a silently shorter dict.
         extracted = {}
         for name in targets:
-            safe = mask_ssn(name)
+            # Names, like filenames, have no surrounding label to decide an
+            # ambiguous spelling. Treat their identifier shapes as governed;
+            # a Unicode dash must not print in the JSON key while the same
+            # name is redacted in an unknown-sheet refusal.
+            safe = mask_ssn(name, (), _governed=True)
             if safe in extracted:
                 raise ValueError(
                     f"Two sheets in {redact(path)} mask to the same name "
