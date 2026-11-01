@@ -100,11 +100,18 @@ import agents.lib  # noqa: E402,F401 — the host-interpreter guard
 # array out of that script so a family added THERE and not here fails too. A
 # prose claim of parity is what let the AWS-secret family sit in the detector
 # alone; the test is the claim now.
-# The hyphen, dot and slash spellings, shared with `_ID_DELIMITED` below so a
-# spelling the gate learns reaches the redactor and the masker together.
-_SSN_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
+# The same mark at both group edges. PDF text and copied cells can carry a
+# typographic hyphen, dash or minus rather than ASCII "-". Keep the marks in
+# one place so diagnostic redaction and document masking recognize them alike.
+_SSN_MARKS = "-./\u2010\u2011"
+_ID_MARKS = _SSN_MARKS + "\u2012\u2013\u2014\u2212"
+_ID_TYPOGRAPHIC_MARK = re.compile("[" + re.escape(_ID_MARKS[3:]) + "]")
+_SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
+_SSN_DELIMS = "(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
+                              for mark in _SSN_MARKS) + ")"
 _SSN_DELIMITED = re.compile(
-    rf"[0-9]{{3}}(?:{_SSN_DELIMS}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
+    r"[0-9]{3}(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
+                             for mark in _ID_MARKS) + r"|\s+[0-9]{2}\s+)[0-9]{4}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")
@@ -169,7 +176,11 @@ def redact(text) -> str:
 # masker that fires there corrupts an amount the return is computed from — the
 # over-statement direction AGENTS.md §4 makes a hard error.
 #
-# Only the hyphen, dot and slash spellings are masked UNLABELED. The
+# Only the hyphen (ASCII, U+2010 or U+2011), dot and slash spellings mask
+# UNLABELED. Figure/en/em dashes and a minus can also spell a numeric range
+# or subtraction without spaces, so they need a label, even when unsplit.
+# They never tell a label its value is already there: a figure joined to a
+# label's row must not expose the identifier printed under it. The
 # whitespace spelling and the bare nine-digit run are masked only under an
 # identifier label, as is a delimited one an OCR layer split (`_ID_SPLIT`),
 # because each is a shape a document prints for other things: nine bare
@@ -229,6 +240,12 @@ def redact(text) -> str:
 # masks what a label governs by position with `mask_runs`.
 _ID_DELIMITED = re.compile(
     rf"(?<![0-9])[0-9]{{3}}{_SSN_DELIMS}([0-9]{{4}})(?![0-9])")
+# Recognition of a new spelling must not withdraw an existing label's reach.
+# Even a typographic hyphen can be punctuation joining figures on its row.
+# Keep the occupied-box test at the previously supported tight spellings;
+# positional readers treat every new mark as a candidate needing its label.
+_ID_FILLED_DELIMITED = re.compile(
+    rf"(?<![0-9])[0-9]{{3}}{_SSN_ASCII_DELIMS}([0-9]{{4}})(?![0-9])")
 _PAYER_SIDE = (r"(?:payer|employer|filer|issuer|lender|trustee|creditor"
                r"|corporation|partnership|estate|trust)")
 _ID_LABEL = (
@@ -271,7 +288,7 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 # so the last four stays the pattern's one group.
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{re.escape(mark)}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{re.escape(mark)}{_ID_GAP}"
-                     for mark in "-./")
+                     for mark in _ID_MARKS)
 # What a label governs: the whitespace spelling, or a delimited one split.
 _ID_GOVERNED = re.compile(
     rf"(?<![0-9])[0-9]{{3}}(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_SPLIT})([0-9]{{4}})(?![0-9])")
@@ -293,7 +310,7 @@ _ID_LABELED_SPLIT = re.compile(
 # figure further along its row, a wage with its cents apart and then a year,
 # is no sign the label has its value, and the SSN printed under it masks.
 _ID_ADJACENT_VALUE = re.compile(
-    rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
+    rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_FILLED_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX))", re.IGNORECASE)
 _ID_ALIAS = re.compile(r"[^\S\n]*(?:/|or|\()[^\S\n]*", re.IGNORECASE)
 
@@ -372,7 +389,7 @@ def _mask_under_labels(text: str) -> str:
 # needs them to know a label's value is there, and, where the page masked one
 # itself (a statement showing last fours), where that label's reach ends.
 _ID_SPELLED = re.compile(
-    rf"{_ID_DELIMITED.pattern}|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)"
+    rf"{_ID_FILLED_DELIMITED.pattern}|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX)"
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
@@ -401,15 +418,15 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
 
 
 def split_spans(row: str) -> list:
-    """Where one row of page text prints a delimited value split beside its
-    marks (`_ID_SPLIT`), `[(start, end)]`: runs a positional reader masks
+    """Where one row prints a value split beside its marks, or with a
+    typographic mark (`_ID_SPLIT`), `[(start, end)]`: runs a reader masks
     where a label governs them by position. They are kept apart from
     `identifier_spans`' values because the readers also take a value as a
     sign that a label's box is filled, and in that role a split-shaped
     figure, an amount ending a sentence before a year, would leave the SSN
     the label governs unmasked."""
     return [(m.start(), m.end()) for m in _ID_SPLIT_VALUE.finditer(row)
-            if not _ID_DELIMITED.fullmatch(row, m.start(), m.end())]
+            if not _ID_FILLED_DELIMITED.fullmatch(row, m.start(), m.end())]
 
 
 _LABEL_NOTE = re.compile(r"\(see instructions\)", re.IGNORECASE)
@@ -665,6 +682,12 @@ def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: 
     # (most of a CSV) skips both regex passes.
     if not isinstance(value, str) or len(value) < 9:
         return value
+    # A newly recognized hyphen can be glued to its label. Rewriting it in
+    # the sequential passes makes "SSN000..." read as "SSNXXX...", hiding
+    # that label from the comb pass. Use the existing source-span resolver
+    # for new marks too, even when there is no PDF positional evidence.
+    if runs is None and _ID_TYPOGRAPHIC_MARK.search(value):
+        runs = ()
     runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
     if runs is not None:
         spans = _text_identifier_spans(value if _original is None else _original, governed=_governed)
