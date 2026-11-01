@@ -60,7 +60,8 @@ def test_a_tight_mark_reaches_as_far_as_the_bare_spelling(mark, runs, label):
 
 @pytest.mark.parametrize("mark", ["-", *MARKS])
 @pytest.mark.parametrize("runs", [None, ()])
-@pytest.mark.parametrize("label", ["Social security number (SSN): ", "ITIN #: ", "SSN.: ", "SSN no.: ", "SSN (primary): ",
+@pytest.mark.parametrize("label", ["Social security number (SSN): ", "Social security number (SSN) ", "ITIN #: ", "SSN.: ",
+                                   "SSN no.: ", "SSN (primary): ",
                                    "SSN on file: ", "SSN = ", "SSN is "])
 def test_a_split_value_passes_wording_that_introduces_it(mark, runs, label):
     assert mask_ssn(f"{label}{_ssn(' ' + mark + ' ')}", runs) == f"{label}{MASKED}"
