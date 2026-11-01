@@ -477,7 +477,7 @@ def test_every_locked_distribution_is_classified():
 # nine-digit identifier the PII gate would have to allowlist.
 # ---------------------------------------------------------------------------
 
-from agents.lib.secure_fs import mask_ssn, mask_table, redact  # noqa: E402
+from agents.lib.secure_fs import mask_runs, mask_ssn, mask_table, redact  # noqa: E402
 
 LAST4 = "6789"
 MASKED = f"XXX-XX-{LAST4}"
@@ -2009,12 +2009,100 @@ class TestMaskingByPosition:
         digits = "222" + _ssn("") + "333333"
         runs = {" ".join(digits), _ssn(" ")}
         assert mask_ssn(f"SSN {digits}\n{_SECOND}", runs) == "SSN XXX-XX-XXXX\nXXX-XX-1111"
-        figure = "".join(("850", "00", "2026"))
-        row = " ".join(digits)
-        assert mask_ssn(f"SSN {row}; Wages {figure}", runs) == f"SSN XXX-XX-XXXX; Wages {figure}"
-        assert mask_ssn(f"SSN XXX-XX-XXXX; Wages {figure}") == f"SSN XXX-XX-XXXX; Wages {figure}"
         itin = _itin().replace("-", "")
         assert mask_table([["SSN"], [int(itin)]], {itin}) == [["SSN"], [MASKED]]
+
+    @pytest.mark.parametrize("runs", [None, set()])
+    @pytest.mark.parametrize("value", ["XXX-XX-XXXX", " ".join(_ssn("") + "7")])
+    def test_a_bare_nine_past_a_value_masked_whole_masks_on_both_paths(self, value, runs):
+        """A value masked whole leaves no digit between its label and a bare
+        nine along its row, which may be a second SSN. The text passes mask
+        that nine, so the path that resolves positional runs has to as well."""
+        assert mask_ssn(f"SSN {value}  {_SECOND}", runs) == "SSN XXX-XX-XXXX  XXX-XX-1111"
+
+    @pytest.mark.parametrize("runs", [None, set()])
+    def test_a_masked_value_keeping_its_last_four_ends_its_labels_reach(self, runs):
+        """Those four digits stop the same-line reach, on both paths, so the
+        figure after a value that has a boundary to keep stays a figure."""
+        figure = "".join(("850", "00", "2026"))
+        assert mask_ssn(f"SSN {_ssn('-')}; Wages {figure}", runs) == f"SSN {MASKED}; Wages {figure}"
+
+    def test_a_conflict_masked_value_leaves_the_figure_after_it(self):
+        """Whole nines keep last fours in the text passes, which stop the
+        reach there. Their conflict with a run does not extend it."""
+        digits = "222" + _ssn("") + "333333"
+        figure = "".join(("850", "00", "2026"))
+        runs = {" ".join(digits), _ssn(" ")}
+        assert mask_ssn(f"SSN {' '.join(digits)}; Wages {figure}", runs) == f"SSN XXX-XX-XXXX; Wages {figure}"
+
+    def test_a_label_a_conflict_mask_reaches_still_governs(self):
+        """Rewriting the digits glued to a label must not hide it: a label
+        reads `(?<![A-Za-z])`, and an `X` would pass for a letter."""
+        digits = "000" + _ssn("")
+        known = [digits[:9], digits[3:]]
+        head, glued = f"{digits[:3]} {digits[3:6]}", f"{digits[6:9]} {digits[9:]}SSN"
+        comb = " ".join(_ssn("") + "7")
+        assert mask_ssn(f"{head} {glued} {comb} {_SECOND}", known).endswith("SSN XXX-XX-XXXX XXX-XX-1111")
+        assert mask_table([[head, f"{glued}   {_SECOND}"]], known)[0][1].endswith("SSN   XXX-XX-1111")
+
+    def test_a_partial_mask_does_not_complete_a_comb(self):
+        """Two known nines at an offset, one starting in the label's cell,
+        mask digits inside a group of three. That frees its last digit to make
+        seventeen comb digits eighteen, each nine keeping a last four. The
+        source's comb has no boundary to keep."""
+        cell = "0 0 1 2 3 4 5 6 7 8 900 0 0 1 1 2 2 3 3 0 0 0 4 4 5 5 6 6"
+        known = [" ".join("000" + "123456"), " ".join("23456" + "7890")]
+        out = mask_table([["SSN0", cell]], known)[0][1]
+        assert out.endswith(" XXX-XX-XXXX") and "2233" not in out and "5566" not in out
+
+    def test_a_table_cell_reads_its_labels_above_from_before_the_conflict_mask(self):
+        """The conflict hides the label on the cell's first line, so the
+        reading for the line under it has to come from the original cell."""
+        digits = _ssn("")
+        cells = [" ".join(digits[:5]), " ".join(digits[5:]) + f"SSN\n{_SECOND}"]
+        runs = {" ".join(digits), " ".join(digits[2:])}
+        assert mask_table([cells], runs)[0][1].endswith("SSN\nXXX-XX-1111")
+
+    @pytest.mark.parametrize("digits", [_ssn("") + "789", _ssn("") + _SECOND])
+    def test_a_run_no_rule_rewrites_never_prints_raw(self, digits):
+        """A long bare run has no spelling of its own. Its digits are still
+        an identifier's, so they mask whole on each path, in any spacing."""
+        assert mask_ssn(f"SSN {' '.join(digits)}", [digits]) == "SSN XXX-XX-XXXX"
+        assert mask_runs(f"Note {digits}", [digits]) == "Note XXX-XX-XXXX"
+
+    @pytest.mark.parametrize("runs", [None, set()])
+    def test_an_unlabelled_comb_stays_outside_a_labels_reach(self, runs):
+        """A comb is an identifier only under or after a label: Form 1040
+        prints the routing number in one. A label after it on the row does
+        not reach back, and this path must read that as the text passes do."""
+        comb = " ".join(ROUTING)
+        assert mask_ssn(f"Routing {comb}", runs) == f"Routing {comb}"
+        assert mask_ssn(f"{comb} SSN {_ssn('-')}", runs) == f"{comb} SSN {MASKED}"
+
+    def test_a_run_matching_its_own_digits_at_a_shift_is_no_conflict(self):
+        """A number that repeats matches itself along its own digits. That is
+        the same number, so it keeps its last four and the next figure survives."""
+        placeholder = "000 00 0000"
+        assert mask_ssn(f"SSN {placeholder} 0.00", [placeholder]) == "SSN XXX-XX-0000 0.00"
+        assert mask_table([[f"SSN {placeholder} 0.00"]], [placeholder]) == [["SSN XXX-XX-0000 0.00"]]
+
+    def test_a_shorter_run_inside_a_nine_keeps_no_digit(self):
+        """A run that is not whole nines gives no boundary to keep a last
+        four by, even starting where the nine does."""
+        assert mask_ssn(f"SSN\n{_ssn('')}", [_ssn("")[:5]]) == "SSN\nXXX-XX-XXXX"
+
+    def test_a_group_edge_match_is_decided_by_its_own_group_edges(self):
+        """Both ends on a group's edge is the first pass's to decide, which
+        keeps the nine; the window search would call it a conflict."""
+        digits = _ssn("")
+        assert mask_ssn(f"SSN\n{digits[:5]} {digits[5:]}", [digits, " ".join(digits[:5])]) == f"SSN\n{MASKED}"
+
+    def test_aligned_nines_are_counted_in_digits_not_characters(self):
+        """A grouped row's second nine starts twelve characters in and nine
+        digits in. It is the row's own, so each keeps its last four."""
+        row = f"{_ssn(' ')} {_SECOND[:3]} {_SECOND[3:5]} {_SECOND[5:]}"
+        comb = " ".join(row.replace(" ", ""))
+        assert mask_ssn(f"SSN\n{row}", [comb, _SECOND]) == f"SSN\n{MASKED} XXX-XX-1111"
 
     @pytest.mark.parametrize("offset", range(10))
     @pytest.mark.parametrize("layout", ["above", "beside", "cell_above", "cell_beside", "column", "right"])
@@ -2227,7 +2315,7 @@ class TestMaskingByPosition:
     @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words"])
     @pytest.mark.parametrize("layout", ["above", "beside"])
     @pytest.mark.parametrize("offset", [0, 3, 9])
-    def test_pdf_textual_comb_outside_positional_reach_keeps_its_boundaries(self, tmp_path, route, layout, offset):
+    def test_pdf_textual_comb_outside_positional_reach_resolves_its_boundaries(self, tmp_path, route, layout, offset):
         from agents.lib.parse_utils import _governed_runs
         import pdfplumber
 

@@ -4558,3 +4558,49 @@ and the routing number on the next line stays.
   a stress page of 192 such labels the positional reader takes about two
   thirds longer and the text route under a tenth longer; a page whose
   labels carry their values costs what it did.
+
+## AA100 — overlapping identifier copies keep no digit (#99)
+
+A comb row masks nine digits at a time, each keeping its last four. When a
+governed SSN's digits sat inside a longer governed row offset from its nines,
+the row's nines decided which digits showed: four of the SSN's middle digits,
+and with its own masked copy elsewhere on the page, five. Text rules also ran
+before the positional pass and rewrote digits it needed to see, so the two
+could not agree on where a value's edges were.
+
+`mask_ssn(text, runs)` and `mask_table(rows, runs)` now resolve the positional
+runs and every text rule's spans together, on the source text. Where their
+boundaries disagree, nothing is kept. A run inside another, whole nines from
+its start, is the same run read again and keeps its last four, as does a
+number that repeats matching itself at a shift. The PDF text, words, identity
+and table routes all use it, and pass the parser's deadline through to the
+search, which only looks at windows touching a span.
+
+- As opened, it printed whole SSNs that main masks. A guard added to
+  `_ID_LABELED_SAME_LINE` stopped a label's reach at a value already masked
+  whole, so a spaced nine after `SSN XXX-XX-XXXX` printed in full on every
+  `mask_ssn` caller, CSV and workbook included. Its test asserted the print.
+  The guard is gone, and the plain path matches main.
+- Reading spans from the original text lost a second reach: main rewrites a
+  comb that is not whole nines first, so the label reads past it to a bare
+  nine further along. `_same_line_spans` reads that reach on a copy with those
+  combs spelled as masked and maps the offsets back.
+- A pass over rewritten text lost to main in two more ways, on a table cell
+  or a row glued to its label: an `X` written against a label reads as a
+  letter and hides the label, and a digit masked inside a group frees the next
+  to make seventeen comb digits eighteen, each nine keeping a last four. All
+  text rules now read the source once, `_original` for a table cell.
+- `prepare_runs` fell back to a run's raw text when no rule rewrote it. A long
+  bare run printed raw, on main too. Such a run now masks whole.
+- It over-masks only where boundaries disagree. A number sharing eight digits
+  with an SSN, or an 11-digit governed run taking the cents of an amount drawn
+  against the SSN's box, costs the digits they touch. On the form-fill corpus
+  that is one form of 114, and only the digits next to its SSN box.
+- Against main: 60,000 generated texts and tables, then 320,000 more with
+  labels glued to digits and 14 kinds of whitespace, printed no digit main
+  hides and masked more where runs overlap. 10,483 PDFs print no SSN main
+  masks, and 19 IRS forms, instructions and publications print the same.
+- Cost on hostile input: text full of identifiers takes about three times as
+  long as main, still linear, and a comb of one repeated digit is quadratic
+  but checks the deadline, so it refuses at the budget. Main has no deadline
+  in this search at all.
