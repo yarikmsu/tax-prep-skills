@@ -120,8 +120,6 @@ _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GA
                      for mark in (_ID_DASH, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMS = rf"(?:{_ID_DASH}[0-9]{{2}}{_ID_DASH}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
-# Diagnostics also hide repeated marks, independently of the extraction
-# rules that decide whether a label's own box is filled.
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_ID_GAP}{_ID_DASH}+{_ID_GAP}[0-9]{{2}}{_ID_GAP}{_ID_DASH}+{_ID_GAP}"
     rf"|{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
