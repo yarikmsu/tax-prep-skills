@@ -116,8 +116,8 @@ _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GAP}"
                      for mark in (_ID_DASH, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
-_SSN_DELIMS = "(?:" + "|".join(rf"{re.escape(mark)}[0-9]{{2}}{re.escape(mark)}"
-                              for mark in "-./" + _ID_HYPHENS) + ")"
+_ID_HYPHEN = f"[-{_ID_HYPHENS}]"
+_SSN_DELIMS = rf"(?:{_ID_HYPHEN}[0-9]{{2}}{_ID_HYPHEN}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
 _SSN_DELIMITED = re.compile(
     rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
@@ -309,12 +309,16 @@ _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}})(?<![0-9])[0-9]{{3}}"
     rf"(?:[^\S\n]*[0-9]{{2}}[^\S\n]*|{_ID_DASH}[0-9]{{2}}{_ID_DASH})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
-# spaces, the ")" closing "social security number (SSN)" and up to two of ":",
-# "#" or "." between: page text joins a label to columns across the page ("SSN
-# Dividends 250 - 15 - 1200"), and prose names a label before a figure ("fee
-# per ITIN: $125.50. 2025", "SSN ($100- 25- 1000)").
+# spaces and one ":", "#" or "." between: page text joins a label to columns
+# across the page ("SSN Dividends 250 - 15 - 1200"), and prose names a label
+# before a figure ("fee per ITIN: $125.50. 2025", "SSN ($100- 25- 1000)"). Or
+# past label wording that ends by introducing it ("(SSN): ", "SSN no.: ", "SSN
+# = ", "SSN is "), within the bare spelling's reach. A dash does not introduce
+# one: it can stand for zero between figures ("identification - 600 - 10 - 2000").
 _ID_LABELED_SPLIT = re.compile(
-    rf"({_ID_LABEL}[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*){{0,2}})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
+    rf"({_ID_LABEL}(?:[^\S\n]*(?:[:#.][^\S\n]*)?"
+    rf"|[^0-9\n]{{0,24}}(?:[:#=]|(?<![A-Za-z])is)[^\S\n]*))"
+    rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
     re.IGNORECASE)
 # A value is the label's own only straight after it: spaces, the ")"
 # closing "social security number (SSN)", and one ":", "#" or ".". Page

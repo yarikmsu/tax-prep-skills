@@ -60,9 +60,27 @@ def test_a_tight_mark_reaches_as_far_as_the_bare_spelling(mark, runs, label):
 
 @pytest.mark.parametrize("mark", ["-", *MARKS])
 @pytest.mark.parametrize("runs", [None, ()])
-@pytest.mark.parametrize("label", ["Social security number (SSN): ", "ITIN #: ", "SSN.: "])
-def test_a_split_value_passes_a_closing_parenthesis_and_two_marks(mark, runs, label):
+@pytest.mark.parametrize("label", ["Social security number (SSN): ", "ITIN #: ", "SSN.: ", "SSN no.: ", "SSN (primary): ",
+                                   "SSN on file: ", "SSN = ", "SSN is "])
+def test_a_split_value_passes_wording_that_introduces_it(mark, runs, label):
     assert mask_ssn(f"{label}{_ssn(' ' + mark + ' ')}", runs) == f"{label}{MASKED}"
+
+
+@pytest.mark.parametrize("runs", [None, ()])
+@pytest.mark.parametrize("text", ["SSN Dividends 250 - 15 - 1200", "SSN ($100- 25- 1000)", "fee per ITIN: $125.50. 2025",
+                                  "SSN this 250 - 15 - 1200", "Taxpayer SSN - 600 - 10 - 2000",
+                                  "SSN and other wording that runs far too long: 600 - 10 - 2000",
+                                  "Taxpayer SSN \u2014 600 \u2013 10 \u2013 2000"])
+def test_a_figure_a_label_does_not_introduce_stays(runs, text):
+    assert mask_ssn(text, runs) == text
+
+
+@pytest.mark.parametrize("runs", [None, ()])
+@pytest.mark.parametrize("first, second", [("-", "\u2010"), ("\u2011", "-"), ("\u2010", "\u2011"), ("\u00ad", "\uff0d")])
+def test_two_different_hyphens_mask_without_a_label(runs, first, second):
+    value = f"000{first}00{second}{LAST4}"
+    assert mask_ssn(f"Reference {value}", runs) == f"Reference {MASKED}"
+    assert mask_table([[f"Reference {value}"]], runs) == [[f"Reference {MASKED}"]]
 
 
 @pytest.mark.parametrize("runs", [None, ()])

@@ -601,8 +601,9 @@ class TestMaskSsn:
                                      "passport as identification - 600 - 10 - 2000"])
     def test_a_split_shape_across_a_labels_row_is_no_value(self, row):
         """Page text joins a label to the columns across its row, and prose
-        names a label before a figure: a split shape with a word, a "$",
-        a parenthesis or a dash between is a figure printed there."""
+        names a label before a figure: a split shape with a word that does
+        not introduce it, a "$", a parenthesis or a dash between is a figure
+        printed there."""
         assert mask_ssn(row) == row
 
     @pytest.mark.parametrize("sep", ["-", ".", "/"])
