@@ -739,9 +739,11 @@ def _refuse_unreadable_identifier(chars: list[dict], tick) -> None:
     kinds: whole digits a mask cannot find, since a `(cid:N)` number names a
     glyph and not a character. Only a letter or digit it can read ends the run,
     so a mapped dash or space between groups does not. Fewer glyphs cannot hold
-    a whole identifier and one glyph repeated is a leader or a rule, so a
-    checkbox, a bullet or a symbol font on a readable page still parses: the
-    refusal stops the whole document, and an unmapped symbol is ordinary."""
+    a whole identifier and one glyph repeated is a leader or a rule, so a stray
+    checkbox, bullet or symbol on a readable page still parses: the refusal stops
+    the read, and an unmapped symbol is ordinary. Nine unreadable glyphs of two
+    kinds cannot be told from digits, so a heading in such a font, or a row of
+    mixed checkboxes, refuses too. That is loud and costs a re-export."""
     if sum(1 for char in chars if _UNMAPPED_GLYPH.fullmatch(char["text"])) < _IDENTIFIER_DIGITS:
         return
     for row in _overlay_rows(chars, tick):
@@ -780,8 +782,11 @@ def _safe_pdf_page(page, tick):
     # only what the reader governs without split runs is kept (AA96). A kept
     # run printed under a label also leaves that label no value on its row
     # (`_beside`), so labels are read here as their row's text reads them:
-    # one measured empty past a far value (AA98) keeps no more either.
-    governed = _governed_runs(words, tick, split=False, measured=False)
+    # one measured empty past a far value (AA98) keeps no more either. The
+    # printed labels alone decide it: keeping a run moves which label governs
+    # what else is there, so a label only a variant reading sees may add masks
+    # below and may not keep what the printed page would have removed.
+    governed = _governed_reading(words, tick, split=False, measured=False)
     spelling = prepare_runs(governed).spelling
     protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
                  for raw, box in _page_identifiers(words, tick)[1]

@@ -415,6 +415,40 @@ def test_fullwidth_punctuation_does_not_change_unrelated_figures_or_occupy_a_box
     assert mask_ssn(text) == text
 
 
+def _overlay_pdf(path, font, items):
+    from reportlab.pdfgen import canvas
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    for x, y, text, size in items:
+        page.setFont(font, size)
+        page.drawString(x, y, text)
+    page.save()
+    return path
+
+
+@pytest.mark.parametrize("heading", ["Your soc\u200bial security number", "Your soc\u0332ial security number"])
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_variant_label_does_not_keep_an_overlay_cleanup_removes(tmp_path, variant_font, heading, route):
+    """Protection decides which drawn-over digits stay on the page, and keeping
+    one moves which label governs what else is there. So it reads the printed
+    labels alone: the added reading may add masks, never decide what is kept."""
+    drawn, beside = "000" + "55" + "6666", "000" + "77" + "8888"
+    path = _overlay_pdf(tmp_path / "over.pdf", variant_font, [
+        (100.37, 650, heading, 11), (250.94, 620, "Your social security number", 9),
+        (297.52, 616.5, drawn, 9), (36, 590, "Box 1 " + beside, 9)])
+    out = _read(route, path, tmp_path)
+    assert beside not in out and drawn not in out
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_variant_label_does_not_scatter_an_overlaid_identifier_through_its_heading(tmp_path, variant_font, route):
+    drawn = "000" + "55" + "6666"
+    path = _overlay_pdf(tmp_path / "over.pdf", variant_font, [
+        (99.08, 650, "S\u0332S\u0332N\u0332", 9), (139.56, 650, "Your social security number", 9),
+        (136.96, 650, "0 0 0 3 3 4 4 4 4", 6), (229.17, 646, drawn, 8)])
+    out = _read(route, path, tmp_path)
+    assert drawn not in "".join(re.findall(r"[0-9]", out))
+
+
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
 def test_marked_comb_governed_only_by_position_masks(tmp_path, variant_font, route):
     from reportlab.pdfgen import canvas
