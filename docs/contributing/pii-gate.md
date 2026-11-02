@@ -146,22 +146,43 @@ Four rules, in the order they are cheapest to reason about:
    `.claude/` is the one directory that cannot take a directory rule, because it also
    holds tracked project config — there the directory is the SCOPE and the basename is
    the RULE.
-4. **Content**, over the ADDED lines only: ASCII-digit SSNs grouped with dashes,
-   spaces, tabs, dots or slashes, or nine bare digits, plus high-confidence
+4. **Content**, over the ADDED lines only: ASCII/fullwidth-digit SSNs grouped with dashes,
+   spaces, tabs, dots or slashes, nine bare digits, or nine single-digit comb
+   boxes, plus high-confidence
    credentials. Dash edges may differ or repeat: the ASCII hyphen, Unicode 16.0
    dash punctuation, typographic minus/hyphen and horizontal-rule spellings are
-   supported, including the two Windows-1252 dash bytes. Other separator families
-   must agree on both sides, keeping a money range from reading as an SSN. It
-   reports file and match count and never the value. This does not recognize
-   every extraction spelling: fullwidth digits, combs and invisible characters
-   between digits remain outside this gate's patterns.
+   supported, including the two Windows-1252 dash bytes. Dots and slashes also
+   accept their fullwidth forms. Other separator families must agree on both
+   sides, keeping a money range from reading as an SSN. Format characters,
+   variation selectors and the runtime's additional invisible spellings may
+   separate digits. NUL-containing added text is refused before Bash reads it,
+   including files Git classifies or forces as text. It
+   reports file and match count and never the value.
 
 The Unicode marks are complete byte alternatives under `LC_ALL=C`, not a Unicode
 bracket class that becomes a bag of unrelated bytes. Bash octal escapes keep the
 same script working on macOS's Bash 3.2 and on Linux. Matches retain their original
 spelling: an ASCII allowlist entry does not exempt its Unicode spelling. The
-detector and redactor share one pattern list, ordered with whole credentials first
-so an identifier inside a credential cannot fragment it before redaction.
+detector and redactor share the character primitives, with whole credentials first
+so an identifier inside a credential cannot fragment it before redaction. The
+expanded SSN detector is too large for macOS sed's substitution parser; diagnostic
+redaction uses a shorter, broader pattern over the same primitives, also covering
+bare and comb tokens. Distinct names that redact identically retain separate
+refusals in the names report.
+
+A line with no byte over 0x7f takes an ASCII pattern built from the same template,
+because every Unicode alternative holds such a byte and the full pattern costs a
+macOS grep far more. A test holds the two equal on ASCII text. A line with such a byte
+and fewer than nine digits skips the SSN rules, since none can match it.
+
+Raw ASCII and fullwidth digit tokens remain separate readings from the one that
+joins invisible characters: joining a tenth digit must never withdraw an existing
+nine-digit match. Bare and unmarked comb runs are checked at their maximal length,
+longer neighbours included, so a ten-digit phone number does not become its first nine
+digits and `100 1 2 3 4 5 6 7 8` is not a comb. Two combs in one run, or a comb after
+a single-digit box number, therefore pass here, though the masker reads them under a label. Whitespace
+beside a dash, dot or slash still requires a complete comb, so a 3-2-4 with spaces beside
+its dashes passes too, preserving ranges and amounts ending a sentence before a year.
 
 **The same SSN patterns run against the PATHNAME, before any exemption** — a file named
 after an SSN discloses it whatever it contains — and every path printed in a block

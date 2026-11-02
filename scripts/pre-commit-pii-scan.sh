@@ -50,10 +50,9 @@ set -euo pipefail
 # so a single stray Latin-1/cp1252 byte anywhere on a line hid EVERY match on
 # it: `Client Ren\xe9 Dupont SSN <full ssn>` committed clean. This toolkit
 # ingests foreign-language documents, so that byte is the expected case, not an
-# exotic one. Every pattern here is pure ASCII, which makes C strictly the right
-# locale: byte matching cannot be defeated by the encoding the input happens to
-# use, and for the token split a non-ASCII byte becomes a separator, which can
-# only expose more nine-digit runs, never hide one.
+# exotic one. C keeps malformed bytes from disabling matching on their line.
+# Complete UTF-8 alternatives add Unicode recognition alongside the raw digit
+# reading: joining characters must never withdraw a match the raw bytes expose.
 export LC_ALL=C
 
 # Git reads the ENVIRONMENT for settings that change what a diff or a traversal
@@ -509,7 +508,51 @@ SSN_DASH+=$'|\342\224\201|\342\225\220|\342\236\226|\342\270\227|\342\270\232|\3
 SSN_DASH+=$'|\342\270\273|\342\271\200|\342\271\235|\343\200\234|\343\200\260|\343\202\240'
 SSN_DASH+=$'|\343\203\274|\357\270\261|\357\270\262|\357\271\230|\357\271\243|\357\274\215'
 SSN_DASH+=$'|\360\220\265\256|\360\220\272\255|\226|\227)'
-SSN_DELIMITED="[0-9]{3}(${SSN_DASH}+[0-9]{2}${SSN_DASH}+|[.][0-9]{2}[.]|[/][0-9]{2}[/]|[[:space:]]+[0-9]{2}[[:space:]]+)[0-9]{4}"
+# AA103: complete UTF-8 characters, not individual bytes. This is Unicode
+# 16.0 Cf, variation selectors and the runtime's additional invisible spellings.
+# NUL is refused below before added bytes enter a shell variable.
+SSN_INVISIBLE=$'(\302\255|\314\262|\315\217|\330[\200-\205]|\330\234'
+SSN_INVISIBLE+=$'|\333\235|\334\217|\340\242[\220-\221]|\340\243\242|\341\205[\237-\240]'
+SSN_INVISIBLE+=$'|\341\236[\264-\265]|\341\240\216|\342\200[\213-\217]|\342\200[\252-\256]|\342\201[\240-\244]'
+SSN_INVISIBLE+=$'|\342\201[\246-\257]|\343\205\244|\357\270[\200-\217]|\357\273\277|\357\276\240'
+SSN_INVISIBLE+=$'|\357\277[\271-\273]|\360\221\202\275|\360\221\203\215|\360\223\220[\260-\277]|\360\233\262[\240-\243]'
+SSN_INVISIBLE+=$'|\360\235\205[\263-\272]|\363\240\200\201|\363\240\200[\240-\277]|\363\240\201[\200-\277]|\363\240\204[\200-\277]'
+SSN_INVISIBLE+=$'|\363\240\205[\200-\277]|\363\240\206[\200-\277]|\363\240\207[\200-\257])'
+SSN_DIGIT=$'([0-9]|\357\274[\220-\231])'
+SSN_SPACE=$'([[:space:]\034-\037]|\302\205|\302\240|\341\232\200|\342\200[\200-\212]|\342\200[\250-\251]|\342\200\257|\342\201\237|\343\200\200)'
+SSN_DOT=$'([.]|\357\274\216)'
+SSN_SLASH=$'([/]|\357\274\217)'
+SSN_JOIN="(${SSN_INVISIBLE}|${SSN_SPACE})"
+# One spelling, from whichever characters can occur in the text it is run over.
+_ssn_spelled() {
+  # $1 digit, $2 invisibles (a starred class, or empty), $3 space, $4 space or
+  # invisible, $5 dash, $6 dot, $7 slash. Sets _SSN_BOX_GAP and _SSN_SPELLED.
+  local d="$1" i="$2" s="$3" j="$4*" dash="$5" dot="$6" slash="$7"
+  _SSN_BOX_GAP="${i}${s}${j}"
+  local two="${d}(${_SSN_BOX_GAP}${d})" tight_two="${d}(${i}${d})"
+  local three="${d}(${_SSN_BOX_GAP}${d}){2}" four="${d}(${_SSN_BOX_GAP}${d}){3}"
+  local tight_three="${d}(${i}${d}){2}" tight_four="${d}(${i}${d}){3}"
+  local middle="${j}(${dash}${j})+${two}${j}(${dash}${j})+"
+  middle+="|${j}${dot}${j}${two}${j}${dot}${j}"
+  middle+="|${j}${slash}${j}${two}${j}${slash}${j}"
+  local tight="${i}(${dash}${i})+${tight_two}${i}(${dash}${i})+"
+  tight+="|${i}${dot}${i}${tight_two}${i}${dot}${i}"
+  tight+="|${i}${slash}${i}${tight_two}${i}${slash}${i}"
+  local spaced="${tight_three}${i}${s}${j}${tight_two}${i}${s}${j}${tight_four}"
+  _SSN_SPELLED="(${tight_three}(${tight})${tight_four}|${three}(${middle})${four}|${spaced})"
+}
+_ssn_spelled "$SSN_DIGIT" "${SSN_INVISIBLE}*" "$SSN_SPACE" "$SSN_JOIN" "$SSN_DASH" "$SSN_DOT" "$SSN_SLASH"
+SSN_DELIMITED=$_SSN_SPELLED SSN_BOX_GAP=$_SSN_BOX_GAP
+# Every Unicode alternative above holds a byte over 0x7f, so a line with none can
+# only match the ASCII rest. Most added lines have none, and the whole pattern
+# costs a macOS grep far more than this one does on them.
+SSN_NON_ASCII=$'[\200-\377]'
+ssn_ascii_space=$'[[:space:]\034-\037]'
+_ssn_spelled '[0-9]' '' "$ssn_ascii_space" "$ssn_ascii_space" '[-]' '[.]' '[/]'
+SSN_ASCII_DELIMITED=$_SSN_SPELLED SSN_ASCII_BOX_GAP=$_SSN_BOX_GAP
+# The diagnostic sweep is deliberately broader than detection, as before.
+SSN_NUMBER="${SSN_DIGIT}((${SSN_JOIN}|${SSN_DASH}|${SSN_DOT}|${SSN_SLASH})*${SSN_DIGIT}){8,}"
+
 # Nine contiguous digits is also a full SSN — a plausible result of manual entry
 # or document extraction. Detected by extracting whole alphanumeric tokens and
 # keeping those that are exactly nine digits, so a 10-digit phone number or a
@@ -544,11 +587,12 @@ SECRET_PATTERN='((AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z
 AWS_KEY_NAME='[Aa][Ww][Ss][_-][Ss][Ee][Cc][Rr][Ee][Tt][_-][Aa][Cc][Cc][Ee][Ss][Ss][_-][Kk][Ee][Yy]'
 AWS_SECRET_PATTERN="${AWS_KEY_NAME}[^A-Za-z0-9]*[A-Za-z0-9/+=]{40}"
 
-# ONE list, consumed by both the detector and the redactor. They were separate
+# ONE family list, consumed by both the detector and the redactor. They were separate
 # lists for exactly one round, and the AWS rule was added to the detector alone
 # — so the scanner blocked a path containing an AWS secret and then printed the
 # secret in the block message. A rule that is detected but not redacted turns
-# the gate into a disclosure channel, so the two can no longer be edited apart.
+# the gate into a disclosure channel. The SSN diagnostic superset above shares
+# the detector's character primitives; it must cover every detected spelling.
 # Widest first: a credential can contain an SSN-shaped substring. Redacting
 # that substring first would break the credential match and print its suffix.
 PII_PATTERNS=("$AWS_SECRET_PATTERN" "$SECRET_PATTERN" "$SSN_DELIMITED")
@@ -647,11 +691,22 @@ strip_artifact_digests() {
 }
 
 count_hits() {
-  local text="$1" pattern found
+  local text="$1" pattern found wide narrow
   : > "$GREP_ERR"
   found=""
+  # Each line goes to exactly one side, so the split counts nothing twice. A
+  # soft-hyphen comb still counts under two rules, being a dash and an invisible.
+  # A wide line needs nine digits to match anything the whole pattern reads.
+  wide=$(_grep_out "$(_grep_out "$text" -E "$SSN_NON_ASCII")" -E "(${SSN_DIGIT}.*){9}")
+  narrow=$(_grep_out "$text" -vE "$SSN_NON_ASCII")
   for pattern in "${PII_PATTERNS[@]}"; do
-    found+=$(_grep_out "$text" -oE "$pattern")
+    if [ "$pattern" = "$SSN_DELIMITED" ]; then
+      found+=$(_grep_out "$narrow" -oE "$SSN_ASCII_DELIMITED")
+      found+=$'\n'
+      [ -z "$wide" ] || found+=$(_grep_out "$wide" -oE "$SSN_DELIMITED")
+    else
+      found+=$(_grep_out "$text" -oE "$pattern")
+    fi
     found+=$'\n'
   done
   # The bare-nine-digit rule is token-based rather than a regex, so that a
@@ -675,6 +730,25 @@ count_hits() {
   # exact venue meant to backstop `--no-verify`. grep's interval support is
   # universal, and dropping awk removes the dependency rather than betting on it.
   found+=$(_grep_out "$(_grep_out "$text" -oE '[0-9]+')" -xE '[0-9]{9}')
+  found+=$'\n'
+  # A comb is nine SINGLE digit boxes. The run is read at its full width, longer
+  # numbers included, so a tenth box or a two-digit neighbour keeps it out;
+  # grouped amounts and dates are not a comb, and use the separated rule only.
+  found+=$(_grep_out "$(_grep_out "$narrow" -oE "[0-9]+(${SSN_ASCII_BOX_GAP}[0-9]+)*")" -xE "[0-9](${SSN_ASCII_BOX_GAP}[0-9]){8}")
+  found+=$'\n'
+  if [ -n "$wide" ]; then
+    # Add the Unicode reading; never let a joining invisible withdraw an ASCII
+    # token already detected above. Exclude already-counted spellings so counts
+    # and exact allowlisting retain their original meaning.
+    local tokens
+    tokens=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}+")" -xE "${SSN_DIGIT}{9}")
+    found+=$(_grep_out "$tokens" -vE '^[0-9]{9}$')
+    found+=$'\n'
+    tokens=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}(${SSN_INVISIBLE}*${SSN_DIGIT})*")" -xE "${SSN_DIGIT}(${SSN_INVISIBLE}*${SSN_DIGIT}){8}")
+    found+=$(_grep_out "$(_grep_out "$tokens" -vE "^${SSN_DIGIT}{9}$")" -vE "^${SSN_DELIMITED}$")
+    found+=$'\n'
+    found+=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}+(${SSN_BOX_GAP}${SSN_DIGIT}+)*")" -xE "${SSN_DIGIT}(${SSN_BOX_GAP}${SSN_DIGIT}){8}")
+  fi
 
   local nonblank filtered
   nonblank=$(_grep_out "$found" -vE '^[[:space:]]*$')
@@ -700,6 +774,10 @@ redact() {
     # `#` as the delimiter: `/` appears inside the AWS value class and `|` is
     # the alternation in SECRET_PATTERN, so either would terminate the command
     # early. No pattern contains `#`.
+    # The expanded UTF-8 detector is larger than macOS sed accepts in a
+    # substitution. This shorter diagnostic superset uses the SAME character
+    # primitives and also covers the token-based bare/comb rules below.
+    if [ "$pattern" = "$SSN_DELIMITED" ]; then pattern="$SSN_NUMBER"; fi
     text=$(printf '%s' "$text" | sed -E "s#$pattern#[REDACTED]#g")
   done
   # DELIBERATELY BROADER than the detector's token rule, which requires exactly
@@ -712,7 +790,7 @@ redact() {
   # legibility; under-redaction discloses. The message says names may be
   # redacted so a mangled one cannot be mistaken for a file that does not exist,
   # and the authoritative list is `git diff --cached --name-only`.
-  printf '%s' "$text" | sed -E 's/[0-9]{9}/[REDACTED]/g'
+  printf '%s' "$text" | sed -E "s#${SSN_NUMBER}#[REDACTED]#g"
 }
 
 # --- Names mode -------------------------------------------------------------
@@ -740,7 +818,9 @@ if [ -n "$NAMES_REV" ]; then
     echo "  $CONTEXT BLOCKED — PII pattern in a name"
     echo "=========================================="
     echo ""
-    printf '%s\n' "${NAME_BLOCKED[@]}" | sort -u
+    # Redaction can make distinct names identical. Retain every refusal rather
+    # than making an inspected name disappear from the report.
+    printf '%s\n' "${NAME_BLOCKED[@]}" | sort
     echo ""
     echo "A branch or tag name is published as-is and is not file content, so"
     echo "nothing downstream can mask it. Rename it before pushing."
@@ -1035,6 +1115,21 @@ for scope in "${SCOPES[@]}"; do
       die "the patch for $safe_file yielded $added_lines added line(s) where --numstat counted $numstat_added — the two views of one diff disagree, so neither can be reported as scanned"
     fi
     [ "$added_lines" -gt 0 ] || continue
+    # Git's binary heuristic samples a prefix, and attributes can force text.
+    # Bash cannot hold NUL: refuse BEFORE loading the added bytes into a variable.
+    # ALLOW already holds this snapshot's exemptions; RAW is scratch until the
+    # next load_allowlist. Both files remain in the private temporary directory.
+    tr -d '\000' < "$ADDED" > "$RAW" 2>/dev/null \
+      || die "could not check added bytes for NUL in $safe_file"
+    if cmp -s "$ADDED" "$RAW" 2>/dev/null; then
+      :
+    else
+      nul_status=$?
+      [ "$nul_status" -eq 1 ] \
+        || die "could not compare added bytes while checking NUL in $safe_file"
+      CONTENT_BLOCKED+=("  BLOCKED NUL (content not scannable): $safe_file")
+      continue
+    fi
     added=$(<"$ADDED")
 
     hits=$(count_hits "$(strip_artifact_digests "$file" "$added")")
