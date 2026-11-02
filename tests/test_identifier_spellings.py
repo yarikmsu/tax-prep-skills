@@ -67,25 +67,31 @@ def test_source_offsets_after_normalization_do_not_touch_neighbouring_values(val
     assert mask_ssn(text) == text.replace(value, MASKED)
 
 
-def test_a_cid_token_cannot_hide_a_nine_digit_filename_or_diagnostic():
+def test_nine_digits_in_a_glyph_token_are_no_glyph_and_stay_text():
+    """A glyph number fits 16 bits. Longer, it reads as the text it is."""
     token = "(cid:" + _ssn("") + ")"
     assert names_an_identifier(token + ".csv")
     assert _ssn("") not in redact(token)
-    # The raw diagnostic span and the normalized identifier span overlap:
-    # resolve both against the source, before either can hide the other.
-    assert redact(_ssn(token)) == "[REDACTED]"
-
-
-def test_a_literal_cid_token_cannot_exempt_nine_extracted_digits():
-    token = "(cid:" + _ssn("") + ")"
     expected = "(cid:" + MASKED + ")"
     assert mask_ssn("SSN " + token) == "SSN " + expected
-    assert mask_ssn(token) == expected
-    assert mask_runs(token, ()) == expected
     assert mask_table([["SSN", token]]) == [["SSN", expected]]
-    assert mask_row_runs([token], ()) == [expected]
     assert mask_table([["SSN", token + "; Reference " + _ssn("-")]], ()) == [
         ["SSN", expected + "; Reference " + MASKED]]
+    assert mask_runs(token, {_ssn("")}) == expected
+
+
+@pytest.mark.parametrize("text", ["Wages(cid:1)850(cid:1)00(cid:1)2025(cid:1)Box",
+                                  "Rent(cid:1)$1,250(cid:1)00(cid:1)2025", _ssn("(cid:17)")])
+def test_an_unmapped_glyph_needs_a_label(text):
+    """As often the page's own space as a mark, so it reads as a mark set apart."""
+    assert mask_ssn(text) == text
+    assert mask_table([[text]]) == [[text]]
+
+
+def test_an_unmapped_glyph_masks_with_a_label_or_a_known_run():
+    value = _ssn("(cid:17)")
+    assert mask_ssn("SSN: " + value) == "SSN: " + MASKED
+    assert mask_runs("Box " + value, {_ssn("")}) == "Box " + MASKED
 
 
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables", "extract_csv", "extract_excel"])
@@ -306,11 +312,10 @@ def test_a_mask_ends_at_its_digit_and_keeps_an_invisible_character_after_it():
     assert mask_ssn(f"​SSN ​{_ssn('-')}​2025") == f"​SSN ​{MASKED}​2025"
 
 
-def test_a_digit_inside_a_glyph_token_reaches_no_text_past_it():
+def test_a_run_inside_a_glyph_token_reaches_no_text_past_it():
     """The printed reading's span sits inside the token the view folds to one."""
-    token = "(cid:" + _ssn("") + ")"
     tail = " Wages 850.00 and enough further words to pass the token's own length"
-    assert mask_ssn("SSN " + token + tail) == "SSN (cid:" + MASKED + ")" + tail
+    assert mask_runs("(cid:12345)" + tail, {"12345"}) == "(cid:12345)" + tail
 
 
 # Nine digits across a line break, each piece a figure of its own.
@@ -323,7 +328,12 @@ NOT_WRAPPED = ["SSN ending 1234\n12345 Main St", "SSN: XXXXX1234\n12345 Main St"
                "SSN\n100\n20\n3000,50", "SSN: XX123\n45\n6789", "SSN: ***123\n45\n6789",
                # Past a label's reach on its own row, a figure wraps onto the next.
                f"SSN {MASKED} Box 1 Wages 850\n00\n2025",
-               "SSN and a run of words that goes on past any label's reach 100\n20\n3000"]
+               "SSN and a run of words that goes on past any label's reach 100\n20\n3000",
+               # Sharing a line, an unmarked break is an amount over the next row.
+               "PAYER'S TIN RECIPIENT'S TIN 1 Interest income\n12-3456789 $ 850 00\n2025 Form 1099-INT",
+               "Your social security number 850 00\n1234 Main St", "Recipient's TIN\n$ 850 00\n1099-INT",
+               "RECIPIENT'S TIN\n1 2 3\n4 5 6\n7 8 9", "SSN\n100\n20\n3000 Main St",
+               "SSN\n" + "\n".join(map(str, range(1, 11)))]
 
 
 @pytest.mark.parametrize("text", NOT_WRAPPED, ids=[f"figures-{i}" for i in range(len(NOT_WRAPPED))])
@@ -338,11 +348,50 @@ def test_figures_in_a_labels_cell_are_no_wrapped_identifier(value):
     assert mask_table([["SSN"], [value]]) == [["SSN"], [value]]
 
 
-@pytest.mark.parametrize("value", [f"000 00\n{LAST4}", f"000\n00 {LAST4}", f"000 -\n00 - {LAST4}",
-                                   "0 0 0 0 0\n" + " ".join(LAST4), f"000.\n00.{LAST4}", f"000/00/\n{LAST4}"])
-def test_a_break_at_a_group_edge_or_beside_a_mark_masks(value):
-    assert mask_ssn("SSN: " + value) == "SSN: " + MASKED + "\n"
-    assert mask_ssn("SSN\n" + value) == "SSN\n" + MASKED + "\n"
+@pytest.mark.parametrize("value", [f"000\n00\n{LAST4}", f"000 -\n00 - {LAST4}", f"000.\n00.{LAST4}", f"000/00/\n{LAST4}",
+                                   "0 0 0 -\n0 0 -\n" + " ".join(LAST4), "\n".join(_ssn(""))])
+def test_a_break_beside_a_mark_or_with_each_group_alone_masks(value):
+    rows = "\n" * value.count("\n")
+    assert mask_ssn("SSN: " + value) == "SSN: " + MASKED + rows
+    assert mask_ssn("SSN\n" + value) == "SSN\n" + MASKED + rows
+
+
+def test_a_digit_ending_a_row_does_not_take_a_combs_place():
+    comb = " ".join(_ssn(""))
+    assert mask_ssn(f"Employee's social security number Box 1\n{comb}").endswith(f"Box 1\n{MASKED}")
+    assert mask_table([["SSN"], [f"Box 1\n{comb}"]])[1][0] == f"Box 1\n{MASKED}"
+    for text in (f"SSN\n1\n{comb}", f"Spouse's SSN\nForm 1040 Page 2\n{comb} Jane"):
+        assert set(re.findall(r"XXX-XX-[0-9X]+", mask_ssn(text))) <= {MASKED}, "no other last four"
+
+
+def test_a_value_past_a_short_comb_is_still_the_labels():
+    """The comb keeps no digit, so nothing stops the label's reach at it."""
+    comb = " ".join(_ssn("") + "5")
+    assert mask_ssn(f"Spouse's SSN: {comb} # {_ssn(' - ')}") == f"Spouse's SSN: XXX-XX-XXXX # {MASKED}"
+
+
+def test_a_value_only_the_view_reads_is_a_target_and_fills_no_box():
+    wide = _wide(_ssn(""))
+    assert identifier_spans(wide)[1] == []
+    assert split_spans(wide) == [(0, 9)]
+
+
+def test_a_unicode_figure_under_a_label_leaves_the_value_on_its_row_masked(tmp_path, variant_font):
+    from reportlab.pdfgen import canvas
+    path = tmp_path / "under.pdf"
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    page.setFont(variant_font, 9)
+    for x, top, text in ((36, 100, "SSN"), (60, 100, "850.00"), (110, 100, _ssn("")), (36, 112, _wide("000" + "33" + "4444"))):
+        page.drawString(x, 792 - top, text)
+    page.save()
+    for route in ("extract_pdf_text", "extract_pdf_words"):
+        out = _read(route, path, tmp_path)
+        assert _ssn("") not in out and "850.00" in out
+
+
+@pytest.mark.parametrize("name", [f"5\u200b{_comb()}.csv", f"{_ssn('-' + chr(10))}\u200b5.csv"])
+def test_a_filename_refuses_a_touched_comb_or_wrapped_value(name):
+    assert names_an_identifier(name)
 
 
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables",
