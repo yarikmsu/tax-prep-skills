@@ -4682,11 +4682,20 @@ with no printed marks, so the marked comb is drawn in the tests, not read from a
   a wage over an address was lost. Two review rounds then found amounts: `$125.50.`
   over `2025 filing season` printed `$XXX-XX-2025`. A break now counts beside a dash or
   with every group or box alone on its line, and only where the value opens its line
-  or follows its label straight on. Still printing: a break inside a group, beside a
+  or follows its label as a split value does. Still printing: a break inside a group, beside a
   dot or slash, or an unmarked value sharing its lines.
 - Accepted: a stack with each group alone on its line under a label masks, even if it
-  is an amount with its cents on their own row. A doubled tight dash in a 3-2-4 masks
-  with no label, as one does. Text costs about 1.6 to 3.5 times main and stays linear.
+  is an amount with its cents on their own row, or nine numbered rows, or a column of
+  figures with `-` rows between. A doubled tight dash in a 3-2-4 masks with no label, as
+  one does. A value beside a Unicode digit can lose its last four, as the ASCII spelling
+  does on main. Text costs about 1.4 to 3.6 times main, about 4 at worst on crafted
+  input, and stays linear.
+- Against main: 192,000 generated texts and tables print no digit main hides, half of
+  them with the new spellings; the three hits were one glued-digit artefact each, read
+  cell by cell. 1,600 drawn pages lose nothing, and 26 IRS documents read identically on
+  four routes. 180,000 identifier-free pages lose no figure except on pages whose spaces
+  are all `(cid:N)`, which read as main reads them with real spaces. Three independent
+  review rounds found every defect named above; the third found no leak.
 - Left for AA103: combs and labels spaced by `(cid:N)`, a fully unmapped font, fullwidth
   dot and slash, invisibles outside format characters, an invisible-laced label over a
   value known only by position, and the gate's fullwidth, comb and invisible spellings.

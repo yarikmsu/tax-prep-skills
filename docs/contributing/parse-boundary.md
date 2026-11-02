@@ -135,7 +135,7 @@ What the view adds reaches those readers through `split_spans`, as targets.
 A comb with printed separators and a value wrapped across lines need a label
 or matching positional evidence, as spaced digits do. A line break counts only
 beside a dash, or with every group or comb box alone on its line, and the value
-must open its line or follow its label straight on. Anywhere else figures total
+must open its line or follow its label, as a split value does. Anywhere else figures total
 nine by accident: a last four over a street number, an amount with its cents apart
 over a form name, a sentence ending "$125.50." over a year. So a value broken inside
 a group, beside a dot or a slash, or unmarked and sharing its lines (`000 11` over

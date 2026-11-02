@@ -1479,7 +1479,9 @@ def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool
                 box["identity_identifiers"] = _identity_identifiers(row, safe)
                 out += [{"text": w["text"], **{k: round(float(w[k]), 1) for k in ("x0", "x1", "top", "bottom")}}
                         for w in row if not any(c.isdigit() for c in w["text"])]
-            out.append(box)
+            # A wrapped value masks on its first row and leaves the rest empty.
+            if safe:
+                out.append(box)
     return out
 
 

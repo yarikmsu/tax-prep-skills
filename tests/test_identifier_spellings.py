@@ -241,6 +241,10 @@ def test_wrapped_pdf_value_masks_without_losing_row_alignment(tmp_path, variant_
     page.save()
     out = _read(route, path, tmp_path)
     assert MASKED in out and "850.00" in out
+    if route != "extract_pdf_text":
+        layout = route == "identity_words"
+        words = P.extract_pdf_words(str(path), workspace=str(tmp_path), identity_layout=layout)[0]
+        assert all(word["text"] for word in words), "a consumer reads an empty word as printed text"
 
 
 @pytest.mark.parametrize("value", VALUES, ids=[f"variant-{i}" for i in range(len(VALUES))])
