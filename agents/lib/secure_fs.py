@@ -388,11 +388,12 @@ _ID_MARKED_COMB = re.compile(
     rf"[0-9][^\S\n]+[0-9]{_ID_GAP}{_ID_MARK}{_ID_GAP}[0-9](?:[^\S\n]+[0-9]){{3}}(?![0-9])")
 # A line break may fall inside a labelled identifier, but never jump a blank
 # line or another word, and only where it cannot be figures that happen to total
-# nine digits. Beside a mark, or with every group, or every comb box, alone on its
-# line. Unmarked and sharing a line it is not the same claim: "850 00" over "2025
-# Form 1099-INT" is an amount over a form name, "1234" over "12345 Main St" a last
-# four over an address, and a row's last digit over a comb would take the comb's
-# place. Those print as they did; the wrap an actual narrow box makes is the first.
+# nine digits: beside a dash, or with every group, or every comb box, alone on its
+# line. A dot is no such mark, since "$125.50." before a line opening "2025" is a
+# sentence ending. Unmarked and sharing a line it is no claim at all: "850 00" over
+# "2025 Form 1099-INT" is an amount over a form name, "1234" over "12345 Main St" a
+# last four over an address. `_text_identifier_spans` also takes one only at the
+# start of its line or straight after its label, the reach `_ID_LABELED_SPLIT` has.
 _ID_WRAP_GAP = r"[^\S\n]*(?:\n[^\S\n]*)?"
 _ID_WRAP_LINE = r"[^\S\n]*\n[^\S\n]*"
 _ID_WRAP_SPACE = r"(?:[^\S\n]+(?:\n[^\S\n]*)?|\n[^\S\n]*)"
@@ -404,15 +405,13 @@ def _id_wrap_group(n: int) -> str:
 
 
 _ID_WRAPPED = re.compile(
-    r"(?<![0-9])(?<![Xx][Xx]-)(?<!\*\*-)(?:"
-    + "|".join(rf"{_id_wrap_group(3)}{_ID_WRAP_GAP}{mark}{_ID_WRAP_GAP}"
-               rf"{_id_wrap_group(2)}{_ID_WRAP_GAP}{mark}{_ID_WRAP_GAP}{_id_wrap_group(4)}(?![0-9])"
-               for mark in (_ID_MARK, r"\.", "/"))
-    # An amount's own digits ("3000.50", "1,100", "$100") are no group.
-    + rf"|(?<![Xx*$])(?<![0-9][.,])[0-9]{{3}}{_ID_WRAP_LINE}[0-9]{{2}}{_ID_WRAP_LINE}[0-9]{{4}}(?![0-9]){_ID_WRAP_ENDS_LINE}"
+    r"(?<![0-9])(?:"
+    rf"{_id_wrap_group(3)}{_ID_WRAP_GAP}{_ID_MARK}{_ID_WRAP_GAP}"
+    rf"{_id_wrap_group(2)}{_ID_WRAP_GAP}{_ID_MARK}{_ID_WRAP_GAP}{_id_wrap_group(4)}(?![0-9])"
+    rf"|[0-9]{{3}}{_ID_WRAP_LINE}[0-9]{{2}}{_ID_WRAP_LINE}[0-9]{{4}}(?![0-9]){_ID_WRAP_ENDS_LINE}"
     # A tenth line of a digit makes it a numbered list, not nine boxes.
-    + rf"|[0-9](?:{_ID_WRAP_LINE}[0-9]){{8}}(?![0-9]){_ID_WRAP_ENDS_LINE}(?!{_ID_WRAP_LINE}[0-9])"
-    + r")")
+    rf"|[0-9](?:{_ID_WRAP_LINE}[0-9]){{8}}(?![0-9]){_ID_WRAP_ENDS_LINE}(?!{_ID_WRAP_LINE}[0-9])"
+    r")")
 # An OCR layer splits a delimited SSN beside a separator, horizontal
 # whitespace on either side of either mark. Like the whitespace spelling it
 # is masked only under a label: unlabelled, the same shape is an amount
@@ -432,7 +431,6 @@ _ID_SPLIT_VALUE = re.compile(
 _ID_LABEL_RE = re.compile(_ID_LABEL, re.IGNORECASE)
 _ID_LABELED_SAME_LINE = re.compile(
     rf"({_ID_LABEL}[^0-9\n]{{0,24}}){_ID_VALUE_RE.pattern}", re.IGNORECASE)
-_ID_LABELED_WRAPPED = re.compile(rf"({_ID_LABEL}[^0-9\n]{{0,24}})({_ID_WRAPPED.pattern})", re.IGNORECASE)
 # On its label's row a split is the label's own only straight after it,
 # spaces, the ")" closing "social security number (SSN)" and one ":", "#" or
 # "." between: page text joins a label to columns across the page ("SSN
@@ -441,11 +439,11 @@ _ID_LABELED_WRAPPED = re.compile(rf"({_ID_LABEL}[^0-9\n]{{0,24}})({_ID_WRAPPED.p
 # past label wording that ends by introducing it ("(SSN): ", "SSN no.: ", "SSN
 # = ", "SSN is "), within the bare spelling's reach. A dash does not introduce
 # one: it can stand for zero between figures ("identification - 600 - 10 - 2000").
+_ID_INTRODUCED = (rf"{_ID_LABEL}(?:[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?"
+                  rf"|[^0-9\n]{{0,24}}(?:[:#=]|(?<![A-Za-z])is)[^\S\n]*)")
 _ID_LABELED_SPLIT = re.compile(
-    rf"({_ID_LABEL}(?:[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?"
-    rf"|[^0-9\n]{{0,24}}(?:[:#=]|(?<![A-Za-z])is)[^\S\n]*))"
-    rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
-    re.IGNORECASE)
+    rf"({_ID_INTRODUCED})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
+_ID_LABELED_WRAPPED = re.compile(rf"({_ID_INTRODUCED})({_ID_WRAPPED.pattern})", re.IGNORECASE)
 # A value is the label's own only straight after it: spaces, the ")"
 # closing "social security number (SSN)", and one ":", "#" or ".". Page
 # text joins a label to the columns across the page, so an identifier-shaped
@@ -524,18 +522,18 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
     whether the page masked that identifier itself (`XXX-XX-1234`). A reader
     that knows where the row sits on the page decides which label governs
     which run; `mask_runs` masks them."""
-    view = identifier_text(row)
-    labels = [(a, b, bool(_ID_ADJACENT_VALUE.match(row, b))) for a, b in _in_either_reading(view, (_ID_LABEL_RE,))]
+    labels = [(m.start(), m.end(), bool(_ID_ADJACENT_VALUE.match(row, m.end())))
+              for m in _ID_LABEL_RE.finditer(row)]
     # "SSN or ITIN", "SSN/ITIN" and "social security number (SSN)"
     # name one field. Walk aliases backwards once, without scanning or
     # copying the remaining row for each label in a crafted long chain.
     for i in range(len(labels) - 2, -1, -1):
         low, high, _ = labels[i]
-        if labels[i + 1][2] and _ID_ALIAS.fullmatch(view.text, view.canonical(high), view.canonical(labels[i + 1][0])):
+        if labels[i + 1][2] and _ID_ALIAS.fullmatch(row, high, labels[i + 1][0]):
             labels[i] = (low, high, True)
-    return (labels, sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)}),
-            [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
-            _in_either_reading(view, (_LABEL_NOTE,)))
+    values = sorted({(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED) for m in pattern.finditer(row)})
+    return (labels, values, [(m.start(), m.end(), m[0][0] in "Xx*") for m in _ID_SPELLED.finditer(row)],
+            [(m.start(), m.end()) for m in _LABEL_NOTE.finditer(row)])
 
 
 def split_spans(row: str) -> list:
@@ -641,7 +639,8 @@ def _text_identifier_spans(text: str, *, governed=False) -> list:
     spans.update((m.end(1), m.end()) for m in _ID_LABELED_WRAPPED.finditer(text) if "\n" in m[2])
     line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
     for match in _ID_WRAPPED.finditer(text):
-        if "\n" in match[0] and (governed or bisect_right(line_starts, match.start()) - 1 in under):
+        at = bisect_right(line_starts, match.start()) - 1
+        if "\n" in match[0] and (governed or at in under) and not text[line_starts[at]:match.start()].strip():
             spans.add((match.start(), match.end()))
     return sorted(spans)
 

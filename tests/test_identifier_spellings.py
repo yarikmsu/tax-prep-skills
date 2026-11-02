@@ -255,7 +255,7 @@ def test_identity_metadata_keeps_only_the_last_four_and_original_bounds(tmp_path
 # The view is additive. Reading "2222" and an invisible character and "3" as
 # 22223 must not cost what the printed text shows: an identifier with a boundary.
 TOUCHED = [_ssn("-"), _ssn("."), _ssn("/"), _ssn(""), f"000 00 {LAST4}", " ".join(_ssn(""))]
-TOUCHES = ["​3", "﻿2025", "‍7", "３", "٣"]
+TOUCHES = ["\u200b3", "\ufeff2025", "\u200d7", "\uff13", "\u0663"]
 
 
 @pytest.mark.parametrize("value", TOUCHED, ids=[f"value-{i}" for i in range(len(TOUCHED))])
@@ -270,17 +270,17 @@ def test_a_character_touching_a_value_does_not_hide_it(value, touch):
 
 
 @pytest.mark.parametrize("value", [_ssn("-"), _ssn("."), _ssn("/")], ids=["hyphen", "dot", "slash"])
-@pytest.mark.parametrize("touch", ["2025​", "３", "٣"], ids=["zwsp", "fullwidth", "arabic"])
+@pytest.mark.parametrize("touch", ["2025\u200b", "\uff13", "\u0663"], ids=["zwsp", "fullwidth", "arabic"])
 def test_a_character_touching_a_delimited_value_from_before_does_not_hide_it(value, touch):
     assert mask_ssn(touch + value) == touch + MASKED
 
 
 def test_a_reader_still_sees_a_value_the_view_would_join():
     bare = _ssn("")
-    _, values, _, _ = identifier_spans(f"SSN {bare}​5")
+    _, values, _, _ = identifier_spans(f"SSN {bare}\u200b5")
     assert (4, 4 + len(bare)) in values
     split = _ssn(" - ")
-    assert (4, 4 + len(split)) in split_spans(f"SSN {split}​5")
+    assert (4, 4 + len(split)) in split_spans(f"SSN {split}\u200b5")
 
 
 @pytest.mark.parametrize("value", TOUCHED, ids=[f"value-{i}" for i in range(len(TOUCHED))])
@@ -293,8 +293,8 @@ def test_a_diagnostic_redacts_a_touched_value_and_a_filename_refuses(value, touc
 def test_a_position_only_run_is_found_past_a_joining_character():
     """The view reads 2222 and 5 as one group, so the run needs the printed text."""
     spaced = f"000 00 {LAST4}"
-    assert mask_runs(f"Box {spaced}​5", {_ssn("")}) == f"Box {MASKED}​5"
-    assert mask_row_runs([f"{spaced}​5", "850.00"], {_ssn("")}) == [f"XXX XX {LAST4}​5", "850.00"]
+    assert mask_runs(f"Box {spaced}\u200b5", {_ssn("")}) == f"Box {MASKED}\u200b5"
+    assert mask_row_runs([f"{spaced}\u200b5", "850.00"], {_ssn("")}) == [f"XXX XX {LAST4}\u200b5", "850.00"]
 
 
 def test_a_label_only_the_view_reads_labels_its_cell():
@@ -313,17 +313,18 @@ def test_a_known_run_in_any_digits_reads_as_its_digits():
 
 def test_a_label_the_view_would_join_to_a_word_still_labels():
     bare = _ssn("")
-    assert mask_ssn(f"A​SSN {bare}") == f"A​SSN {MASKED}"
-    assert mask_table([["A​SSN"], [bare]]) == [["A​SSN"], [MASKED]]
-    assert mask_table([["A​SSN", bare]]) == [["A​SSN", MASKED]]
-    labels, _, _, _ = identifier_spans(f"A​SSN {bare}")
+    assert mask_ssn(f"A\u200bSSN {bare}") == f"A\u200bSSN {MASKED}"
+    assert mask_table([["A\u200bSSN"], [bare]]) == [["A\u200bSSN"], [MASKED]]
+    assert mask_table([["A\u200bSSN", bare]]) == [["A\u200bSSN", MASKED]]
+    labels, _, _, _ = identifier_spans(f"A\u200bSSN {bare}")
     assert [(start, end) for start, end, _ in labels] == [(2, 5)]
+    assert identifier_spans(f"S\u200bSN {bare}")[0] == [], "readers keep the printed text's labels"
 
 
 def test_a_mask_ends_at_its_digit_and_keeps_an_invisible_character_after_it():
     """Taking it would print the next digit straight after the last four."""
-    assert mask_ssn(f"SSN {_ssn('-')}​") == f"SSN {MASKED}​"
-    assert mask_ssn(f"​SSN ​{_ssn('-')}​2025") == f"​SSN ​{MASKED}​2025"
+    assert mask_ssn(f"SSN {_ssn('-')}\u200b") == f"SSN {MASKED}\u200b"
+    assert mask_ssn(f"\u200bSSN \u200b{_ssn('-')}\u200b2025") == f"\u200bSSN \u200b{MASKED}\u200b2025"
 
 
 def test_a_run_inside_a_glyph_token_reaches_no_text_past_it():
@@ -351,7 +352,16 @@ NOT_WRAPPED = ["SSN ending 1234\n12345 Main St", "SSN: XXXXX1234\n12345 Main St"
                # Each piece ends its line and one line holds two of them.
                "Your social security number 850 00\n2025", "SSN\n850 00\n2025", "SSN\n850\n00 2025",
                # The ninth box shares its line.
-               "SSN\n" + "\n".join(map(str, range(1, 9))) + "\n9 Main St"]
+               "SSN\n" + "\n".join(map(str, range(1, 9))) + "\n9 Main St",
+               # A sentence ending in an amount before a line opening with a year.
+               "Fee per ITIN: $125.50.\n2025 filing season", "SSN\n$850.25.\n1099-INT enclosed",
+               "Recipient's identification number\nYour total interest was $850.25.\n2025 Form 1099-INT",
+               "Recipient's TIN\nTotal $1,234.56.\n2025 Form 1099-DIV",
+               # Not where a value starts: past wording, or partway along a row.
+               "Employee's social security number\nWages 850\n00\n2025", "SSN Wages 850\n00\n2025",
+               "SSN Dividends 250 -\n15 - 1200", "SSN ($100- 25-\n1000)",
+               "Recipient's TIN\nBox 1\n" + "\n".join(map(str, range(2, 10))),
+               "Recipient's TIN\nTotal 850-\n15-1200"]
 
 
 @pytest.mark.parametrize("text", NOT_WRAPPED, ids=[f"figures-{i}" for i in range(len(NOT_WRAPPED))])
@@ -366,12 +376,38 @@ def test_figures_in_a_labels_cell_are_no_wrapped_identifier(value):
     assert mask_table([["SSN"], [value]]) == [["SSN"], [value]]
 
 
-@pytest.mark.parametrize("value", [f"000\n00\n{LAST4}", f"000 -\n00 - {LAST4}", f"000.\n00.{LAST4}", f"000/00/\n{LAST4}",
+@pytest.mark.parametrize("value", [f"000\n00\n{LAST4}", f"000 -\n00 - {LAST4}", f"000\u2013\n00\u2013{LAST4}",
                                    "0 0 0 -\n0 0 -\n" + " ".join(LAST4), "\n".join(_ssn(""))])
 def test_a_break_beside_a_mark_or_with_each_group_alone_masks(value):
     rows = "\n" * value.count("\n")
     assert mask_ssn("SSN: " + value) == "SSN: " + MASKED + rows
     assert mask_ssn("SSN\n" + value) == "SSN\n" + MASKED + rows
+
+
+def test_a_wrapped_value_in_a_labels_cell_masks_only_from_its_start():
+    assert mask_table([["SSN", _ssn("-\n")]]) == [["SSN", MASKED + "\n\n"]]
+    for cell in ("Paid $850.25.\n2025 refund", "Paid 850-\n15-1200"):
+        assert mask_table([["Recipient's TIN", cell]]) == [["Recipient's TIN", cell]]
+
+
+def test_a_label_only_the_view_reads_takes_no_column(tmp_path, variant_font):
+    """A reader that gave it the column would lose the real heading's values."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.pdfgen import canvas
+    values = [" ".join(("000", group, serial)) for group, serial in
+              (("11", "2222"), ("33", "4444"), ("55", "6666"), ("77", "8888"))]
+    path = tmp_path / "column.pdf"
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    page.setFont(variant_font, 9)
+    left = 100 - 12 - stringWidth("S-SN", variant_font, 9)
+    for x, y, text in ((100, 740, "SSN"), (100, 728, values[0]), (left, 560, "S\u200bSN"),
+                       (100, 548, values[1]), (100, 500, values[2]), (100, 470, values[3])):
+        page.drawString(x, y, text)
+    page.save()
+    for route in ("extract_pdf_text", "extract_pdf_words", "identity_words"):
+        out = _read(route, path, tmp_path)
+        for value in values:
+            assert value not in out and value.replace(" ", " | ") not in out and value.split()[2] in out
 
 
 def test_a_digit_ending_a_row_does_not_take_a_combs_place():
@@ -415,7 +451,7 @@ def test_a_filename_refuses_a_touched_comb_or_wrapped_value(name):
 
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables",
                                    "extract_csv", "extract_excel"])
-@pytest.mark.parametrize("touch", ["​3", "３"], ids=["zwsp", "fullwidth"])
+@pytest.mark.parametrize("touch", ["\u200b3", "\uff13"], ids=["zwsp", "fullwidth"])
 def test_a_touched_value_masks_on_every_route(tmp_path, variant_font, route, touch):
     rows = [["SSN", _ssn("-") + touch], ["Wages", "850.00"]]
     if route == "extract_csv":
