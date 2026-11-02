@@ -146,10 +146,22 @@ Four rules, in the order they are cheapest to reason about:
    `.claude/` is the one directory that cannot take a directory rule, because it also
    holds tracked project config — there the directory is the SCOPE and the basename is
    the RULE.
-4. **Content**, over the ADDED lines only: full SSNs in every written form (hyphen, a
-   run of spaces, tab, dot or slash — the SAME separator on both sides, which is what
-   keeps a money range from reading as an SSN — or nine bare digits), plus
-   high-confidence credentials. It reports file and match count and never the value.
+4. **Content**, over the ADDED lines only: ASCII-digit SSNs grouped with dashes,
+   spaces, tabs, dots or slashes, or nine bare digits, plus high-confidence
+   credentials. Dash edges may differ or repeat: the ASCII hyphen, Unicode 16.0
+   dash punctuation, typographic minus/hyphen and horizontal-rule spellings are
+   supported, including the two Windows-1252 dash bytes. Other separator families
+   must agree on both sides, keeping a money range from reading as an SSN. It
+   reports file and match count and never the value. This does not recognize
+   every extraction spelling: fullwidth digits, combs and invisible characters
+   between digits remain outside this gate's patterns.
+
+The Unicode marks are complete byte alternatives under `LC_ALL=C`, not a Unicode
+bracket class that becomes a bag of unrelated bytes. Bash octal escapes keep the
+same script working on macOS's Bash 3.2 and on Linux. Matches retain their original
+spelling: an ASCII allowlist entry does not exempt its Unicode spelling. The
+detector and redactor share one pattern list, ordered with whole credentials first
+so an identifier inside a credential cannot fragment it before redaction.
 
 **The same SSN patterns run against the PATHNAME, before any exemption** — a file named
 after an SSN discloses it whatever it contains — and every path printed in a block
