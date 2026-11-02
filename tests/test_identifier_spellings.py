@@ -222,7 +222,7 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert MASKED in out and "850.00" in out
 
 
-def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False):
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=()):
     """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
 
     A TrueType font with only ToUnicode entries removed is NOT an unmapped
@@ -244,6 +244,9 @@ def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False):
     if isolated_marks:
         for i in range(13):
             content += f" BT /F1 9 Tf 36 {640 - i * 12} Td <007F> Tj ET".encode()
+
+    for x, y, code in symbols:
+        content += f" BT /F1 9 Tf {x} {y} Td <{code:04X}> Tj ET".encode()
 
     def stream(data):
         return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
@@ -303,6 +306,48 @@ def test_isolated_unmapped_marks_on_separate_rows_are_not_one_unreadable_run(tmp
     path = _cid_pdf(tmp_path / "marks.pdf", mapped=mapped, isolated_marks=True)
     out = _read(route, path, tmp_path)
     assert MASKED in out and "850.00" in out
+
+
+_READABLE = set("Your social security number" + _comb() + "Wages850.00")
+_ON_ONE_ROW = 640
+
+
+def _row(count, codes=(0x7f,)):
+    return [(36 + i * 12, _ON_ONE_ROW, codes[i % len(codes)]) for i in range(count)]
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+@pytest.mark.parametrize("symbols", [
+    pytest.param(_row(1), id="one checkbox"),
+    pytest.param(_row(8, (0x7f, 0x7e)), id="eight glyphs cannot hold an identifier"),
+    pytest.param(_row(40), id="one glyph repeated is a leader"),
+    pytest.param([(36, 640 - i * 12, 0x7f + i % 2) for i in range(13)], id="bullets on their own rows"),
+])
+def test_a_symbol_on_a_readable_page_does_not_refuse_the_document(tmp_path, route, symbols):
+    path = _cid_pdf(tmp_path / "symbols.pdf", mapped=_READABLE, symbols=symbols)
+    out = _read(route, path, tmp_path)
+    assert MASKED in out and "850.00" in out
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_symbol_font_with_no_letters_is_not_refused_for_that(tmp_path, route):
+    """The name a font carries decides nothing: a subset holding only a checkbox
+    has no readable character at all, and the page beside it reads."""
+    path = _cid_pdf(tmp_path / "symbols.pdf", mapped=_READABLE, shared_name=True, symbols=_row(1))
+    assert "850.00" in _read(route, path, tmp_path)
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+@pytest.mark.parametrize("symbols", [
+    pytest.param(_row(9, (0x7f, 0x7e)), id="nine glyphs of two kinds"),
+    pytest.param([(36 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(3)]
+                 + [(90 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(6)], id="groups apart still one run"),
+])
+def test_nine_unreadable_glyphs_on_a_readable_page_refuse(tmp_path, route, symbols):
+    path = _cid_pdf(tmp_path / "digits.pdf", mapped=_READABLE, symbols=symbols)
+    with pytest.raises(ValueError, match="unmapped font") as error:
+        _read(route, path, tmp_path)
+    assert "(cid:" not in str(error.value)
 
 
 @pytest.mark.parametrize("invisible", [*INVISIBLE, *MORE_INVISIBLE])

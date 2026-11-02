@@ -730,6 +730,35 @@ def _labels_crossed(glyphs: list[dict], index: dict, lines: dict[int, int], tick
     return out
 
 
+_UNMAPPED_GLYPH = re.compile(r"\(cid:[0-9]+\)")
+_IDENTIFIER_DIGITS = 9
+
+
+def _refuse_unreadable_identifier(chars: list[dict], tick) -> None:
+    """Refuse a row printing nine unreadable glyphs in a row, of at least two
+    kinds: whole digits a mask cannot find, since a `(cid:N)` number names a
+    glyph and not a character. Only a letter or digit it can read ends the run,
+    so a mapped dash or space between groups does not. Fewer glyphs cannot hold
+    a whole identifier and one glyph repeated is a leader or a rule, so a
+    checkbox, a bullet or a symbol font on a readable page still parses: the
+    refusal stops the whole document, and an unmapped symbol is ordinary."""
+    if sum(1 for char in chars if _UNMAPPED_GLYPH.fullmatch(char["text"])) < _IDENTIFIER_DIGITS:
+        return
+    for row in _overlay_rows(chars, tick):
+        run, kinds = 0, set()
+        for char in row:
+            tick()
+            if _UNMAPPED_GLYPH.fullmatch(char["text"]):
+                run += 1
+                kinds.add(char["text"])
+                if run >= _IDENTIFIER_DIGITS and len(kinds) > 1:
+                    raise ValueError("PDF prints a run of unreadable glyphs the size of an identifier (an unmapped "
+                                     "font). Refusing extraction: re-export with searchable text or use a local "
+                                     "OCR copy.")
+            elif any(c.isalnum() for c in char["text"]):
+                run, kinds = 0, set()
+
+
 def _safe_pdf_page(page, tick):
     """The page to read, and runs its labels govern before cleanup that every
     route also masks. With no identifier drawn over its label, or each one
@@ -742,38 +771,7 @@ def _safe_pdf_page(page, tick):
     from and those the original page's labels govern in full.
     """
     tick()
-    # A wholly undecodable font can hold the labels and the digits alike.
-    # Its `(cid:N)` numbers are not character codes; neither masking nor
-    # interpreting them as digits can recover the source. Refuse all routes
-    # before producing any output. An isolated missing space/mark in otherwise
-    # readable text still reaches the source-preserving masking rules.
-    unknown_fonts, readable_fonts = set(), set()
-    unknown_count = 0
-    for char in page.chars:
-        tick()
-        text = char["text"]
-        if re.fullmatch(r"\(cid:[0-9]+\)", text):
-            unknown_fonts.add(char["fontname"])
-            unknown_count += 1
-        elif any(c.isalnum() for c in text):
-            readable_fonts.add(char["fontname"])
-    # Different font resources may reuse a font name. Nine undecodable glyphs
-    # can be a complete SSN even when a readable resource shares that name,
-    # but isolated missing form marks on separate rows are not one run.
-    longest_unknown = 0
-    if unknown_count >= 9 and not unknown_fonts - readable_fonts:
-        for row in _overlay_rows(page.chars, tick):
-            unknown_run = 0
-            for char in row:
-                tick()
-                if re.fullmatch(r"\(cid:[0-9]+\)", char["text"]):
-                    unknown_run += 1
-                    longest_unknown = max(longest_unknown, unknown_run)
-                elif any(c.isalnum() for c in char["text"]):
-                    unknown_run = 0
-    if unknown_fonts - readable_fonts or longest_unknown >= 9:
-        raise ValueError("PDF contains an unmapped font or an unreadable identifier-sized run. "
-                         "Refusing extraction: re-export with searchable text or use a local OCR copy.")
+    _refuse_unreadable_identifier(page.chars, tick)
     hidden = _overlaid_digits(page.chars, tick)
     if not hidden:
         return page, set()

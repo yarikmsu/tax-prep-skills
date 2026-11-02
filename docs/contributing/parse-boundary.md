@@ -115,11 +115,12 @@ Per-host detail, and what was measured on this build:
 ### Identifier spellings at extraction (AA102)
 
 Recognition uses a separate view of the source: Unicode decimal digits read as
-ASCII digits, format characters and variation selectors disappear, and Unicode
-dashes, horizontal rules and the prolonged sound mark read as separators. An
-unmapped PDF glyph's `(cid:N)` reads as a separator set apart, which needs a label:
-it is as often the page's own space as a mark, and its glyph number never becomes
-part of the identifier. A token holding more digits than a glyph number can is
+ASCII digits, format characters, variation selectors and the fillers and combining
+marks that print nothing disappear, fullwidth dots and slashes read as their ASCII
+forms, and Unicode dashes, horizontal rules and the prolonged sound mark read as
+separators. An unmapped PDF glyph's `(cid:N)` reads as a gap, and in a second reading
+as a separator set apart. Either needs a label: it is as often the page's own space
+as a mark, and its glyph number never becomes part of the identifier. A token holding more digits than a glyph number can is
 ordinary text. Sparse offsets map matches back to the original text, so an
 unrelated amount, name or account number keeps its exact spelling.
 
@@ -127,10 +128,22 @@ unrelated amount, name or account number keeps its exact spelling.
 invisible character, or reading a neighbouring fullwidth digit as a digit, makes
 a value read as ten digits and a label as a longer word, and neither then has a
 boundary. So the text rules and known runs read both, and the spans merge on the
-source. A positional reader's labels and values come from the printed text alone,
-because each one moves what a reader governs: a label only the view reads would take
-a column from the real heading, and a value only the view reads would fill a box.
-What the view adds reaches those readers through `split_spans`, as targets.
+source. A positional reader's values come from the printed text alone, because a
+value only the view reads would fill a box; what the view adds reaches those readers
+through `split_spans`, as targets. A label only the view reads would take a column
+from the real heading, so a page holding a variant spelling is read twice, with and
+without those labels, and the runs each reading masks are unioned: neither can
+withdraw the other's masks.
+
+**A row printing nine unreadable glyphs refuses the document** on every PDF route,
+because a `(cid:N)` number names a glyph, not a character, and no mask can find
+digits nothing can read. Only a letter or digit it can read ends the run, and it
+needs two different glyphs. The rule is narrow because a refusal stops the whole
+document and an unmapped symbol is ordinary: a checkbox, a bullet or a repeated
+leader on a readable page still parses, and the IRS's own TY2025 Form 1040 general
+instructions print unmapped symbols. A value in such a font wrapped across rows
+therefore still prints as glyph numbers. Re-export with searchable text or make a
+local OCR copy rather than guessing its digits.
 
 A comb with printed separators and a value wrapped across lines need a label
 or matching positional evidence, as spaced digits do. A line break counts only
