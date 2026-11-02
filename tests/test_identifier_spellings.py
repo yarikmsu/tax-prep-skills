@@ -350,6 +350,14 @@ def test_nine_unreadable_glyphs_on_a_readable_page_refuse(tmp_path, route, symbo
     assert "(cid:" not in str(error.value)
 
 
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_readable_figure_ends_an_unreadable_run(tmp_path, route):
+    """Ten unreadable glyphs on the "Wages" row, five either side of its amount."""
+    symbols = [(120 + i * 12, 680, 0x7f + i % 2) for i in range(5)] + [(340 + i * 12, 680, 0x7f + i % 2) for i in range(5)]
+    path = _cid_pdf(tmp_path / "split.pdf", mapped=_READABLE, symbols=symbols)
+    assert "850.00" in _read(route, path, tmp_path)
+
+
 @pytest.mark.parametrize("invisible", [*INVISIBLE, *MORE_INVISIBLE])
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
 def test_an_invisible_laced_label_masks_a_value_only_position_can_find(tmp_path, variant_font, invisible, route):
