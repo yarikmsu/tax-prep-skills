@@ -457,7 +457,7 @@ _ID_ADJACENT_VALUE = re.compile(
 _ID_ALIAS = re.compile(r"[^\S\n]*(?:/|or|\()[^\S\n]*", re.IGNORECASE)
 
 
-def _label_ends(text: str, start: int | None = None, end: int | None = None, *, _view=None) -> bool:
+def _label_ends(text: str, start: int | None = None, end: int | None = None) -> bool:
     """A label line whose last label is followed straight by its value — in
     any spelling, or already masked — is a same-line layout, and the line
     under it is something else. The line is `text[start:end]`, by default its
@@ -469,11 +469,7 @@ def _label_ends(text: str, start: int | None = None, end: int | None = None, *, 
     last = None
     for last in _ID_LABEL_RE.finditer(text, start, end):
         pass
-    if last is None:
-        return False
-    if _view is not None:
-        return not _ID_ADJACENT_VALUE.match(_view.raw, _view.source(last.end()), _view.source(end))
-    return not _ID_ADJACENT_VALUE.match(text, last.end(), end)
+    return last is not None and not _ID_ADJACENT_VALUE.match(text, last.end(), end)
 
 
 # A label wrapped onto a second row hands it to the row after: Schedule B
@@ -495,7 +491,7 @@ def _mask_spaced(text: str) -> str:
     return _ID_SPACED.sub(nines, text)
 
 
-def _under_label_lines(text: str, *, _view=None) -> list[int]:
+def _under_label_lines(text: str) -> list[int]:
     """Lines an above-value label governs, read from `text` as it stands."""
     raw = text.split("\n")
     starts = [0]
@@ -504,7 +500,7 @@ def _under_label_lines(text: str, *, _view=None) -> list[int]:
     governed = []
     for i in range(1, len(raw)):
         above = i - 2 if i > 1 and _LABEL_CONTINUES.fullmatch(raw[i - 1]) else i - 1
-        if _label_ends(text, starts[above], starts[above] + len(raw[above]), _view=_view):
+        if _label_ends(text, starts[above], starts[above] + len(raw[above])):
             governed.append(i)
     return governed
 
@@ -612,14 +608,14 @@ def _same_line_spans(text: str, whole: list) -> list:
             for m in pattern.finditer(spelled)]
 
 
-def _text_identifier_spans(text: str, *, governed=False, _view=None) -> list:
+def _text_identifier_spans(text: str, *, governed=False) -> list:
     """Spans the text and table rules mask, read from one text before anything
     rewrites it: an `X` beside a label hides the label, and a digit masked
     inside a token can complete a comb. They apply only at these locations: a
     textual label must not turn an unrelated amount or routing-number copy
     into evidence."""
     spans = {(m.start(), m.end()) for m in _ID_DELIMITED.finditer(text)}
-    under = set(_under_label_lines(text, _view=_view))
+    under = set(_under_label_lines(text))
     whole = []
     offset = 0
     for i, line in enumerate(text.split("\n")):
@@ -652,7 +648,7 @@ def _text_identifier_spans(text: str, *, governed=False, _view=None) -> list:
 
 def _source_identifier_spans(view: _IdentifierText, *, governed=False) -> list:
     """`_text_identifier_spans` in source offsets, from either reading."""
-    spans = {view.span(a, b) for a, b in _text_identifier_spans(view.text, governed=governed, _view=view)}
+    spans = {view.span(a, b) for a, b in _text_identifier_spans(view.text, governed=governed)}
     if view.text != view.raw:
         spans.update(_text_identifier_spans(view.raw, governed=governed))
     return sorted(spans)
@@ -901,7 +897,7 @@ def _is_id_label_cell(cell) -> bool:
     if not isinstance(cell, str):
         return False
     view = identifier_text(cell)
-    return _label_ends(cell) or _label_ends(view.text, _view=view)
+    return _label_ends(cell) or _label_ends(view.text)
 
 
 def _mask_id_value(cell):
@@ -923,7 +919,8 @@ def _mask_id_value(cell):
         text = cell
     else:
         return cell
-    masked = mask_ssn(text, _governed=True)
+    masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
+                                           _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
     return masked if masked != text else cell
 
 

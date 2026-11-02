@@ -297,6 +297,20 @@ def test_a_position_only_run_is_found_past_a_joining_character():
     assert mask_row_runs([f"{spaced}​5", "850.00"], {_ssn("")}) == [f"XXX XX {LAST4}​5", "850.00"]
 
 
+def test_a_label_only_the_view_reads_labels_its_cell():
+    bare = _ssn("")
+    assert mask_table([["S\u200bSN", bare]]) == [["S\u200bSN", MASKED]]
+    assert mask_table([["S\u200bSN"], [bare]]) == [["S\u200bSN"], [MASKED]]
+
+
+def test_a_known_run_in_any_digits_reads_as_its_digits():
+    """A reader hands over the source's spelling, so the run must read through it."""
+    wide = _wide(_ssn(""))
+    assert mask_runs(wide, {wide}) == MASKED
+    assert mask_runs(_ssn(""), {wide}) == MASKED
+    assert mask_runs(f"Box {_ssn(' ')}", {"\u200b".join(_ssn(""))}) == f"Box {MASKED}"
+
+
 def test_a_label_the_view_would_join_to_a_word_still_labels():
     bare = _ssn("")
     assert mask_ssn(f"A​SSN {bare}") == f"A​SSN {MASKED}"
@@ -314,8 +328,8 @@ def test_a_mask_ends_at_its_digit_and_keeps_an_invisible_character_after_it():
 
 def test_a_run_inside_a_glyph_token_reaches_no_text_past_it():
     """The printed reading's span sits inside the token the view folds to one."""
-    tail = " Wages 850.00 and enough further words to pass the token's own length"
-    assert mask_runs("(cid:12345)" + tail, {"12345"}) == "(cid:12345)" + tail
+    for tail in (" Wages 850.00 and enough further words", "xx850.00 Wages"):
+        assert mask_runs("(cid:12345)" + tail, {"12345"}) == "(cid:12345)" + tail
 
 
 # Nine digits across a line break, each piece a figure of its own.
@@ -333,7 +347,11 @@ NOT_WRAPPED = ["SSN ending 1234\n12345 Main St", "SSN: XXXXX1234\n12345 Main St"
                "PAYER'S TIN RECIPIENT'S TIN 1 Interest income\n12-3456789 $ 850 00\n2025 Form 1099-INT",
                "Your social security number 850 00\n1234 Main St", "Recipient's TIN\n$ 850 00\n1099-INT",
                "RECIPIENT'S TIN\n1 2 3\n4 5 6\n7 8 9", "SSN\n100\n20\n3000 Main St",
-               "SSN\n" + "\n".join(map(str, range(1, 11)))]
+               "SSN\n" + "\n".join(map(str, range(1, 11))),
+               # Each piece ends its line and one line holds two of them.
+               "Your social security number 850 00\n2025", "SSN\n850 00\n2025", "SSN\n850\n00 2025",
+               # The ninth box shares its line.
+               "SSN\n" + "\n".join(map(str, range(1, 9))) + "\n9 Main St"]
 
 
 @pytest.mark.parametrize("text", NOT_WRAPPED, ids=[f"figures-{i}" for i in range(len(NOT_WRAPPED))])
@@ -389,7 +407,8 @@ def test_a_unicode_figure_under_a_label_leaves_the_value_on_its_row_masked(tmp_p
         assert _ssn("") not in out and "850.00" in out
 
 
-@pytest.mark.parametrize("name", [f"5\u200b{_comb()}.csv", f"{_ssn('-' + chr(10))}\u200b5.csv"])
+@pytest.mark.parametrize("name", [f"5\u200b{_comb()}.csv", f"{_ssn('-' + chr(10))}\u200b5.csv",
+                                  f"000-\n\uff10\uff10-{LAST4}.csv"])
 def test_a_filename_refuses_a_touched_comb_or_wrapped_value(name):
     assert names_an_identifier(name)
 
