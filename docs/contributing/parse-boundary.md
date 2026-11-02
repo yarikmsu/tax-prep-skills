@@ -111,3 +111,38 @@ between an injected "read this other file" and the file being read.
 
 Per-host detail, and what was measured on this build:
 `docs/contributing/agents-compat.md`.
+
+### Identifier spellings at extraction (AA102)
+
+Recognition uses a separate view of the source: Unicode decimal digits read as
+ASCII digits, format characters and variation selectors disappear, and Unicode
+dashes, horizontal rules and the prolonged sound mark read as separators. An
+unmapped PDF glyph's `(cid:N)` reads as one separator; its glyph number never
+becomes part of the identifier. Sparse offsets map matches back to the original
+text, so an unrelated amount, name or account number keeps its exact spelling.
+A literal nine-digit glyph token that survives the complete-identifier pass
+also masks; spelling a value as a fallback token cannot exempt those digits.
+
+**The view adds to the printed text and never replaces it.** Joining across an
+invisible character, or reading a neighbouring fullwidth digit as a digit, makes
+a value read as ten digits and a label as a longer word, and neither then has a
+boundary. So labels, values and known runs are looked for in both readings, and
+the spans merge on the source.
+
+A comb with printed separators and a value wrapped across lines need a label
+or matching positional evidence, as spaced digits do. A line break counts only
+beside a mark, between a comb's boxes or at the 3-2-4 group edges, within a
+label's own reach on its row. Anywhere else two figures total nine by accident: a
+last four over a five-digit street number, a wage over a ZIP code. A value broken
+inside a group (`00011` over `2222`) therefore still prints. Wrapped masks retain
+the page's row count. Newly recognized spellings cannot make a label appear filled
+and withdraw its reach over the next row: that decision still reads the original
+text. Identity metadata carries only canonical masked values and source bounds.
+
+Form check on 2026-11-01: filling and flattening the SSN comb in the IRS's
+[TY2025 Form 1040](https://www.irs.gov/pub/irs-prior/f1040--2025.pdf) with an invalid
+synthetic prefix extracted separate digits without printed marks. It did not
+reproduce the marked-comb spelling. The regression suite therefore draws that
+spelling explicitly, including a position-only layout, and removes a real PDF
+glyph's Unicode mapping to exercise pdfminer's `(cid:N)` fallback. It keeps no
+filled forms in the repository.
