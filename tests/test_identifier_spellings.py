@@ -222,7 +222,7 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert MASKED in out and "850.00" in out
 
 
-def _cid_pdf(path, *, mapped, shared_name=False):
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False):
     """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
 
     A TrueType font with only ToUnicode entries removed is NOT an unmapped
@@ -241,6 +241,9 @@ def _cid_pdf(path, *, mapped, shared_name=False):
     content += b"32 670 m 520 670 l 520 715 l 32 715 l h S 32 693 m 520 693 l S 270 670 m 270 715 l S"
     if shared_name:
         content += b" BT /F2 9 Tf 36 740 Td (Readable) Tj ET"
+    if isolated_marks:
+        for i in range(13):
+            content += f" BT /F1 9 Tf 36 {640 - i * 12} Td <007F> Tj ET".encode()
 
     def stream(data):
         return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
@@ -292,6 +295,14 @@ def test_a_wholly_unmapped_font_refuses_before_returning_glyph_numbers(tmp_path,
     with pytest.raises(ValueError, match="unmapped font") as error:
         _read(route, path, tmp_path)
     assert "(cid:" not in str(error.value) and _ssn("") not in str(error.value)
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_isolated_unmapped_marks_on_separate_rows_are_not_one_unreadable_run(tmp_path, route):
+    mapped = set("Your social security number" + _comb() + "Wages850.00")
+    path = _cid_pdf(tmp_path / "marks.pdf", mapped=mapped, isolated_marks=True)
+    out = _read(route, path, tmp_path)
+    assert MASKED in out and "850.00" in out
 
 
 @pytest.mark.parametrize("invisible", [*INVISIBLE, *MORE_INVISIBLE])

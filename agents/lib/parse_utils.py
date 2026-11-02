@@ -748,19 +748,29 @@ def _safe_pdf_page(page, tick):
     # before producing any output. An isolated missing space/mark in otherwise
     # readable text still reaches the source-preserving masking rules.
     unknown_fonts, readable_fonts = set(), set()
-    unknown_run, longest_unknown = 0, 0
+    unknown_count = 0
     for char in page.chars:
         tick()
         text = char["text"]
         if re.fullmatch(r"\(cid:[0-9]+\)", text):
             unknown_fonts.add(char["fontname"])
-            unknown_run += 1
-            longest_unknown = max(longest_unknown, unknown_run)
+            unknown_count += 1
         elif any(c.isalnum() for c in text):
             readable_fonts.add(char["fontname"])
-            unknown_run = 0
     # Different font resources may reuse a font name. Nine undecodable glyphs
-    # can be a complete SSN even when a readable resource shares that name.
+    # can be a complete SSN even when a readable resource shares that name,
+    # but isolated missing form marks on separate rows are not one run.
+    longest_unknown = 0
+    if unknown_count >= 9 and not unknown_fonts - readable_fonts:
+        for row in _overlay_rows(page.chars, tick):
+            unknown_run = 0
+            for char in row:
+                tick()
+                if re.fullmatch(r"\(cid:[0-9]+\)", char["text"]):
+                    unknown_run += 1
+                    longest_unknown = max(longest_unknown, unknown_run)
+                elif any(c.isalnum() for c in char["text"]):
+                    unknown_run = 0
     if unknown_fonts - readable_fonts or longest_unknown >= 9:
         raise ValueError("PDF contains an unmapped font or an unreadable identifier-sized run. "
                          "Refusing extraction: re-export with searchable text or use a local OCR copy.")
