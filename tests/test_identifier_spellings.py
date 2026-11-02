@@ -355,6 +355,7 @@ NOT_WRAPPED = ["SSN ending 1234\n12345 Main St", "SSN: XXXXX1234\n12345 Main St"
                "SSN\n" + "\n".join(map(str, range(1, 9))) + "\n9 Main St",
                # A sentence ending in an amount before a line opening with a year.
                "Fee per ITIN: $125.50.\n2025 filing season", "SSN\n$850.25.\n1099-INT enclosed",
+               "Recipient's TIN\n125.50.\n2025 Form", "SSN: 125.50.\n2025",
                "Recipient's identification number\nYour total interest was $850.25.\n2025 Form 1099-INT",
                "Recipient's TIN\nTotal $1,234.56.\n2025 Form 1099-DIV",
                # Not where a value starts: past wording, or partway along a row.
