@@ -574,8 +574,9 @@ def split_spans(row: str) -> list:
     view = identifier_text(row)
     # A value only the view reads is a target too: it must not fill a box and
     # leave the label's own value, on main's reading, printed beside it.
-    only_view = {view.span(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED)
-                 for m in pattern.finditer(view.text)} if view.text != row else set()
+    only_view = {reading.span(m.start(), m.end()) for reading in _identifier_readings(view)
+                 if reading.text != row for pattern in (_ID_VALUE_RE, _ID_SPACED)
+                 for m in pattern.finditer(reading.text)}
     return [span for span in sorted({*_in_either_reading(view, (_ID_SPLIT_VALUE, _ID_MARKED_COMB)), *only_view})
             if not _ID_FILLED_DELIMITED.fullmatch(row, *span)]
 
@@ -927,7 +928,7 @@ def _is_id_label_cell(cell) -> bool:
     if not isinstance(cell, str):
         return False
     view = identifier_text(cell)
-    return _label_ends(cell) or _label_ends(view.text)
+    return _label_ends(cell) or any(_label_ends(reading.text) for reading in _identifier_readings(view))
 
 
 def _mask_id_value(cell):

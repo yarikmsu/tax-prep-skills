@@ -332,6 +332,12 @@ def test_additional_invisibles_are_recognition_only_and_keep_source_boundaries(i
     wide, touch = _wide(_ssn("-")), invisible + "3"
     assert mask_ssn("SSN " + wide + touch) == "SSN " + MASKED + touch
     assert mask_runs(wide + touch, {_ssn("")}) == MASKED + touch
+    assert (0, len(wide)) in split_spans(wide + touch), "a positional reader keeps the earlier target"
+    bare = _wide(_ssn(""))
+    assert (0, len(bare)) in split_spans(bare + touch), "an unmarked positional target also survives"
+    label = "A" + invisible + "S\u200bSN"
+    assert mask_table([[label, _ssn("")]]) == [[label, MASKED]]
+    assert mask_table([[label], [_ssn("")]]) == [[label], [MASKED]]
 
 
 @pytest.mark.parametrize("mark", ["\uff0e", "\uff0f"])
