@@ -47,6 +47,17 @@ directory and cannot be switched off. That matters most where the boundary is
 weakest: on a sequential host it is the only thing standing between an injected
 "read this other file" and the file being read, because the CLI simply will not.
 
+Recognition keeps the source text: fullwidth digits, dots and slashes, invisible
+characters and an unmapped space glyph are read through only to locate a mask.
+Positional masking combines the original label reading with an additional reading
+of labels containing those characters; neither can withdraw the other's masks.
+An unmapped PDF font with no readable letters or digits, or a run of nine
+undecodable glyphs, refuses extraction on every PDF route. Its `(cid:N)` values
+name glyphs, not the original characters;
+re-export the document with searchable text or make a local OCR copy rather than
+guessing its digits. Isolated missing spaces or marks in an otherwise readable
+font still go through the masking rules.
+
 **Measured on Claude Code 2.1.263, and worth knowing before you trust a grant:**
 the `tools:` allowlist IS enforced, but `Read` is NOT confined to a directory — an
 agent holding it read `/etc/hosts` and a file above its workspace with no prompt.
