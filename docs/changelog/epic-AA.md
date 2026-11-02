@@ -4604,3 +4604,98 @@ search, which only looks at windows touching a span.
   long as main, still linear, and a comb of one repeated digit is quadratic
   but checks the deadline, so it refuses at the budget. Main has no deadline
   in this search at all.
+
+## AA101 — an SSN set with a typographic dash (#101)
+
+The masker's delimiters were ASCII `-`, `.` and `/`. An SSN set with an en dash,
+an em dash, a minus sign or a non-breaking hyphen printed all nine digits, under
+its label too, on every route. So did the same spelling in a warning about a
+filename and in a worksheet's name.
+
+Sixteen marks now read as a dash: the Unicode, soft, non-breaking, small and
+fullwidth hyphens, the figure, en, em, small em and bar dashes, a hyphen bullet,
+the minus signs, and U+0096 and U+0097, which are en and em dashes from
+Windows-1252 read as Latin-1. Each edge is read alone, since an OCR layer can
+read them differently. Set tight, any of them masks with no label, as `-` does.
+Set apart they need a label, as `-` does, because a dash can stand for zero
+between figures.
+
+- A new mark never tells a label its box is filled. `_ID_FILLED_DELIMITED` stays
+  ASCII, or a figure joined to a label's row would expose the SSN under it.
+- Text holding a new mark takes the source resolver from AA100 even with no
+  positional evidence, because a rewrite beside a glued label would hide the
+  label from a comb after it.
+- A filename refuses on every governed shape, with a redacted warning. A
+  worksheet's name masks with no label, and two that mask alike refuse.
+- As opened, a tight en dash needed a label and masked only straight after it,
+  so "Social security number (SSN):", "SSN no.:", "TIN:" and "Taxpayer ID:" all
+  printed the number. That spelling now needs no label. A spaced value also
+  passes the closing parenthesis, and wording that introduces it with `:`, `#`,
+  `=` or "is", up to the bare spelling's reach. A dash does not introduce one,
+  which is what main's tests pin.
+- As opened, `test_mismatched_marks_and_vertical_gaps_stay_out_of_scope` required
+  a whole SSN to print. It is gone. The route test read `str(result)`, whose repr
+  escapes U+00AD, so a whole SSN would have passed as absent; it reads the strings.
+- Accepted: a figure that really is 3-2-4 with tight dashes masks, as the hyphen
+  spelling does on main, and a dollar sign or a leading `1,` does not stop it. A
+  spaced one on a line a label governs masks too. Filenames shaped like a spaced
+  figure now refuse, with a message to rename. One contrived input prints what
+  main masked: a spaced EIN shape under a payer's label glued to a masked comb,
+  which main masked only because its own rewrite hid the payer exclusion.
+- Against main: 240,000 generated texts and tables print no digit main hides.
+  1,600 drawn pages with dash spellings on four routes lose nothing, and 26 IRS
+  forms, instructions and publications read identically on four routes, so the
+  wider shape cost none of them a figure.
+
+## AA102 — identifier spellings AA101 left, and the PII gate (#107, #108)
+
+Each spelling printed all nine digits on main, under its label too: a comb with
+printed marks between its groups, marks outside AA101's sixteen, a doubled mark,
+zero-width characters between digits, fullwidth digits, a `(cid:N)` in place of a
+mark, a value wrapped across lines, and a comb past a glued label on text with no
+typographic mark. Separately, the PII gate matched ASCII marks only, so a commit
+holding a dash-spelled SSN passed. A flattened TY2025 Form 1040 extracts its comb
+with no printed marks, so the marked comb is drawn in the tests, not read from a form.
+
+- **The gate (#108).** 38 marks as complete UTF-8 byte alternatives under `LC_ALL=C`,
+  raw Windows-1252 dash bytes, and repeated or mixed edges, on content, pathnames, ref
+  names and redaction. Credentials redact first, or an identifier inside one breaks
+  the match and prints its suffix. Across the repository's tracked files the wider
+  pattern matches no line the old one did not.
+- **All text takes the source resolver (#107).** The sequential passes are gone, and
+  with them the glued-label gap.
+- **The view adds and never replaces.** A view of the text folds other digits to ASCII
+  and drops format characters. As opened it replaced the printed text, so a character
+  it joined hid what main masks: an invisible character or a fullwidth digit touching a
+  value made it read as ten digits, and all nine printed. Text rules and known runs now
+  read both, and spans merge on the source.
+- **Positional readers keep the printed text's labels and values.** Giving them the
+  view's took a column from a real heading, a repeat of AA98's lesson, and let a Unicode
+  figure fill a box so the value beside its label printed. `identifier_spans` is
+  unchanged; what the view adds reaches a reader through `split_spans`, as targets.
+- **`(cid:N)` needs a label.** It is as often the page's own space as a mark, and read
+  as a tight dash it masked `850(cid:3)00(cid:3)2025`. A page whose spaces are all
+  unmapped now reads as main reads the same page with real spaces, and a token holding
+  more digits than a glyph number can is ordinary text.
+- **A wrap is narrow on purpose.** As opened any nine digits across a line break under
+  a label masked, so a last four over `12345 Main St` became a different last four and
+  a wage over an address was lost. Two review rounds then found amounts: `$125.50.`
+  over `2025 filing season` printed `$XXX-XX-2025`. A break now counts beside a dash or
+  with every group or box alone on its line, and only where the value opens its line
+  or follows its label as a split value does. Still printing: a break inside a group, beside a
+  dot or slash, or an unmarked value sharing its lines.
+- Accepted: a stack with each group alone on its line under a label masks, even if it
+  is an amount with its cents on their own row, or nine numbered rows, or a column of
+  figures with `-` rows between. A doubled tight dash in a 3-2-4 masks with no label, as
+  one does. A value beside a Unicode digit can lose its last four, as the ASCII spelling
+  does on main. Text costs about 1.4 to 3.6 times main, about 4 at worst on crafted
+  input, and stays linear.
+- Against main: 192,000 generated texts and tables print no digit main hides, half of
+  them with the new spellings; the three hits were one glued-digit artefact each, read
+  cell by cell. 1,600 drawn pages lose nothing, and 26 IRS documents read identically on
+  four routes. 180,000 identifier-free pages lose no figure except on pages whose spaces
+  are all `(cid:N)`, which read as main reads them with real spaces. Three independent
+  review rounds found every defect named above; the third found no leak.
+- Left for AA103: combs and labels spaced by `(cid:N)`, a fully unmapped font, fullwidth
+  dot and slash, invisibles outside format characters, an invisible-laced label over a
+  value known only by position, and the gate's fullwidth, comb and invisible spellings.

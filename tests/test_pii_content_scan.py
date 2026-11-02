@@ -13,9 +13,12 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import pytest
+
+from agents.lib.secure_fs import _ID_DASHES, redact as runtime_redact
 
 REPO = Path(__file__).resolve().parent.parent
 SCAN = REPO / "scripts" / "pre-commit-pii-scan.sh"
@@ -1300,6 +1303,114 @@ def test_every_separated_ssn_form_blocks(tmp_path, sep, label):
     r = _run(repo)
     assert r.returncode == 1, f"{label} SSN committed cleanly"
     assert value not in r.stdout + r.stderr, "scanner echoed the value"
+
+
+# AA102: the shell runs under LC_ALL=C. Exercise the actual git boundary for
+# every runtime dash, rather than testing a Unicode regex in Python instead.
+def test_runtime_dash_set_covers_unicode_dash_punctuation():
+    punctuation = {chr(i) for i in range(0x110000) if unicodedata.category(chr(i)) == "Pd"}
+    assert punctuation <= set(_ID_DASHES) | {"-"}
+
+
+@pytest.mark.parametrize("mark", list(_ID_DASHES), ids=lambda mark: f"U+{ord(mark):04X}")
+@pytest.mark.parametrize("location", ["content", "pathname"])
+def test_unicode_dash_identifiers_block_and_redact(tmp_path, mark, location):
+    repo = _make_repo(tmp_path)
+    value = mark.join((_SSN_AREA, _SSN_GROUP, _SSN_SERIAL))
+    name = "notes.md" if location == "content" else f"tests/fixtures/{value}.md"
+    _stage(repo, name, f"SSN {value}\n" if location == "content" else "ordinary content\n")
+    result = _run(repo)
+    assert result.returncode == 1
+    assert value not in result.stdout + result.stderr
+    assert runtime_redact(value) == "[REDACTED]"
+    if location == "pathname":
+        assert "[REDACTED]" in result.stdout
+
+
+@pytest.mark.parametrize("first,second", [("-", "\u2013"), ("\u2014", "\u2212"),
+                                           ("--", "--"), ("\u2013\u2013", "\u2500"),
+                                           ("\U00010ead", "\uff0d")])
+def test_mixed_or_doubled_dash_edges_block_as_whole_matches(tmp_path, first, second):
+    repo = _make_repo(tmp_path)
+    value = f"{_SSN_AREA}{first}{_SSN_GROUP}{second}{_SSN_SERIAL}"
+    _stage(repo, f"reports/{value}.md", f"SSN {value}\n")
+    result = _run(repo)
+    assert result.returncode == 1
+    assert value not in result.stdout + result.stderr
+    assert runtime_redact(value) == "[REDACTED]"
+
+
+def test_unicode_dash_ref_names_block_before_publication(tmp_path):
+    repo = _make_repo(tmp_path)
+    _stage(repo, "notes.md", "ordinary work\n")
+    head = _commit(repo, "seed")
+    values = [mark.join((_SSN_AREA, _SSN_GROUP, _SSN_SERIAL)) for mark in _ID_DASHES]
+    names = [f"refs/heads/entry-{i}-{value}" for i, value in enumerate(values)]
+    result = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", "--names", head],
+                            cwd=repo, input="\n".join(names) + "\n", capture_output=True, text=True)
+    assert result.returncode == 1
+    assert result.stdout.count("BLOCKED NAME") == len(names)
+    assert all(value not in result.stdout + result.stderr for value in values)
+
+
+def test_unicode_dash_values_deleted_later_still_block_the_range(tmp_path):
+    repo = _make_repo(tmp_path)
+    _stage(repo, "notes.md", "ordinary work\n")
+    base = _commit(repo, "seed")
+    values = [mark.join((_SSN_AREA, _SSN_GROUP, _SSN_SERIAL)) for mark in _ID_DASHES]
+    _stage(repo, "notes.md", "\n".join(values) + "\n")
+    _commit(repo, "add test values")
+    _stage(repo, "notes.md", "ordinary work\n")
+    head = _commit(repo, "remove test values")
+    result = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...{head}"],
+                            cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert f"({len(values)} match(es))" in result.stdout
+    assert all(value not in result.stdout + result.stderr for value in values)
+
+
+def test_unicode_dash_allowlisting_is_exact_and_staged(tmp_path):
+    repo = _make_repo(tmp_path)
+    value = "\u2013".join(("000", "00", "0000"))
+    _stage(repo, "notes.md", value + "\n")
+    # The ASCII example is allowlisted; a new spelling is a different match.
+    assert _run(repo).returncode == 1
+    allow = repo / ".pii-allowlist"
+    allow.write_text(allow.read_text(encoding="utf-8") + value + "\n", encoding="utf-8")
+    assert _run(repo).returncode == 1
+    subprocess.run(["git", "add", ".pii-allowlist"], cwd=repo, check=True)
+    assert _run(repo).returncode == 0
+
+
+@pytest.mark.parametrize("byte", [0x96, 0x97])
+def test_windows_1252_dash_bytes_block_without_a_utf8_locale(tmp_path, byte):
+    repo = _make_repo(tmp_path)
+    value = bytes([byte]).join(part.encode("ascii") for part in (_SSN_AREA, _SSN_GROUP, _SSN_SERIAL))
+    path = repo / "notes.md"
+    path.write_bytes(b"SSN " + value + b"\n")
+    subprocess.run(["git", "add", "notes.md"], cwd=repo, check=True)
+    result = _run(repo)
+    assert result.returncode == 1
+    assert "BLOCKED CONTENT" in result.stdout
+
+
+def test_utf8_byte_overlap_does_not_make_other_punctuation_a_dash(tmp_path):
+    repo = _make_repo(tmp_path)
+    figures = [mark.join((_SSN_AREA, _SSN_GROUP, _SSN_SERIAL)) for mark in ("\u2018", "\u2019", "\u20ac")]
+    _stage(repo, "figures.md", "\n".join(figures) + "\nDeduction range: $1,400.00 \u2013 2400\n")
+    assert _run(repo).returncode == 0
+
+
+def test_a_dash_identifier_inside_a_credential_does_not_fragment_redaction(tmp_path):
+    repo = _make_repo(tmp_path)
+    value = "--".join((_SSN_AREA, _SSN_GROUP, _SSN_SERIAL))
+    secret = "sk-" + "proj-" + "prefix" * 4 + value + "suffix" * 4
+    _stage(repo, f"reports/{secret}.md", "ordinary content\n")
+    result = _run(repo)
+    assert result.returncode == 1
+    assert secret not in result.stdout + result.stderr
+    assert "prefix" not in result.stdout + result.stderr
+    assert "suffix" not in result.stdout + result.stderr
 
 
 def test_a_money_range_is_not_mistaken_for_an_ssn(tmp_path):
