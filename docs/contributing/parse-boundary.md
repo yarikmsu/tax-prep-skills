@@ -111,3 +111,43 @@ between an injected "read this other file" and the file being read.
 
 Per-host detail, and what was measured on this build:
 `docs/contributing/agents-compat.md`.
+
+### Identifier spellings at extraction (AA102)
+
+Recognition uses a separate view of the source: Unicode decimal digits read as
+ASCII digits, format characters and variation selectors disappear, and Unicode
+dashes, horizontal rules and the prolonged sound mark read as separators. An
+unmapped PDF glyph's `(cid:N)` reads as a separator set apart, which needs a label:
+it is as often the page's own space as a mark, and its glyph number never becomes
+part of the identifier. A token holding more digits than a glyph number can is
+ordinary text. Sparse offsets map matches back to the original text, so an
+unrelated amount, name or account number keeps its exact spelling.
+
+**The view adds to the printed text and never replaces it.** Joining across an
+invisible character, or reading a neighbouring fullwidth digit as a digit, makes
+a value read as ten digits and a label as a longer word, and neither then has a
+boundary. So the text rules and known runs read both, and the spans merge on the
+source. A positional reader's labels and values come from the printed text alone,
+because each one moves what a reader governs: a label only the view reads would take
+a column from the real heading, and a value only the view reads would fill a box.
+What the view adds reaches those readers through `split_spans`, as targets.
+
+A comb with printed separators and a value wrapped across lines need a label
+or matching positional evidence, as spaced digits do. A line break counts only
+beside a dash, or with every group or comb box alone on its line, and the value
+must open its line or follow its label, as a split value does. Anywhere else figures total
+nine by accident: a last four over a street number, an amount with its cents apart
+over a form name, a sentence ending "$125.50." over a year. So a value broken inside
+a group, beside a dot or a slash, or unmarked and sharing its lines (`000 11` over
+`2222`) still prints. Wrapped masks retain the page's row count. Newly recognized spellings cannot make a label appear
+filled and withdraw its reach over the next row: that decision still reads the
+original text. Identity metadata carries only canonical masked values and source
+bounds.
+
+Form check on 2026-11-01: filling and flattening the SSN comb in the IRS's
+[TY2025 Form 1040](https://www.irs.gov/pub/irs-prior/f1040--2025.pdf) with an invalid
+synthetic prefix extracted separate digits without printed marks. It did not
+reproduce the marked-comb spelling. The regression suite therefore draws that
+spelling explicitly, including a position-only layout, and removes a real PDF
+glyph's Unicode mapping to exercise pdfminer's `(cid:N)` fallback. It keeps no
+filled forms in the repository.
