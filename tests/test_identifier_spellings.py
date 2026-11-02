@@ -14,6 +14,7 @@ from tests.test_typographic_identifiers import _pdf, _read
 
 NEW_MARKS = ("\u2500", "\u2501", "\u2550", "\u30fc", "\u23af", "\u058a", "\u2e3a", "--", "(cid:17)")
 INVISIBLE = ("\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\u200e", "\u202a", "\u2066", "\u034f", "\ufe0f")
+MORE_INVISIBLE = ("\x00", "\u0332", "\u115f", "\u1160", "\u17b4", "\u17b5", "\u3164", "\uffa0")
 
 
 def _wide(text):
@@ -26,7 +27,9 @@ def _comb(mark="-"):
 
 VALUES = [_comb(), *(_ssn(mark) for mark in NEW_MARKS),
           *(char.join(_ssn("-")) for char in INVISIBLE),
-          _wide(_ssn("-")), _wide(_ssn("")), _wide(_comb())]
+          _wide(_ssn("-")), _wide(_ssn("")), _wide(_comb()),
+          _ssn("\uff0e"), _ssn("\uff0f"), *(char.join(_ssn("-")) for char in MORE_INVISIBLE),
+          "(cid:3)".join(_ssn("")), _comb().replace(" ", "(cid:3)")]
 
 
 @pytest.mark.parametrize("value", VALUES, ids=[f"variant-{i}" for i in range(len(VALUES))])
@@ -94,6 +97,16 @@ def test_an_unmapped_glyph_masks_with_a_label_or_a_known_run():
     assert mask_runs("Box " + value, {_ssn("")}) == "Box " + MASKED
 
 
+def test_a_missing_glyph_keeps_the_earlier_wrapped_separator_reading():
+    value = _ssn("(cid:17)\n")
+    tail = " Wages 850.00"
+    expected = MASKED + "\n\n" + tail
+    assert mask_ssn("SSN: " + value + tail) == "SSN: " + expected
+    assert mask_runs(value + tail, {_ssn("")}) == expected
+    assert redact(value + tail) == "[REDACTED]" + tail
+    assert names_an_identifier(value + ".csv")
+
+
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables", "extract_csv", "extract_excel"])
 def test_literal_cid_tokens_do_not_return_nine_digits(tmp_path, variant_font, route):
     token = "(cid:" + _ssn("") + ")"
@@ -142,7 +155,7 @@ def variant_font():
     from reportlab.pdfbase.ttfonts import TTFont
     font = TTFont("AA102Variants", str(Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"))
     font.face.name = b"AA102VariantsFace"
-    for char in "".join(NEW_MARKS) + "".join(INVISIBLE) + "０１２３４５６７８９":
+    for char in "".join(NEW_MARKS) + "".join(INVISIBLE + MORE_INVISIBLE) + "\uff0e\uff0f" + "０１２３４５６７８９":
         code = ord(char)
         ascii_char = str(code - ord("０")) if "０" <= char <= "９" else "-"
         if code not in font.face.charToGlyph:
@@ -155,6 +168,10 @@ def variant_font():
 @pytest.mark.parametrize("value", VALUES, ids=[f"variant-{i}" for i in range(len(VALUES))])
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables", "extract_csv", "extract_excel"])
 def test_variants_are_masked_on_every_extraction_route(tmp_path, variant_font, value, route):
+    if "\x00" in value and route == "extract_excel":
+        pytest.skip("XML cannot hold NUL; text/PDF/CSV boundaries cover it")
+    if "(cid:" in value and len(value) > 40 and route not in {"extract_csv", "extract_excel"}:
+        pytest.skip("literal tokens exceed this table's cell; real CID glyphs have their own fixture")
     rows = [["SSN", value], ["Date", "01/31/2026"], ["Routing", ROUTING], ["Wages", "850.00"]]
     if route == "extract_csv":
         path = tmp_path / "variants.csv"
@@ -174,6 +191,8 @@ def test_variants_are_masked_on_every_extraction_route(tmp_path, variant_font, v
 
 @pytest.mark.parametrize("value", VALUES, ids=[f"variant-{i}" for i in range(len(VALUES))])
 def test_variant_filenames_refuse_without_disclosing_the_name(tmp_path, capsys, value):
+    if "\x00" in value:
+        pytest.skip("a filesystem path cannot contain NUL")
     path = tmp_path / (value + ".csv")
     path.write_text("Wages,850.00\n", encoding="utf-8")
     assert P.scan_workspace(str(tmp_path)) == []
@@ -201,6 +220,259 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert "(cid:" in text, "the real unmapped glyph must reach pdfminer's fallback"
     out = _read(route, path, tmp_path)
     assert MASKED in out and "850.00" in out
+
+
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=()):
+    """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
+
+    A TrueType font with only ToUnicode entries removed is NOT an unmapped
+    ASCII font: pdfminer falls back to WinAnsi and still reads its space/digits.
+    """
+    label, value = "Your social security number", _comb()
+    mapping = "\n".join(f"<{ord(c):04X}> <{ord(c):04X}>" for c in sorted(mapped))
+    cmap = ("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def\n"
+            "/CMapName /Test def /CMapType 2 def\n"
+            "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+            f"{len(mapped)} beginbfchar\n{mapping}\nendbfchar\nendcmap end end").encode()
+    content = b""
+    for x, y, text in ((36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00")):
+        content += f"BT /F1 9 Tf {x} {y} Td <{text.encode('utf-16be').hex()}> Tj ET\n".encode()
+    content += b"32 670 m 520 670 l 520 715 l 32 715 l h S 32 693 m 520 693 l S 270 670 m 270 715 l S"
+    if shared_name:
+        content += b" BT /F2 9 Tf 36 740 Td (Readable) Tj ET"
+    if isolated_marks:
+        for i in range(13):
+            content += f" BT /F1 9 Tf 36 {640 - i * 12} Td <007F> Tj ET".encode()
+
+    for x, y, code in symbols:
+        content += f" BT /F1 9 Tf {x} {y} Td <{code:04X}> Tj ET".encode()
+
+    def stream(data):
+        return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
+
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+               b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+               b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
+               b"<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>",
+               b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 600 /FontDescriptor 8 0 R >>",
+               stream(cmap), stream(content),
+               b"<< /Type /FontDescriptor /FontName /Test /Flags 32 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>"]
+    if shared_name:
+        objects[2] = objects[2].replace(b"/F1 4 0 R", b"/F1 4 0 R /F2 9 0 R")
+        objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Test /Encoding /WinAnsiEncoding /FontDescriptor 8 0 R >>")
+    data = b"%PDF-1.4\n"
+    offsets = [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref = len(data)
+    data += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode()
+    data += b"".join(f"{offset:010} 00000 n \n".encode() for offset in offsets[1:])
+    data += f"trailer << /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
+    path.write_bytes(data)
+    return path
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_real_unmapped_space_in_a_label_and_comb_masks(tmp_path, route):
+    import pdfplumber
+    mapped = set("Your social security number" + _comb() + "Wages850.00") - {" "}
+    path = _cid_pdf(tmp_path / "space.pdf", mapped=mapped)
+    with pdfplumber.open(path) as document:
+        assert "(cid:32)" in document.pages[0].extract_text()
+    out = _read(route, path, tmp_path)
+    assert MASKED in out and "850.00" in out
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+@pytest.mark.parametrize("shared_name", [False, True])
+def test_a_wholly_unmapped_font_refuses_before_returning_glyph_numbers(tmp_path, route, shared_name):
+    import pdfplumber
+    path = _cid_pdf(tmp_path / "unreadable.pdf", mapped=set(), shared_name=shared_name)
+    with pdfplumber.open(path) as document:
+        chars = document.pages[0].chars
+        assert sum(c["text"].startswith("(cid:") for c in chars) >= 9
+        assert len({c["fontname"] for c in chars}) == 1, "fixture must reuse the undecodable font's name"
+        assert any(c["text"] == "R" for c in chars) == shared_name
+    with pytest.raises(ValueError, match="unmapped font") as error:
+        _read(route, path, tmp_path)
+    assert "(cid:" not in str(error.value) and _ssn("") not in str(error.value)
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_isolated_unmapped_marks_on_separate_rows_are_not_one_unreadable_run(tmp_path, route):
+    mapped = set("Your social security number" + _comb() + "Wages850.00")
+    path = _cid_pdf(tmp_path / "marks.pdf", mapped=mapped, isolated_marks=True)
+    out = _read(route, path, tmp_path)
+    assert MASKED in out and "850.00" in out
+
+
+_READABLE = set("Your social security number" + _comb() + "Wages850.00")
+_ON_ONE_ROW = 640
+
+
+def _row(count, codes=(0x7f,)):
+    return [(36 + i * 12, _ON_ONE_ROW, codes[i % len(codes)]) for i in range(count)]
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+@pytest.mark.parametrize("symbols", [
+    pytest.param(_row(1), id="one checkbox"),
+    pytest.param(_row(8, (0x7f, 0x7e)), id="eight glyphs cannot hold an identifier"),
+    pytest.param(_row(40), id="one glyph repeated is a leader"),
+    pytest.param([(36, 640 - i * 12, 0x7f + i % 2) for i in range(13)], id="bullets on their own rows"),
+])
+def test_a_symbol_on_a_readable_page_does_not_refuse_the_document(tmp_path, route, symbols):
+    path = _cid_pdf(tmp_path / "symbols.pdf", mapped=_READABLE, symbols=symbols)
+    out = _read(route, path, tmp_path)
+    assert MASKED in out and "850.00" in out
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_symbol_font_with_no_letters_is_not_refused_for_that(tmp_path, route):
+    """The name a font carries decides nothing: a subset holding only a checkbox
+    has no readable character at all, and the page beside it reads."""
+    path = _cid_pdf(tmp_path / "symbols.pdf", mapped=_READABLE, shared_name=True, symbols=_row(1))
+    assert "850.00" in _read(route, path, tmp_path)
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+@pytest.mark.parametrize("symbols", [
+    pytest.param(_row(9, (0x7f, 0x7e)), id="nine glyphs of two kinds"),
+    pytest.param([(36 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(3)]
+                 + [(90 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(6)], id="groups apart still one run"),
+    pytest.param([(36 + i * 12, _ON_ONE_ROW, code) for i, code in enumerate(
+        (0x7f, 0x7e, 0x7f, 0x2d, 0x7e, 0x7f, 0x2d, 0x7f, 0x7e, 0x7f, 0x7e))], id="a printed dash does not end it"),
+])
+def test_nine_unreadable_glyphs_on_a_readable_page_refuse(tmp_path, route, symbols):
+    path = _cid_pdf(tmp_path / "digits.pdf", mapped=_READABLE, symbols=symbols)
+    with pytest.raises(ValueError, match="unmapped font") as error:
+        _read(route, path, tmp_path)
+    assert "(cid:" not in str(error.value)
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_readable_figure_ends_an_unreadable_run(tmp_path, route):
+    """Ten unreadable glyphs on the "Wages" row, five either side of its amount."""
+    symbols = [(120 + i * 12, 680, 0x7f + i % 2) for i in range(5)] + [(340 + i * 12, 680, 0x7f + i % 2) for i in range(5)]
+    path = _cid_pdf(tmp_path / "split.pdf", mapped=_READABLE, symbols=symbols)
+    assert "850.00" in _read(route, path, tmp_path)
+
+
+@pytest.mark.parametrize("invisible", [*INVISIBLE, *MORE_INVISIBLE])
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_an_invisible_laced_label_masks_a_value_only_position_can_find(tmp_path, variant_font, invisible, route):
+    from reportlab.pdfgen import canvas
+    import pdfplumber
+    path = tmp_path / "label.pdf"
+    page = canvas.Canvas(str(path), pagesize=(612, 792))
+    page.setFont(variant_font, 7)
+    page.drawString(36, 685, "S" + invisible + "SN")
+    page.setFont(variant_font, 5)
+    page.drawString(570, 678, "Other")
+    page.setFont(variant_font, 9)
+    page.drawString(36, 667, _ssn(""))
+    page.drawString(230, 667, "850.00")
+    for x in (32, 216, 298):
+        page.line(x, 648, x, 680)
+    for y in (648, 680):
+        page.line(32, y, 298, y)
+    page.save()
+    with pdfplumber.open(path) as document:
+        text = document.pages[0].extract_text()
+    assert _ssn("") in mask_ssn(text), "the fixture must need position rather than text order"
+    out = _read(route, path, tmp_path)
+    assert _ssn("") not in out and MASKED in out and "850.00" in out
+
+
+@pytest.mark.parametrize("invisible", MORE_INVISIBLE)
+def test_additional_invisibles_are_recognition_only_and_keep_source_boundaries(invisible):
+    value = invisible.join(_ssn("-"))
+    text = f"Café{invisible} S{invisible}SN: {value}; Wages ８５０．００; Routing {ROUTING}"
+    assert mask_ssn(text) == text.replace(value, MASKED)
+    for touch in (invisible + "3", "\uff13"):
+        assert mask_ssn("SSN " + _ssn("-") + touch) == "SSN " + MASKED + touch
+    # The older Unicode reading already masks the wide spelling. Its raw
+    # source cannot rescue it if the new reading joins it to a tenth digit.
+    wide, touch = _wide(_ssn("-")), invisible + "3"
+    assert mask_ssn("SSN " + wide + touch) == "SSN " + MASKED + touch
+    assert mask_runs(wide + touch, {_ssn("")}) == MASKED + touch
+    assert (0, len(wide)) in split_spans(wide + touch), "a positional reader keeps the earlier target"
+    bare = _wide(_ssn(""))
+    assert (0, len(bare)) in split_spans(bare + touch), "an unmarked positional target also survives"
+    label = "A" + invisible + "S\u200bSN"
+    assert mask_table([[label, _ssn("")]]) == [[label, MASKED]]
+    assert mask_table([[label], [_ssn("")]]) == [[label], [MASKED]]
+
+
+@pytest.mark.parametrize("mark", ["\uff0e", "\uff0f"])
+def test_fullwidth_punctuation_does_not_change_unrelated_figures_or_occupy_a_box(mark):
+    value = _ssn(mark)
+    assert mask_ssn("Reference " + value) == "Reference " + MASKED
+    assert mask_ssn("SSN " + value + "\n" + _ssn("")) == "SSN " + MASKED + "\n" + MASKED
+    text = "Wages ８５０．００; Date ０１／３１／２０２６; Routing " + _wide(ROUTING)
+    assert mask_ssn(text) == text
+
+
+def _placed_pdf(path, items):
+    """Text placed exactly, in a fixed-width Type0 font: where a glyph lands
+    decides which digits read as drawn over a label, so these pages keep the
+    numbers their overlaps were found at."""
+    chars = sorted({c for _, _, text, _ in items for c in text})
+    mapping = "\n".join(f"<{ord(c):04X}> <{ord(c):04X}>" for c in chars)
+    cmap = ("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def\n"
+            "/CMapName /Test def /CMapType 2 def\n"
+            "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
+            f"{len(chars)} beginbfchar\n{mapping}\nendbfchar\nendcmap end end").encode()
+    content = b"".join(f"BT /F1 {size} Tf {x} {y} Td <{text.encode('utf-16be').hex()}> Tj ET\n".encode()
+                       for x, y, text, size in items)
+
+    def stream(data):
+        return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
+
+    objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+               b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+               b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
+               b"<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>",
+               b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 600 /FontDescriptor 8 0 R >>",
+               stream(cmap), stream(content),
+               b"<< /Type /FontDescriptor /FontName /Test /Flags 32 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>"]
+    data = b"%PDF-1.4\n"
+    offsets = [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref = len(data)
+    data += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode()
+    data += b"".join(f"{offset:010} 00000 n \n".encode() for offset in offsets[1:])
+    data += f"trailer << /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
+    path.write_bytes(data)
+    return path
+
+
+@pytest.mark.parametrize("mark", ["\u200b", "\u0332"])
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_variant_label_does_not_keep_an_overlay_cleanup_removes(tmp_path, mark, route):
+    """Protection decides which drawn-over digits stay on the page, and keeping
+    one moves which label governs what else is there. So it reads the printed
+    labels alone: the added reading may add masks, never decide what is kept."""
+    drawn, beside = "000" + "55" + "6666", "000" + "77" + "8888"
+    path = _placed_pdf(tmp_path / "over.pdf", [
+        (100.37, 650, f"Your soc{mark}ial security number", 11), (250.94, 620, "Your social security number", 9),
+        (297.52, 616.5, drawn, 9), (36, 590, "Box 1 " + beside, 9)])
+    out = _read(route, path, tmp_path)
+    assert beside not in out and drawn not in out
+
+
+@pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])
+def test_a_variant_label_does_not_scatter_an_overlaid_identifier_through_its_heading(tmp_path, route):
+    drawn = "000" + "55" + "6666"
+    path = _placed_pdf(tmp_path / "over.pdf", [
+        (99.08, 650, "S\u0332S\u0332N\u0332", 9), (139.56, 650, "Your social security number", 9),
+        (136.96, 650, "0 0 0 3 3 4 4 4 4", 6), (229.17, 646, drawn, 8)])
+    assert drawn not in "".join(re.findall(r"[0-9]", _read(route, path, tmp_path)))
 
 
 @pytest.mark.parametrize("route", ["extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"])

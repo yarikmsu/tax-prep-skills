@@ -730,6 +730,37 @@ def _labels_crossed(glyphs: list[dict], index: dict, lines: dict[int, int], tick
     return out
 
 
+_UNMAPPED_GLYPH = re.compile(r"\(cid:[0-9]+\)")
+_IDENTIFIER_DIGITS = 9
+
+
+def _refuse_unreadable_identifier(chars: list[dict], tick) -> None:
+    """Refuse a row printing nine unreadable glyphs in a row, of at least two
+    kinds: whole digits a mask cannot find, since a `(cid:N)` number names a
+    glyph and not a character. Only a letter or digit it can read ends the run,
+    so a mapped dash or space between groups does not. Fewer glyphs cannot hold
+    a whole identifier and one glyph repeated is a leader or a rule, so a stray
+    checkbox, bullet or symbol on a readable page still parses: the refusal stops
+    the read, and an unmapped symbol is ordinary. Nine unreadable glyphs of two
+    kinds cannot be told from digits, so a heading in such a font, or a row of
+    mixed checkboxes, refuses too. That is loud and costs a re-export."""
+    if sum(1 for char in chars if _UNMAPPED_GLYPH.fullmatch(char["text"])) < _IDENTIFIER_DIGITS:
+        return
+    for row in _overlay_rows(chars, tick):
+        run, kinds = 0, set()
+        for char in row:
+            tick()
+            if _UNMAPPED_GLYPH.fullmatch(char["text"]):
+                run += 1
+                kinds.add(char["text"])
+                if run >= _IDENTIFIER_DIGITS and len(kinds) > 1:
+                    raise ValueError("PDF prints a run of unreadable glyphs the size of an identifier (an unmapped "
+                                     "font). Refusing extraction: re-export with searchable text or use a local "
+                                     "OCR copy.")
+            elif any(c.isalnum() for c in char["text"]):
+                run, kinds = 0, set()
+
+
 def _safe_pdf_page(page, tick):
     """The page to read, and runs its labels govern before cleanup that every
     route also masks. With no identifier drawn over its label, or each one
@@ -742,6 +773,7 @@ def _safe_pdf_page(page, tick):
     from and those the original page's labels govern in full.
     """
     tick()
+    _refuse_unreadable_identifier(page.chars, tick)
     hidden = _overlaid_digits(page.chars, tick)
     if not hidden:
         return page, set()
@@ -750,8 +782,11 @@ def _safe_pdf_page(page, tick):
     # only what the reader governs without split runs is kept (AA96). A kept
     # run printed under a label also leaves that label no value on its row
     # (`_beside`), so labels are read here as their row's text reads them:
-    # one measured empty past a far value (AA98) keeps no more either.
-    governed = _governed_runs(words, tick, split=False, measured=False)
+    # one measured empty past a far value (AA98) keeps no more either. The
+    # printed labels alone decide it: keeping a run moves which label governs
+    # what else is there, so a label only a variant reading sees may add masks
+    # below and may not keep what the printed page would have removed.
+    governed = _governed_reading(words, tick, split=False, measured=False)
     spelling = prepare_runs(governed).spelling
     protected = {tuple(round(box[k], 3) for k in ("x0", "x1", "top", "bottom"))
                  for raw, box in _page_identifiers(words, tick)[1]
@@ -993,7 +1028,7 @@ def _in_reach(row: list[dict], starts: list[int], value_starts: list[int], end: 
             and row[bisect.bisect_right(starts, value_starts[at]) - 1]["x0"] - reach <= _BESIDE * height)
 
 
-def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, list]:
+def _page_identifiers(words: list[dict], tick, *, variant_labels=False) -> tuple[list, list, list, set, list]:
     """The page's identifier labels (box, carries, where its row's reach
     starts), runs still to mask (text, box), identifiers spelled another way
     (box, masked by the page itself), the ids of every word an identifier
@@ -1009,7 +1044,7 @@ def _page_identifiers(words: list[dict], tick) -> tuple[list, list, list, set, l
     for row in rows:
         tick()
         text, starts = _row_text(row)
-        found_labels, found_values, found_spelled, notes = identifier_spans(text)
+        found_labels, found_values, found_spelled, notes = identifier_spans(text, variant_labels=variant_labels)
         value_starts = sorted({low for low, _ in found_values} | {low for low, _, _ in found_spelled})
         row_top = min(w["top"] for w in row)
         phrases = _phrases(row)
@@ -1348,7 +1383,15 @@ def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True, 
     `tick` is the caller's time budget, checked as the page is read.
     Without `split`, neither split runs nor a label only a split value ends.
     Without `measured`, a `far_value` label carries that value."""
-    labels, values, spelled, covered, splits = _page_identifiers(words, tick)
+    runs = _governed_reading(words, tick, split=split, measured=measured)
+    if any(identifier_text(w["text"]).text != w["text"] for w in words):
+        runs |= _governed_reading(words, tick, split=split, measured=measured, variant_labels=True)
+    return runs
+
+
+def _governed_reading(words: list[dict], tick, *, split: bool, measured: bool, variant_labels=False) -> set[str]:
+    """One positional reading; added labels cannot withdraw an original mask."""
+    labels, values, spelled, covered, splits = _page_identifiers(words, tick, variant_labels=variant_labels)
     if not split:
         labels, splits = [entry for entry in labels if not entry[0].get("split_tail")], []
     if not measured:

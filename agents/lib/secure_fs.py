@@ -180,11 +180,16 @@ class _IdentifierText(NamedTuple):
 # stay text every rule reads. A token folds to a separator set apart, which needs
 # a label like any spaced mark: an unmapped glyph is as often the page's space, and
 # "850(cid:3)00(cid:3)2025" is a wage with its cents apart and a year.
-_ID_VARIANT = re.compile(r"[^\x00-\x7f]|\(cid:[0-9]{1,5}\)")
-_ID_GLYPH_SEPARATOR = " \u2013 "
+_ID_VARIANT = re.compile(r"\x00|[^\x00-\x7f]|\(cid:[0-9]{1,5}\)")
+# Do not infer an unmapped glyph's meaning from its font-local number. Reading
+# it as a gap supports both a missing space and an unknown group separator;
+# either spelling still needs a label or an independently known run.
+_ID_GLYPH_SEPARATOR = " "
+_ID_INVISIBLE = "\x00\u0332\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0"
+_ID_ADDED_VARIANT = re.compile(r"[\x00\u0332\u115f\u1160\u17b4\u17b5\u3164\uffa0\uff0e\uff0f]|\(cid:")
 
 
-def identifier_text(text: str) -> _IdentifierText:
+def identifier_text(text: str, *, _legacy: bool = False) -> _IdentifierText:
     parts, edges, shifts = [], [], []
     last, length = 0, 0
     for match in _ID_VARIANT.finditer(text):
@@ -192,10 +197,12 @@ def identifier_text(text: str) -> _IdentifierText:
         if char in _ID_DASHES:
             continue
         if len(char) > 1:
-            replacement = _ID_GLYPH_SEPARATOR
-        elif (unicodedata.category(char) == "Cf" or char == "\u034f"
+            replacement = " \u2013 " if _legacy else _ID_GLYPH_SEPARATOR
+        elif (unicodedata.category(char) == "Cf" or char == "\u034f" or (not _legacy and char in _ID_INVISIBLE)
               or "\ufe00" <= char <= "\ufe0f" or "\U000e0100" <= char <= "\U000e01ef"):
             replacement = ""
+        elif not _legacy and char in "\uff0e\uff0f":
+            replacement = "." if char == "\uff0e" else "/"
         elif unicodedata.category(char) == "Nd":
             replacement = str(unicodedata.decimal(char))
         else:
@@ -213,6 +220,18 @@ def identifier_text(text: str) -> _IdentifierText:
                            tuple(edge + shift for edge, shift in zip(edges, shifts)), text)
 
 
+def _identifier_readings(view: _IdentifierText):
+    """New recognition adds to the earlier Unicode and missing-glyph reading.
+
+    Beside a line break a group separator masks where a space alone cannot
+    safely join figures sharing their lines. A newly invisible character can
+    also join a previously bounded Unicode number to a tenth digit.
+    """
+    yield view
+    if _ID_ADDED_VARIANT.search(view.raw):
+        yield identifier_text(view.raw, _legacy=True)
+
+
 def _in_either_reading(view: _IdentifierText, patterns) -> list:
     """Source spans a pattern finds in the view or in the text as printed. The
     view is additive only: joining a digit across an invisible character, or
@@ -220,8 +239,9 @@ def _in_either_reading(view: _IdentifierText, patterns) -> list:
     a longer number, and a label as a longer word, so the view alone loses
     what the printed text shows."""
     spans = {(m.start(), m.end()) for pattern in patterns for m in pattern.finditer(view.raw)}
-    if view.text != view.raw:
-        spans |= {view.span(m.start(), m.end()) for pattern in patterns for m in pattern.finditer(view.text)}
+    for reading in _identifier_readings(view):
+        if reading.text != reading.raw:
+            spans |= {reading.span(m.start(), m.end()) for pattern in patterns for m in pattern.finditer(reading.text)}
     return sorted(spans)
 
 
@@ -512,7 +532,7 @@ _ID_SPELLED = re.compile(
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
-def identifier_spans(row: str) -> tuple[list, list, list, list]:
+def identifier_spans(row: str, *, variant_labels: bool = False) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
     identifier-shaped run still to mask, an identifier spelled another way
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
@@ -524,6 +544,13 @@ def identifier_spans(row: str) -> tuple[list, list, list, list]:
     which run; `mask_runs` masks them."""
     labels = [(m.start(), m.end(), bool(_ID_ADJACENT_VALUE.match(row, m.end())))
               for m in _ID_LABEL_RE.finditer(row)]
+    if variant_labels:
+        # This is an ADDITIONAL positional reading. Values and occupied boxes
+        # retain the source spelling, and the caller also reads the original
+        # labels separately: a new label must never take their column away.
+        view = identifier_text(row)
+        extra = [view.span(m.start(), m.end()) for m in _ID_LABEL_RE.finditer(view.text)]
+        labels = sorted({*labels, *((a, b, bool(_ID_ADJACENT_VALUE.match(row, b))) for a, b in extra)})
     # "SSN or ITIN", "SSN/ITIN" and "social security number (SSN)"
     # name one field. Walk aliases backwards once, without scanning or
     # copying the remaining row for each label in a crafted long chain.
@@ -547,8 +574,9 @@ def split_spans(row: str) -> list:
     view = identifier_text(row)
     # A value only the view reads is a target too: it must not fill a box and
     # leave the label's own value, on main's reading, printed beside it.
-    only_view = {view.span(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED)
-                 for m in pattern.finditer(view.text)} if view.text != row else set()
+    only_view = {reading.span(m.start(), m.end()) for reading in _identifier_readings(view)
+                 if reading.text != row for pattern in (_ID_VALUE_RE, _ID_SPACED)
+                 for m in pattern.finditer(reading.text)}
     return [span for span in sorted({*_in_either_reading(view, (_ID_SPLIT_VALUE, _ID_MARKED_COMB)), *only_view})
             if not _ID_FILLED_DELIMITED.fullmatch(row, *span)]
 
@@ -647,9 +675,10 @@ def _text_identifier_spans(text: str, *, governed=False) -> list:
 
 def _source_identifier_spans(view: _IdentifierText, *, governed=False) -> list:
     """`_text_identifier_spans` in source offsets, from either reading."""
-    spans = {view.span(a, b) for a, b in _text_identifier_spans(view.text, governed=governed)}
-    if view.text != view.raw:
-        spans.update(_text_identifier_spans(view.raw, governed=governed))
+    spans = set(_text_identifier_spans(view.raw, governed=governed))
+    for reading in _identifier_readings(view):
+        if reading.text != reading.raw:
+            spans.update(reading.span(a, b) for a, b in _text_identifier_spans(reading.text, governed=governed))
     return sorted(spans)
 
 
@@ -764,6 +793,9 @@ def _view_run_spans(view: _IdentifierText, runs: Runs, spans, *, tick=lambda: No
     can join its last group to a digit past an invisible character."""
     if view.text != view.raw:
         spans = [*spans, *((a, b) for a, b, _ in _run_spans(view.raw, runs, tick=tick))]
+    for reading in _identifier_readings(view):
+        if reading is not view:
+            spans = [*spans, *(reading.span(a, b) for a, b, _ in _run_spans(reading.text, runs, tick=tick))]
     return _run_spans(view.text, runs, _spans=[(view.canonical(a), view.canonical(b)) for a, b in spans], tick=tick)
 
 
@@ -896,7 +928,7 @@ def _is_id_label_cell(cell) -> bool:
     if not isinstance(cell, str):
         return False
     view = identifier_text(cell)
-    return _label_ends(cell) or _label_ends(view.text)
+    return _label_ends(cell) or any(_label_ends(reading.text) for reading in _identifier_readings(view))
 
 
 def _mask_id_value(cell):
