@@ -189,12 +189,12 @@ _ID_INVISIBLE = "\x00\u0332\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0"
 _ID_ADDED_VARIANT = re.compile(r"[\x00\u0332\u115f\u1160\u17b4\u17b5\u3164\uffa0\uff0e\uff0f]|\(cid:")
 
 
-def identifier_text(text: str, *, _legacy: bool = False) -> _IdentifierText:
+def identifier_text(text: str, *, _legacy: bool = False, _soft_hyphen: bool = False) -> _IdentifierText:
     parts, edges, shifts = [], [], []
     last, length = 0, 0
     for match in _ID_VARIANT.finditer(text):
         char = match[0]
-        if char in _ID_DASHES:
+        if char in _ID_DASHES and not (_soft_hyphen and char == "\u00ad"):
             continue
         if len(char) > 1:
             replacement = " \u2013 " if _legacy else _ID_GLYPH_SEPARATOR
@@ -271,8 +271,15 @@ def redact(text) -> str:
     # credential families to the front cannot fragment an SSN.
     for pattern in (_AWS_SECRET, _SECRET):
         out = pattern.sub("[REDACTED]", out)
-    spans = _in_either_reading(identifier_text(out), (_SSN_DELIMITED, _NINE_DIGITS, _ID_GOVERNED, _ID_SPACED,
-                                                       _ID_MARKED_COMB, _ID_WRAPPED))
+    patterns = (_SSN_DELIMITED, _NINE_DIGITS, _DIAGNOSTIC_COMB, _ID_GOVERNED, _ID_SPACED,
+                _ID_MARKED_COMB, _ID_WRAPPED)
+    spans = _in_either_reading(identifier_text(out), patterns)
+    if "\u00ad" in out:
+        # In diagnostics a discretionary soft hyphen may also be invisible
+        # inside digits. Add this reading without changing document masking. It
+        # flips every soft hyphen at once, so one read as both still prints, and an
+        # EIN or amount broken by one masks here.
+        spans = sorted({*spans, *_in_either_reading(identifier_text(out, _soft_hyphen=True), patterns)})
     parts, last = [], 0
     for start, end in spans:
         if end <= last:
@@ -406,6 +413,12 @@ _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}
 _ID_MARKED_COMB = re.compile(
     rf"(?<![0-9])[0-9](?:[^\S\n]+[0-9]){{2}}{_ID_GAP}{_ID_MARK}{_ID_GAP}"
     rf"[0-9][^\S\n]+[0-9]{_ID_GAP}{_ID_MARK}{_ID_GAP}[0-9](?:[^\S\n]+[0-9]){{3}}(?![0-9])")
+# Diagnostics cover each gate comb family without treating a two-seven EIN or
+# an amount with one decimal point as nine arbitrarily separated digits.
+_DIAGNOSTIC_COMB = re.compile("|".join(
+    rf"[0-9](?:[^\S\n]+[0-9]){{2}}[^\S\n]*{mark}[^\S\n]*"
+    rf"[0-9][^\S\n]+[0-9][^\S\n]*{mark}[^\S\n]*"
+    rf"[0-9](?:[^\S\n]+[0-9]){{3}}" for mark in (_ID_MARK, r"\.", "/")))
 # A line break may fall inside a labelled identifier, but never jump a blank
 # line or another word, and only where it cannot be figures that happen to total
 # nine digits: beside a dash, or with every group, or every comb box, alone on its

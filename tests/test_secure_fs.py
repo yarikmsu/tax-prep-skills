@@ -2501,3 +2501,16 @@ def test_the_execution_policy_is_bypassed_for_the_windows_acl_call():
         "the PowerShell that sets the owner-only DACL is subject to the host's "
         "execution policy again; on a stock Windows host nothing can be "
         "restricted at all and AGENTS.md §1 does not hold there")
+
+
+def test_diagnostic_redaction_finishes_on_a_long_punctuation_run():
+    """A repeated separator must not nest a second repetition: a failed
+    nine-digit match on untrusted diagnostic text would backtrack exponentially.
+    A subprocess deadline keeps the regression from hanging the test process.
+    """
+    import subprocess
+    import sys
+    subprocess.run([sys.executable, '-c',
+                    "from agents.lib.secure_fs import redact; "
+                    "text = 'file1' + '-' * 10000 + 'x'; assert redact(text) == text"],
+                   cwd=REPO_ROOT, check=True, timeout=5, capture_output=True)

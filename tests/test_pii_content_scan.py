@@ -3049,3 +3049,222 @@ def test_the_hooks_enumerate_with_the_same_diff_filter_as_the_scanner():
     assert 'git diff --cached --name-only --diff-filter=d' in installer, (
         "the pre-commit hook no longer enumerates the index the way the scanner "
         "does, so its count comparison would refuse correct commits")
+
+
+# AA103: preserve complete UTF-8 matches through the actual git boundary.
+def _wide_digits(value):
+    return value.translate(str.maketrans('0123456789', '０１２３４５６７８９'))
+
+
+def _unicode_identifier_values():
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    comb = ' '.join(bare)
+    marked = ' - '.join(' '.join(part) for part in (_SSN_AREA, _SSN_GROUP, _SSN_SERIAL))
+    return [_wide_digits(value) for value in (bare, FAKE_SSN, comb, marked)] + [
+        comb, marked, comb.replace(' ', '\u2009'),
+        _wide_digits(_SSN_AREA) + '.' + _SSN_GROUP + '．' + _wide_digits(_SSN_SERIAL),
+        _wide_digits(_SSN_AREA) + '/' + _SSN_GROUP + '／' + _wide_digits(_SSN_SERIAL),
+        *(char.join(bare) for char in ('\u00ad', '\u200b', '\u2066', '\u0332', '\u034f',
+                                      '\u17b4', '\u115f', '\u3164', '\ufe0f', '\U000e0100')),
+        '\u200d'.join(_wide_digits(FAKE_SSN)),
+        '\u200b \u2060'.join(bare), marked.replace('-', '.'), marked.replace('-', '/'),
+        marked.replace('-', '--'), marked.replace('-', '-\u200b-'),
+        FAKE_SSN.replace('-', '-\u200b-'), _wide_digits(FAKE_SSN).replace('-', '\u2014\u3164\u2014'),
+    ]
+
+
+@pytest.mark.parametrize('index', range(len(_unicode_identifier_values())))
+@pytest.mark.parametrize('location', ['content', 'pathname'])
+def test_unicode_digit_comb_and_invisible_identifiers_block_and_redact(tmp_path, index, location):
+    repo = _make_repo(tmp_path)
+    value = _unicode_identifier_values()[index]
+    name = 'notes.md' if location == 'content' else f'tests/fixtures/{value}.md'
+    _stage(repo, name, value + '\n' if location == 'content' else 'ordinary content\n')
+    result = _run(repo)
+    assert result.returncode == 1
+    assert value not in result.stdout + result.stderr
+    assert runtime_redact(value) == '[REDACTED]'
+    if location == 'pathname':
+        assert '[REDACTED]' in result.stdout
+
+
+def test_unicode_gate_primitives_cover_runtime_invisibles_as_whole_characters():
+    from agents.lib.secure_fs import _ID_INVISIBLE
+    invisible = {chr(i) for i in range(0x110000) if unicodedata.category(chr(i)) == 'Cf'}
+    invisible |= set(_ID_INVISIBLE) - {'\x00'}
+    invisible |= {chr(i) for i in range(0xfe00, 0xfe10)} | {chr(i) for i in range(0xe0100, 0xe01f0)}
+    unexpected = {'é', '€', '\u2019', '\u17b6', '\u115e', '０', ' '}
+    script = SCAN.read_text(encoding='utf-8')
+    definitions = script[script.index('SSN_DASH='):script.index('# Nine contiguous digits')]
+    result = subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + '\ngrep -xE "$SSN_INVISIBLE"'],
+                            input='\n'.join(sorted(invisible | unexpected)) + '\n', capture_output=True, text=True)
+    assert result.returncode == 0
+    assert set(result.stdout.splitlines()) == invisible
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    assert all(runtime_redact(char.join(bare)) == '[REDACTED]' for char in invisible)
+
+
+def _ascii_lines():
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    comb = ' '.join(bare)
+    groups = (_SSN_AREA, _SSN_GROUP, _SSN_SERIAL)
+    spaced = [' '.join(part) for part in groups]
+    lines = [comb, comb.replace(' ', '\t'), comb.replace(' ', '\x1c'), comb.replace(' ', '\x0b'),
+             ' - '.join(spaced), ' . '.join(spaced), ' / '.join(spaced), '-'.join(spaced), '--'.join(spaced), ' - - '.join(spaced),
+             FAKE_SSN, FAKE_SSN.replace('-', ' '), FAKE_SSN.replace('-', '  '), FAKE_SSN.replace('-', '.'),
+             FAKE_SSN.replace('-', '/'), FAKE_SSN.replace('-', '--'), bare[:3] + ' - ' + bare[3:5] + ' - ' + bare[5:],
+             'Date 2026-01-31', 'Fee $125.50. 2025 rates', '1 2 3 4 5 6 7 8', 'Range $1,400.00 - 2400',
+             bare[:3] + '-' + bare[3:5] + '.' + bare[5:], 'SSN' + FAKE_SSN + 'x']
+    return lines + [prefix + line + ' tail' for line in lines for prefix in ('a ', '1')]
+
+
+def test_the_ascii_pattern_finds_exactly_what_the_whole_one_does_on_ascii_text():
+    script = SCAN.read_text(encoding='utf-8')
+    definitions = script[script.index('SSN_DASH='):script.index('# Nine contiguous digits')]
+    def matches(pattern):
+        return subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + f'\ngrep -oE "${pattern}"'],
+                              input='\n'.join(_ascii_lines()) + '\n', capture_output=True, text=True).stdout
+    assert matches('SSN_DELIMITED') and matches('SSN_DELIMITED') == matches('SSN_ASCII_DELIMITED')
+    def combs(gap):
+        return subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + f'\ngrep -oE "[0-9](${gap}[0-9])*"'],
+                              input='\n'.join(_ascii_lines()) + '\n', capture_output=True, text=True).stdout
+    assert combs('SSN_BOX_GAP') and combs('SSN_BOX_GAP') == combs('SSN_ASCII_BOX_GAP')
+
+
+@pytest.mark.parametrize('line', ['ordinary prose', 'caf\u00e9 notes'])
+def test_a_line_of_either_kind_still_blocks_beside_the_other(tmp_path, line):
+    """Each side is read on its own, so neither can hide what the other holds."""
+    repo = _make_repo(tmp_path)
+    comb = ' '.join(_SSN_AREA + _SSN_GROUP + _SSN_SERIAL)
+    _stage(repo, 'notes.md', f'{line}\n{comb}\n{_wide_digits(FAKE_SSN)}\n')
+    result = _run(repo)
+    assert result.returncode == 1 and '(2 match(es))' in result.stdout
+
+
+def test_a_match_on_a_line_with_a_non_ascii_byte_counts_once(tmp_path):
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', f'café {FAKE_SSN}\n')
+    assert '(1 match(es))' in _run(repo).stdout
+
+
+@pytest.mark.parametrize('line', ['100 1 2 3 4 5 6 7 8', '2 3 4 5 6 7 8 9 10', '10 2 3 4 5 6 7 8 11',
+                                  '\uff11\uff10\uff10 1 2 3 4 5 6 7 8 caf\u00e9'])
+def test_a_longer_number_beside_single_digits_is_not_a_comb(tmp_path, line):
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', line + '\n')
+    assert _run(repo).returncode == 0
+
+
+def test_a_wide_line_with_nine_digits_is_still_read_past_the_digit_check(tmp_path):
+    """The digit count only skips what cannot match: nine digits scattered
+    through prose still reach the rules, and a hit among them still blocks."""
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', f'1 caf\u00e9 2 {_wide_digits(FAKE_SSN)} 3\n')
+    assert _run(repo).returncode == 1
+    (repo / 'notes.md').write_text('caf\u00e9 1 22 333 and 4 55 666\n', encoding='utf-8')
+    subprocess.run(['git', 'add', 'notes.md'], cwd=repo, check=True)
+    assert _run(repo).returncode == 0
+
+
+def test_unicode_gate_ref_names_and_deleted_history_still_block(tmp_path):
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', 'ordinary work\n')
+    base = _commit(repo, 'seed')
+    values = _unicode_identifier_values()
+    names = [f'refs/heads/entry-{i}-{value}' for i, value in enumerate(values)]
+    refs = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh', '--names', base], cwd=repo,
+                          input='\n'.join(names) + '\n', capture_output=True, text=True)
+    assert refs.returncode == 1 and refs.stdout.count('BLOCKED NAME') == len(values)
+    assert all(value not in refs.stdout + refs.stderr for value in values)
+    _stage(repo, 'notes.md', '\n'.join(values) + '\n')
+    _commit(repo, 'add synthetic variants')
+    _stage(repo, 'notes.md', 'ordinary work\n')
+    head = _commit(repo, 'remove synthetic variants')
+    history = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh', f'{base}...{head}'], cwd=repo,
+                             capture_output=True, text=True)
+    assert history.returncode == 1
+    assert f'({len(values)} match(es))' in history.stdout
+    assert all(value not in history.stdout + history.stderr for value in values)
+
+
+@pytest.mark.parametrize('style', ['wide', 'comb', 'invisible'])
+def test_unicode_allowlisting_keeps_the_original_spelling_and_requires_staging(tmp_path, style):
+    repo = _make_repo(tmp_path)
+    bare = '000' + '00' + '0000'
+    value = {'wide': _wide_digits(bare), 'comb': ' '.join(bare), 'invisible': '\u200b'.join(bare)}[style]
+    _stage(repo, 'notes.md', value + '\n')
+    assert _run(repo).returncode == 1
+    allow = repo / '.pii-allowlist'
+    allow.write_text(allow.read_text(encoding='utf-8') + value + '\n', encoding='utf-8')
+    assert _run(repo).returncode == 1
+    subprocess.run(['git', 'add', '.pii-allowlist'], cwd=repo, check=True)
+    assert _run(repo).returncode == 0
+
+
+def test_joining_invisibles_cannot_withdraw_an_existing_ascii_or_wide_token(tmp_path):
+    repo = _make_repo(tmp_path)
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    values = [bare + '\u200b3', _wide_digits(bare) + '\u03323']
+    _stage(repo, 'notes.md', '\n'.join(values) + '\n')
+    result = _run(repo)
+    assert result.returncode == 1 and '(2 match(es))' in result.stdout
+    assert all(value not in result.stdout + result.stderr for value in values)
+
+
+def test_unicode_longer_numbers_dates_and_money_ranges_remain_committable(tmp_path):
+    repo = _make_repo(tmp_path)
+    phone = '555' + '123' + '4567'
+    text = '\n'.join([phone, _wide_digits(phone), ' '.join(phone), _wide_digits(' '.join(phone)),
+                       'Date ０１／３１／２０２６', 'Range $１,４００．００ - ２４００', 'Amount １２３ ４５６ ７８９', 'Fee $125.50. 2025 rates', 'Fee $１２５．５０． ２０２５ rates'])
+    _stage(repo, 'notes.md', text + '\n')
+    assert _run(repo).returncode == 0
+
+
+def test_an_invalid_utf8_byte_does_not_hide_a_unicode_identifier(tmp_path):
+    repo = _make_repo(tmp_path)
+    path = repo / 'notes.md'
+    path.write_bytes(b'prefix\xe9 SSN ' + _wide_digits(FAKE_SSN).encode() + b'\n')
+    subprocess.run(['git', 'add', 'notes.md'], cwd=repo, check=True)
+    result = _run(repo)
+    assert result.returncode == 1 and 'BLOCKED CONTENT' in result.stdout
+
+
+@pytest.mark.parametrize('kind', ['late', 'forced-text'])
+def test_nul_is_refused_before_bash_can_drop_it_from_an_added_line(tmp_path, kind):
+    repo = _make_repo(tmp_path)
+    prefix = b'Ordinary text\n' * 1000 if kind == 'late' else b''
+    if kind == 'forced-text':
+        _stage(repo, '.gitattributes', 'notes.md diff\n')
+    value = '\x00'.join(_SSN_AREA + _SSN_GROUP + _SSN_SERIAL).encode()
+    (repo / 'notes.md').write_bytes(prefix + b'SSN ' + value + b'\n')
+    subprocess.run(['git', 'add', 'notes.md'], cwd=repo, check=True)
+    stat = subprocess.check_output(['git', 'diff', '--cached', '--numstat', '--', 'notes.md'], cwd=repo)
+    assert not stat.startswith(b'-'), 'the fixture must defeat the binary-diff heuristic'
+    result = _run(repo)
+    assert result.returncode == 1 and 'BLOCKED NUL' in result.stdout
+    assert value.decode() not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('tool', ['tr', 'cmp'])
+def test_the_explicit_nul_check_fails_closed_when_its_byte_tool_cannot_run(tmp_path, tool):
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', 'ordinary work\n')
+    shim = repo / 'shim'
+    shim.mkdir()
+    path = shim / tool
+    code = '#!/bin/bash\n'
+    if tool == 'tr':
+        code += 'if [ "$2" = \'\\000\' ]; then exit 2; fi\nexec /usr/bin/tr "$@"\n'
+    else:
+        code += 'exit 2\n'
+    path.write_text(code, encoding='utf-8')
+    os.chmod(path, 0o755)
+    result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh'], cwd=repo,
+                            env={**os.environ, 'PATH': f"{shim}:{os.environ['PATH']}"},
+                            capture_output=True, text=True)
+    assert result.returncode == 1 and 'could not' in result.stdout
+
+
+def test_runtime_diagnostics_preserve_business_identifiers_and_decimal_amounts():
+    for value in ('EIN ' + '12-' + '3456789', 'Amount 1000000.00', 'Date 2025-01-31'):
+        assert runtime_redact(value) == value
