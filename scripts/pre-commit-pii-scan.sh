@@ -971,9 +971,14 @@ for scope in "${SCOPES[@]}"; do
         # `printf`, not `echo`: bash's echo consumes a leading -n/-e/-E as a
         # flag, so a file named exactly `-e` would be tested as an EMPTY name.
         if printf '%s\n' "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
-          ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]')
+          ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]') \
+            || die "could not read the blocked extension for $safe_file"
           BLOCKED+=("  BLOCKED FILE TYPE ($ext): $safe_file")
           continue
+        else
+          filename_status=$?
+          [ "$filename_status" -eq 1 ] \
+            || die "grep could not run while checking the extension for $safe_file"
         fi
 
         # Exact runtime filenames. All of them are gitignored, so anything
@@ -1002,6 +1007,10 @@ for scope in "${SCOPES[@]}"; do
         if printf '%s\n' "$filename" | grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$'; then
           BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
           continue
+        else
+          filename_status=$?
+          [ "$filename_status" -eq 1 ] \
+            || die "grep could not run while checking the runtime filename for $safe_file"
         fi
         ;;
     esac
@@ -1132,7 +1141,11 @@ for scope in "${SCOPES[@]}"; do
     fi
     added=$(<"$ADDED")
 
-    hits=$(count_hits "$(strip_artifact_digests "$file" "$added")")
+    # Check cleanup's status BEFORE passing its output to another command:
+    # a failed nested substitution otherwise becomes empty, clean input.
+    added=$(strip_artifact_digests "$file" "$added") \
+      || die "could not remove artifact digests before scanning $safe_file"
+    hits=$(count_hits "$added")
     [ "$hits" = "ERROR" ] && die "grep could not run while scanning $safe_file"
     if [ "${hits:-0}" -gt 0 ]; then
       # Report the FILE and a COUNT only. Never echo the match — that would put
@@ -1148,11 +1161,12 @@ if [ ${#BLOCKED[@]} -gt 0 ]; then
   echo "  $CONTEXT BLOCKED — Sensitive files found"
   echo "=========================================="
   echo ""
-  printf '%s\n' "${BLOCKED[@]}" | sort -u
+  # Distinct paths may redact alike; keep every refusal, as names mode does.
+  printf '%s\n' "${BLOCKED[@]}" | sort
   echo ""
   echo "These files should never be committed."
-  echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: $LIST_PATHS_CMD"
+  echo "Names shown as [REDACTED] are conservatively masked; ordinary numbers may match."
+  echo "List the real paths with: $LIST_PATHS_CMD"
   echo "$ESCAPE_HATCH"
   exit 1
 fi
@@ -1163,13 +1177,13 @@ if [ ${#CONTENT_BLOCKED[@]} -gt 0 ]; then
   echo "  $CONTEXT BLOCKED — PII pattern in content"
   echo "=========================================="
   echo ""
-  printf '%s\n' "${CONTENT_BLOCKED[@]}" | sort -u
+  printf '%s\n' "${CONTENT_BLOCKED[@]}" | sort
   echo ""
   echo "A full SSN or credential appears in the changes, or a file could not be"
   echo "scanned because git treats it as binary."
   echo "Store only the last four digits, as XXX-XX-1234."
-  echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: $LIST_PATHS_CMD"
+  echo "Names shown as [REDACTED] are conservatively masked; ordinary numbers may match."
+  echo "List the real paths with: $LIST_PATHS_CMD"
   echo "If the value is synthetic, add it to .pii-allowlist."
   echo "$ESCAPE_HATCH"
   exit 1

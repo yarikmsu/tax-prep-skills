@@ -1535,6 +1535,77 @@ def test_a_grep_that_cannot_run_blocks_rather_than_reporting_clean(tmp_path):
     assert "could not run" in r.stdout
 
 
+@pytest.mark.parametrize("name,tool,argument", [
+    ("requirements.txt", "sed", "s/--hash=sha256:[0-9a-f]{64}//g"),
+    ("docs/ops/review-subagent-acceptance.md", "sed", "s/sha256 `[0-9a-f]{64}`//g"),
+    ("statement.pdf", "grep", "-qiE"),
+    ("notes.md", "grep", "-qiE"),
+    ("statement.pdf", "grep", "-oiE"),
+    ("statement.pdf", "tr", "[:upper:]"),
+    ("tax_law_2026.json", "grep", "-qE"),
+    ("notes.md", "grep", "-qE"),
+])
+@pytest.mark.parametrize("mode", ["index", "range"])
+def test_selective_tool_failures_cannot_turn_a_scan_clean(tmp_path, name, tool, argument, mode):
+    """Other calls still work: a wholly broken grep already blocks elsewhere.
+
+    Digest cleanup must not erase the content to scan when sed fails, and the
+    filename rules must distinguish a failed grep from an ordinary no-match.
+    """
+    repo = _make_repo(tmp_path)
+    base = _commit(repo, "seed")
+    _stage(repo, name, f"SSN: {FAKE_SSN}\n" if tool == "sed" else "ordinary work\n")
+    args = []
+    if mode == "range":
+        args = [f"{base}...{_commit(repo, 'change')}"]
+    shim = repo / "shim"
+    shim.mkdir()
+    path = shim / tool
+    path.write_text(
+        "#!/bin/bash -p\n"
+        'for arg in "$@"; do\n'
+        f"  if [ \"$arg\" = '{argument}' ]; then\n"
+        '    printf "failed\\n" >> shim/calls\n'
+        "    exit 2\n"
+        "  fi\n"
+        "done\n"
+        f'exec /usr/bin/{tool} "$@"\n')
+    os.chmod(path, 0o755)
+    result = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", *args], cwd=repo,
+                            capture_output=True, text=True,
+                            env={**os.environ, "PATH": f"{shim}:{os.environ['PATH']}"})
+    assert (shim / "calls").read_text().strip(), "the targeted call never ran"
+    assert result.returncode == 1, "a failed tool call reported a clean scan"
+    assert "scan could not run" in result.stdout
+    assert "PII scan clean" not in result.stdout
+    assert FAKE_SSN not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("kind", ["file type", "pathname", "content"])
+def test_distinct_files_that_redact_alike_keep_every_report_row(tmp_path, kind):
+    repo = _make_repo(tmp_path)
+    # The dates are innocent, but broad diagnostic redaction masks them. The
+    # pathname case uses distinct, non-allowlisted identifiers instead.
+    names = ["2026-01-31--2026-02-28", "2026-03-31--2026-04-30"]
+    if kind == "pathname":
+        names = [FAKE_SSN, f"{_SSN_AREA}-{_SSN_GROUP}-9876"]
+    extension = "pdf" if kind == "file type" else "md"
+    for name in names:
+        _stage(repo, f"report_{name}.{extension}",
+               f"SSN: {FAKE_SSN}\n" if kind == "content" else "ordinary work\n")
+    result = _run(repo)
+    assert result.returncode == 1
+    rows = [line for line in result.stdout.splitlines() if "report_" in line]
+    assert len(rows) == 2, "redaction merged distinct files into one reported refusal"
+    assert rows[0] == rows[1], "the fixture did not reach identical redacted rows"
+    label = {"file type": "BLOCKED FILE TYPE", "pathname": "BLOCKED PATHNAME",
+             "content": "BLOCKED CONTENT"}[kind]
+    assert all(label in row and "[REDACTED]" in row for row in rows)
+    assert all(name not in result.stdout + result.stderr for name in names)
+    if kind != "pathname":
+        assert "ordinary numbers" in result.stdout, "broad redaction needs an honest explanation"
+
+
 def test_no_unredacted_patch_survives_the_scan(tmp_path):
     """Every intermediate this script writes holds the raw value, and only two
     of six temp files were covered by the cleanup trap — a signal or an abort
