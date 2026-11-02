@@ -112,7 +112,6 @@ _ID_DASHES = ("\u0096\u0097\u00ad\u02d7\u058a\u05be\u1400\u1806\u2010\u2011"
               "\u2012\u2013\u2014\u2015\u2043\u2212\u23af\u2500\u2501\u2550"
               "\u2796\u2e17\u2e1a\u2e3a\u2e3b\u2e40\u2e5d\u301c\u3030\u30a0"
               "\u30fc\ufe31\ufe32\ufe58\ufe63\uff0d\U00010d6e\U00010ead")
-_ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_DASHES}]")
 _ID_DASH = f"[-{_ID_DASHES}]"
 _ID_MARK = rf"{_ID_DASH}+"
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
@@ -123,8 +122,7 @@ _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GA
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
 _SSN_DELIMS = rf"(?:{_ID_MARK}[0-9]{{2}}{_ID_MARK}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
 _SSN_DELIMITED = re.compile(
-    rf"[0-9]{{3}}(?:{_ID_GAP}{_ID_DASH}+{_ID_GAP}[0-9]{{2}}{_ID_GAP}{_ID_DASH}+{_ID_GAP}"
-    rf"|{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
+    rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")
@@ -196,9 +194,9 @@ def identifier_text(text: str) -> _IdentifierText:
     last, length = 0, 0
     for match in _ID_VARIANT.finditer(text):
         char = match[0]
-        if _ID_TYPOGRAPHIC_MARK.fullmatch(char):
+        if char in _ID_DASHES:
             continue
-        if len(char) > 1 or unicodedata.category(char) == "Pd" or char in "\u23af\u2500\u2501\u2550\u30fc":
+        if len(char) > 1:
             replacement = "\u2013"
         elif (unicodedata.category(char) == "Cf" or char == "\u034f"
               or "\ufe00" <= char <= "\ufe0f" or "\U000e0100" <= char <= "\U000e01ef"):
