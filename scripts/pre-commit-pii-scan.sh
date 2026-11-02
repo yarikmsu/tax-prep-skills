@@ -496,7 +496,20 @@ load_allowlist() {
 # Examples are described rather than written out: a literal in this comment is a
 # literal in a tracked file, and this scan would — correctly — block its own
 # source. It has done so before.
-SSN_DELIMITED='[0-9]{3}([-][0-9]{2}[-]|[.][0-9]{2}[.]|[/][0-9]{2}[/]|[[:space:]]+[0-9]{2}[[:space:]]+)[0-9]{4}'
+# UTF-8 marks are ALTERNATIVES, not a bracket class: LC_ALL=C makes a
+# Unicode bracket class a set of unrelated bytes. Octal bytes also work in
+# macOS's Bash 3.2, which does not implement Unicode escapes. These are the
+# Unicode 16.0 Pd marks plus the typographic minus/hyphen and horizontal-rule
+# spellings recognized by the runtime redactor; retain raw Windows-1252 marks
+# too. A dash edge may repeat or differ from the other edge after OCR.
+SSN_DASH=$'(-|\302\226|\302\227|\302\255|\313\227|\326\212|\326\276'
+SSN_DASH+=$'|\341\220\200|\341\240\206|\342\200\220|\342\200\221|\342\200\222|\342\200\223'
+SSN_DASH+=$'|\342\200\224|\342\200\225|\342\201\203|\342\210\222|\342\216\257|\342\224\200'
+SSN_DASH+=$'|\342\224\201|\342\225\220|\342\236\226|\342\270\227|\342\270\232|\342\270\272'
+SSN_DASH+=$'|\342\270\273|\342\271\200|\342\271\235|\343\200\234|\343\200\260|\343\202\240'
+SSN_DASH+=$'|\343\203\274|\357\270\261|\357\270\262|\357\271\230|\357\271\243|\357\274\215'
+SSN_DASH+=$'|\360\220\265\256|\360\220\272\255|\226|\227)'
+SSN_DELIMITED="[0-9]{3}(${SSN_DASH}+[0-9]{2}${SSN_DASH}+|[.][0-9]{2}[.]|[/][0-9]{2}[/]|[[:space:]]+[0-9]{2}[[:space:]]+)[0-9]{4}"
 # Nine contiguous digits is also a full SSN — a plausible result of manual entry
 # or document extraction. Detected by extracting whole alphanumeric tokens and
 # keeping those that are exactly nine digits, so a 10-digit phone number or a
@@ -536,7 +549,9 @@ AWS_SECRET_PATTERN="${AWS_KEY_NAME}[^A-Za-z0-9]*[A-Za-z0-9/+=]{40}"
 # — so the scanner blocked a path containing an AWS secret and then printed the
 # secret in the block message. A rule that is detected but not redacted turns
 # the gate into a disclosure channel, so the two can no longer be edited apart.
-PII_PATTERNS=("$SSN_DELIMITED" "$SECRET_PATTERN" "$AWS_SECRET_PATTERN")
+# Widest first: a credential can contain an SSN-shaped substring. Redacting
+# that substring first would break the credential match and print its suffix.
+PII_PATTERNS=("$AWS_SECRET_PATTERN" "$SECRET_PATTERN" "$SSN_DELIMITED")
 
 # Counting hits is a function because the same patterns must cover BOTH the
 # added lines and the PATHNAME. A file called reports/<ssn>.txt discloses the
