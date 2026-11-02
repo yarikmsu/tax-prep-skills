@@ -342,6 +342,8 @@ def test_a_symbol_font_with_no_letters_is_not_refused_for_that(tmp_path, route):
     pytest.param(_row(9, (0x7f, 0x7e)), id="nine glyphs of two kinds"),
     pytest.param([(36 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(3)]
                  + [(90 + i * 12, _ON_ONE_ROW, 0x7f + i % 2) for i in range(6)], id="groups apart still one run"),
+    pytest.param([(36 + i * 12, _ON_ONE_ROW, code) for i, code in enumerate(
+        (0x7f, 0x7e, 0x7f, 0x2d, 0x7e, 0x7f, 0x2d, 0x7f, 0x7e, 0x7f, 0x7e))], id="a printed dash does not end it"),
 ])
 def test_nine_unreadable_glyphs_on_a_readable_page_refuse(tmp_path, route, symbols):
     path = _cid_pdf(tmp_path / "digits.pdf", mapped=_READABLE, symbols=symbols)
