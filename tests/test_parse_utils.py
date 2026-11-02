@@ -627,13 +627,21 @@ class TestMaskSsn:
         for text in ("SSN 1" + value, "SSN " + value + "1"):
             assert mask_ssn(text) == text
 
-    @pytest.mark.parametrize("gap", ["\n", "\r", "\v", "\f", "\u0085", "\u2028", "\u2029"])
+    @pytest.mark.parametrize("gap", ["\r", "\v", "\f", "\u0085", "\u2028", "\u2029"])
     def test_separator_spacing_does_not_join_vertical_whitespace(self, gap):
         for position in range(4):
             gaps = [""] * 4
             gaps[position] = gap
             value = _with_separator_gaps(("000", "00", LAST4), "-", gaps)
             assert mask_ssn(f"SSN {value}") == f"SSN {value}"
+
+    def test_a_value_wrapped_beside_its_mark_masks_and_keeps_its_row(self):
+        """The one vertical gap: a PDF's line break, the row count kept for the word routes."""
+        for position in range(4):
+            gaps = [""] * 4
+            gaps[position] = "\n"
+            value = _with_separator_gaps(("000", "00", LAST4), "-", gaps)
+            assert mask_ssn(f"SSN {value}") == f"SSN {MASKED}\n"
 
     def test_an_itin_is_masked_the_same_way(self):
         assert mask_ssn(f"ITIN {_itin()}") == f"ITIN {MASKED}"
@@ -1331,8 +1339,9 @@ class TestMaskingByPosition:
         from agents.lib.secure_fs import mask_runs
         runs = {_ssn("")}
         for value in ("01 - 31 - 2026", "415 - 555 - 0100",
-                      f"000 - 00 / {LAST4}", f"000\n- 00 - {LAST4}", f"000 -\r00 - {LAST4}"):
+                      f"000 - 00 / {LAST4}", f"000 -\r00 - {LAST4}"):
             assert mask_runs(value, runs) == value
+        assert mask_runs(f"000\n- 00 - {LAST4}", runs) == MASKED + "\n"
 
     @staticmethod
     def _routes(tmp_path, items):

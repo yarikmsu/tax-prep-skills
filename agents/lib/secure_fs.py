@@ -67,6 +67,7 @@ import re
 import stat
 import subprocess
 import sys
+import unicodedata
 import shutil
 import tempfile
 from pathlib import Path
@@ -111,18 +112,17 @@ _ID_DASHES = ("\u0096\u0097\u00ad\u02d7\u058a\u05be\u1400\u1806\u2010\u2011"
               "\u2012\u2013\u2014\u2015\u2043\u2212\u23af\u2500\u2501\u2550"
               "\u2796\u2e17\u2e1a\u2e3a\u2e3b\u2e40\u2e5d\u301c\u3030\u30a0"
               "\u30fc\ufe31\ufe32\ufe58\ufe63\uff0d\U00010d6e\U00010ead")
-_ID_TYPOGRAPHIC_MARK = re.compile(f"[{_ID_DASHES}]")
 _ID_DASH = f"[-{_ID_DASHES}]"
+_ID_MARK = rf"{_ID_DASH}+"
 _ID_GAP = r"[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]*"
 # Any two dashes, since an OCR layer can read each edge differently; a dot or a
 # slash only with itself, as a date prints.
 _ID_SPLIT = "|".join(rf"{_ID_GAP}{mark}{_ID_GAP}[0-9]{{2}}{_ID_GAP}{mark}{_ID_GAP}"
-                     for mark in (_ID_DASH, r"\.", "/"))
+                     for mark in (_ID_MARK, r"\.", "/"))
 _SSN_ASCII_DELIMS = r"(?:-[0-9]{2}-|\.[0-9]{2}\.|/[0-9]{2}/)"
-_SSN_DELIMS = rf"(?:{_ID_DASH}[0-9]{{2}}{_ID_DASH}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
+_SSN_DELIMS = rf"(?:{_ID_MARK}[0-9]{{2}}{_ID_MARK}|\.[0-9]{{2}}\.|/[0-9]{{2}}/)"
 _SSN_DELIMITED = re.compile(
-    rf"[0-9]{{3}}(?:{_ID_GAP}{_ID_DASH}+{_ID_GAP}[0-9]{{2}}{_ID_GAP}{_ID_DASH}+{_ID_GAP}"
-    rf"|{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
+    rf"[0-9]{{3}}(?:{_ID_SPLIT}|\s+[0-9]{{2}}\s+)[0-9]{{4}}")
 _SECRET = re.compile(
     r"(AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36}"
     r"|github_pat_[A-Za-z0-9_]{40,}")
@@ -142,6 +142,87 @@ _AWS_SECRET = re.compile(
 # that turns a safeguard into a disclosure channel. Over-redaction costs
 # legibility; under-redaction discloses.
 _NINE_DIGITS = re.compile(r"[0-9]{9,}")
+
+
+class _IdentifierText(NamedTuple):
+    """Recognition-only text, with sparse offsets back to the source.
+
+    Never return normalized document text: converting a fullwidth amount or
+    removing a format character in a name changes the worker's evidence.
+    Only a matched identifier is rewritten. A PDF's unmapped `(cid:N)` is
+    one unknown separator, never the digits of its font's glyph number.
+    """
+    text: str
+    edges: tuple = ()
+    shifts: tuple = ()
+    raw_edges: tuple = ()
+    raw: str = ""
+
+    def source(self, offset: int) -> int:
+        index = bisect_right(self.edges, offset)
+        return offset + (self.shifts[index - 1] if index else 0)
+
+    def span(self, start: int, end: int) -> tuple[int, int]:
+        """Source bounds of a match. It ends at its last character, or an
+        invisible one after it goes too and the digit beyond joins the mask."""
+        if end <= start:
+            return self.source(start), self.source(start)
+        return self.source(start), self.source(end - 1) + 1
+
+    def canonical(self, offset: int) -> int:
+        index = bisect_right(self.raw_edges, offset)
+        at = offset - (self.shifts[index - 1] if index else 0)
+        # An offset inside a `(cid:N)` token stops at that token's separator.
+        return min(at, self.edges[index]) if index < len(self.edges) else at
+
+
+# A font's glyph number fits 16 bits, so nine digits in a token are no glyph and
+# stay text every rule reads. A token folds to a separator set apart, which needs
+# a label like any spaced mark: an unmapped glyph is as often the page's space, and
+# "850(cid:3)00(cid:3)2025" is a wage with its cents apart and a year.
+_ID_VARIANT = re.compile(r"[^\x00-\x7f]|\(cid:[0-9]{1,5}\)")
+_ID_GLYPH_SEPARATOR = " \u2013 "
+
+
+def identifier_text(text: str) -> _IdentifierText:
+    parts, edges, shifts = [], [], []
+    last, length = 0, 0
+    for match in _ID_VARIANT.finditer(text):
+        char = match[0]
+        if char in _ID_DASHES:
+            continue
+        if len(char) > 1:
+            replacement = _ID_GLYPH_SEPARATOR
+        elif (unicodedata.category(char) == "Cf" or char == "\u034f"
+              or "\ufe00" <= char <= "\ufe0f" or "\U000e0100" <= char <= "\U000e01ef"):
+            replacement = ""
+        elif unicodedata.category(char) == "Nd":
+            replacement = str(unicodedata.decimal(char))
+        else:
+            continue
+        parts += [text[last:match.start()], replacement]
+        length += match.start() - last + len(replacement)
+        if len(replacement) != len(char):
+            edges.append(length)
+            shifts.append(match.end() - length)
+        last = match.end()
+    if not parts:
+        return _IdentifierText(text, raw=text)
+    parts.append(text[last:])
+    return _IdentifierText("".join(parts), tuple(edges), tuple(shifts),
+                           tuple(edge + shift for edge, shift in zip(edges, shifts)), text)
+
+
+def _in_either_reading(view: _IdentifierText, patterns) -> list:
+    """Source spans a pattern finds in the view or in the text as printed. The
+    view is additive only: joining a digit across an invisible character, or
+    reading a neighbouring fullwidth digit as one, makes an identifier read as
+    a longer number, and a label as a longer word, so the view alone loses
+    what the printed text shows."""
+    spans = {(m.start(), m.end()) for pattern in patterns for m in pattern.finditer(view.raw)}
+    if view.text != view.raw:
+        spans |= {view.span(m.start(), m.end()) for pattern in patterns for m in pattern.finditer(view.text)}
+    return sorted(spans)
 
 
 def redact(text) -> str:
@@ -168,9 +249,20 @@ def redact(text) -> str:
     # A credential rule can only be defeated this way, never the reverse: no SSN
     # spelling contains an AKIA/sk-/ghp_/github_pat_ prefix, so moving the two
     # credential families to the front cannot fragment an SSN.
-    for pattern in (_AWS_SECRET, _SECRET, _SSN_DELIMITED, _NINE_DIGITS):
+    for pattern in (_AWS_SECRET, _SECRET):
         out = pattern.sub("[REDACTED]", out)
-    return out
+    spans = _in_either_reading(identifier_text(out), (_SSN_DELIMITED, _NINE_DIGITS, _ID_GOVERNED, _ID_SPACED,
+                                                       _ID_MARKED_COMB, _ID_WRAPPED))
+    parts, last = [], 0
+    for start, end in spans:
+        if end <= last:
+            continue
+        if start < last:
+            last = end
+            continue
+        parts += [out[last:start], "[REDACTED]"]
+        last = end
+    return "".join(parts) + out[last:]
 
 
 # The SSN/ITIN shapes `mask_ssn` rewrites in EXTRACTED DOCUMENT TEXT. Not
@@ -289,6 +381,37 @@ _ID_VALUE_RE = re.compile(
 # the whitespace spelling it is masked only under a label: Form 1040 prints
 # the refund routing number in a comb field too.
 _ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}")
+# A comb can retain the form's printed marks between its groups. Its digits
+# are still separate boxes; an ordinary unlabelled figure stays untouched.
+_ID_MARKED_COMB = re.compile(
+    rf"(?<![0-9])[0-9](?:[^\S\n]+[0-9]){{2}}{_ID_GAP}{_ID_MARK}{_ID_GAP}"
+    rf"[0-9][^\S\n]+[0-9]{_ID_GAP}{_ID_MARK}{_ID_GAP}[0-9](?:[^\S\n]+[0-9]){{3}}(?![0-9])")
+# A line break may fall inside a labelled identifier, but never jump a blank
+# line or another word, and only where it cannot be figures that happen to total
+# nine digits: beside a dash, or with every group, or every comb box, alone on its
+# line. A dot is no such mark, since "$125.50." before a line opening "2025" is a
+# sentence ending. Unmarked and sharing a line it is no claim at all: "850 00" over
+# "2025 Form 1099-INT" is an amount over a form name, "1234" over "12345 Main St" a
+# last four over an address. `_text_identifier_spans` also takes one only at the
+# start of its line or straight after its label, the reach `_ID_LABELED_SPLIT` has.
+_ID_WRAP_GAP = r"[^\S\n]*(?:\n[^\S\n]*)?"
+_ID_WRAP_LINE = r"[^\S\n]*\n[^\S\n]*"
+_ID_WRAP_SPACE = r"(?:[^\S\n]+(?:\n[^\S\n]*)?|\n[^\S\n]*)"
+_ID_WRAP_ENDS_LINE = r"(?=[^\S\n]*(?:\n|$))"
+
+
+def _id_wrap_group(n: int) -> str:
+    return rf"(?:[0-9]{{{n}}}|[0-9](?:{_ID_WRAP_SPACE}[0-9]){{{n - 1}}})"
+
+
+_ID_WRAPPED = re.compile(
+    r"(?<![0-9])(?:"
+    rf"{_id_wrap_group(3)}{_ID_WRAP_GAP}{_ID_MARK}{_ID_WRAP_GAP}"
+    rf"{_id_wrap_group(2)}{_ID_WRAP_GAP}{_ID_MARK}{_ID_WRAP_GAP}{_id_wrap_group(4)}(?![0-9])"
+    rf"|[0-9]{{3}}{_ID_WRAP_LINE}[0-9]{{2}}{_ID_WRAP_LINE}[0-9]{{4}}(?![0-9]){_ID_WRAP_ENDS_LINE}"
+    # A tenth line of a digit makes it a numbered list, not nine boxes.
+    rf"|[0-9](?:{_ID_WRAP_LINE}[0-9]){{8}}(?![0-9]){_ID_WRAP_ENDS_LINE}(?!{_ID_WRAP_LINE}[0-9])"
+    r")")
 # An OCR layer splits a delimited SSN beside a separator, horizontal
 # whitespace on either side of either mark. Like the whitespace spelling it
 # is masked only under a label: unlabelled, the same shape is an amount
@@ -316,11 +439,11 @@ _ID_LABELED_SAME_LINE = re.compile(
 # past label wording that ends by introducing it ("(SSN): ", "SSN no.: ", "SSN
 # = ", "SSN is "), within the bare spelling's reach. A dash does not introduce
 # one: it can stand for zero between figures ("identification - 600 - 10 - 2000").
+_ID_INTRODUCED = (rf"{_ID_LABEL}(?:[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?"
+                  rf"|[^0-9\n]{{0,24}}(?:[:#=]|(?<![A-Za-z])is)[^\S\n]*)")
 _ID_LABELED_SPLIT = re.compile(
-    rf"({_ID_LABEL}(?:[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?"
-    rf"|[^0-9\n]{{0,24}}(?:[:#=]|(?<![A-Za-z])is)[^\S\n]*))"
-    rf"(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])",
-    re.IGNORECASE)
+    rf"({_ID_INTRODUCED})(?<![0-9])[0-9]{{3}}(?:{_ID_SPLIT})([0-9]{{4}})(?![0-9])", re.IGNORECASE)
+_ID_LABELED_WRAPPED = re.compile(rf"({_ID_INTRODUCED})({_ID_WRAPPED.pattern})", re.IGNORECASE)
 # A value is the label's own only straight after it: spaces, the ")"
 # closing "social security number (SSN)", and one ":", "#" or ".". Page
 # text joins a label to the columns across the page, so an identifier-shaped
@@ -366,16 +489,6 @@ def _mask_spaced(text: str) -> str:
     return _ID_SPACED.sub(nines, text)
 
 
-def _mask_spaced_after_labels(text: str) -> str:
-    """The same-line layout for the comb spelling: every run after the label,
-    which a single-value pattern cannot reach past the first dependent."""
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        if label := _ID_LABEL_RE.search(line):
-            lines[i] = line[:label.end()] + _mask_spaced(line[label.end():])
-    return "\n".join(lines)
-
-
 def _under_label_lines(text: str) -> list[int]:
     """Lines an above-value label governs, read from `text` as it stands."""
     raw = text.split("\n")
@@ -388,17 +501,6 @@ def _under_label_lines(text: str) -> list[int]:
         if _label_ends(text, starts[above], starts[above] + len(raw[above])):
             governed.append(i)
     return governed
-
-
-def _mask_under_labels(text: str) -> str:
-    """Mask every identifier-shaped run on a line whose PREVIOUS line carries
-    an identifier label with no value after it — the label-above-value box of
-    a W-2 or 1099. Runs on the RAW text, before the same-line masking, so a
-    value the same-line pass has just rewritten still counts as present."""
-    lines = text.split("\n")
-    for i in _under_label_lines(text):
-        lines[i] = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", lines[i]))
-    return "\n".join(lines)
 
 
 # An identifier already spelled so `mask_ssn` handles it without a label, or
@@ -442,8 +544,13 @@ def split_spans(row: str) -> list:
     sign that a label's box is filled, and in that role a split-shaped
     figure, an amount ending a sentence before a year, would leave the SSN
     the label governs unmasked."""
-    return [(m.start(), m.end()) for m in _ID_SPLIT_VALUE.finditer(row)
-            if not _ID_FILLED_DELIMITED.fullmatch(row, m.start(), m.end())]
+    view = identifier_text(row)
+    # A value only the view reads is a target too: it must not fill a box and
+    # leave the label's own value, on main's reading, printed beside it.
+    only_view = {view.span(m.start(), m.end()) for pattern in (_ID_VALUE_RE, _ID_SPACED)
+                 for m in pattern.finditer(view.text)} if view.text != row else set()
+    return [span for span in sorted({*_in_either_reading(view, (_ID_SPLIT_VALUE, _ID_MARKED_COMB)), *only_view})
+            if not _ID_FILLED_DELIMITED.fullmatch(row, *span)]
 
 
 _LABEL_NOTE = re.compile(r"\(see instructions\)", re.IGNORECASE)
@@ -463,8 +570,12 @@ def prepare_runs(runs) -> Runs:
     SSN of its own, so each nine is a run too: a table can cut the row."""
     spelling: dict[str, str] = {}
     for raw in sorted(runs, key=len, reverse=True):
+        raw = identifier_text(raw).text
         digits = re.sub(r"[^0-9]", "", raw)
         masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1", raw))
+        masked = _ID_MARKED_COMB.sub(lambda m: "XXX-XX-" + re.sub(r"[^0-9]", "", m[0])[-4:], masked)
+        if _ID_WRAPPED.fullmatch(raw) and "\n" in raw:
+            masked = "XXX-XX-" + digits[-4:]
         # A spelling neither rule rewrites has no boundary to keep, never its raw text.
         spelling.setdefault(digits, "XXX-XX-XXXX" if masked == raw else masked)
         if len(digits) > 9 and len(digits) % 9 == 0:
@@ -474,10 +585,10 @@ def prepare_runs(runs) -> Runs:
 
 
 def _same_line_spans(text: str, whole: list) -> list:
-    """Values `_ID_LABELED_SAME_LINE` reaches once each run in `whole`, a comb
+    """Values a label's same-line rules reach once each run in `whole`, a comb
     keeping no digit, is spelled as masked: no digit stops the reach there, so
-    a bare nine past it is the label's, as in the text passes `mask_ssn` runs
-    in order. `whole` is sorted. Spans are offsets into `text`."""
+    a value past it is the label's. `whole` is sorted. Spans are offsets into
+    `text`."""
     parts, last, length = [], 0, 0
     edges, shifts = [0], [0]
     for start, end in whole:
@@ -490,7 +601,9 @@ def _same_line_spans(text: str, whole: list) -> list:
 
     def source(at: int) -> int:
         return at + shifts[bisect_right(edges, at) - 1]
-    return [(source(m.end(1)), source(m.end())) for m in _ID_LABELED_SAME_LINE.finditer("".join(parts))]
+    spelled = "".join(parts)
+    return [(source(m.end(1)), source(m.end())) for pattern in (_ID_LABELED_SAME_LINE, _ID_LABELED_SPLIT)
+            for m in pattern.finditer(spelled)]
 
 
 def _text_identifier_spans(text: str, *, governed=False) -> list:
@@ -515,9 +628,28 @@ def _text_identifier_spans(text: str, *, governed=False) -> list:
             spans.add((offset + match.start(), offset + match.end()))
             if len(re.findall(r"[0-9]", match[0])) % 9:
                 whole.append((offset + match.start(), offset + match.end()))
+        # A marked comb belongs to its label on the same line, below it, or
+        # in a table cell it governs. It never fills a label's box for the
+        # purpose of withdrawing that label's reach on the next line.
+        for match in _ID_MARKED_COMB.finditer(line, start):
+            spans.add((offset + match.start(), offset + match.end()))
         offset += len(line) + 1
     spans.update(_same_line_spans(text, whole))
     spans.update((m.end(1), m.end()) for m in _ID_LABELED_SPLIT.finditer(text))
+    spans.update((m.end(1), m.end()) for m in _ID_LABELED_WRAPPED.finditer(text) if "\n" in m[2])
+    line_starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    for match in _ID_WRAPPED.finditer(text):
+        at = bisect_right(line_starts, match.start()) - 1
+        if "\n" in match[0] and (governed or at in under) and not text[line_starts[at]:match.start()].strip():
+            spans.add((match.start(), match.end()))
+    return sorted(spans)
+
+
+def _source_identifier_spans(view: _IdentifierText, *, governed=False) -> list:
+    """`_text_identifier_spans` in source offsets, from either reading."""
+    spans = {view.span(a, b) for a, b in _text_identifier_spans(view.text, governed=governed)}
+    if view.text != view.raw:
+        spans.update(_text_identifier_spans(view.raw, governed=governed))
     return sorted(spans)
 
 
@@ -596,10 +728,13 @@ def _run_spans(text: str, runs: Runs, *, _spans=(), tick=lambda: None) -> list:
                         if value in runs.spelling and value != own:
                             found.append((positions[start], positions[stop - 1] + 1, value))
                     checked = max(checked, last + 1)
-    for match in _ID_SPLIT_VALUE.finditer(text):
-        digits = re.sub(r"[^0-9]", "", match[0])
-        if digits in runs.spelling:
-            found.append((match.start(), match.end(), digits))
+    for pattern in (_ID_SPLIT_VALUE, _ID_MARKED_COMB, _ID_WRAPPED):
+        for match in pattern.finditer(text):
+            if pattern is _ID_WRAPPED and "\n" not in match[0]:
+                continue
+            digits = re.sub(r"[^0-9]", "", match[0])
+            if digits in runs.spelling:
+                found.append((match.start(), match.end(), digits))
     found.extend((start, end, re.sub(r"[^0-9]", "", text[start:end])) for start, end in spans)
     # Count once across the text, rather than rescanning a long outer comb
     # for every aligned nine it contains.
@@ -623,16 +758,28 @@ def _run_spans(text: str, runs: Runs, *, _spans=(), tick=lambda: None) -> list:
     return merged
 
 
+def _view_run_spans(view: _IdentifierText, runs: Runs, spans, *, tick=lambda: None) -> list:
+    """`_run_spans` over the view, in its offsets, taking `spans` in source
+    offsets. A run known by position is also looked for as printed: the view
+    can join its last group to a digit past an invisible character."""
+    if view.text != view.raw:
+        spans = [*spans, *((a, b) for a, b, _ in _run_spans(view.raw, runs, tick=tick))]
+    return _run_spans(view.text, runs, _spans=[(view.canonical(a), view.canonical(b)) for a, b in spans], tick=tick)
+
+
 def mask_runs(text: str, runs, *, _spans=(), tick=lambda: None) -> str:
     """Mask each of `runs` (run texts, or `prepare_runs` of them),
     identifier-shaped text a layout reader found in an identifier label's
     box, wherever its digits occur in `text` however they are spaced, in the
     spelling `mask_ssn` writes."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
-    spelling = {**prepare_runs(text[start:end] for start, end in _spans).spelling, **runs.spelling}
+    view = identifier_text(text)
+    spelling = {**prepare_runs(view.text[view.canonical(start):view.canonical(end)]
+                               for start, end in _spans).spelling, **runs.spelling}
     out, last = [], 0
-    for start, end, digits in _run_spans(text, runs, _spans=_spans, tick=tick):
-        out += [text[last:start], spelling[digits] if digits else "XXX-XX-XXXX"]
+    for start, end, digits in _view_run_spans(view, runs, _spans, tick=tick):
+        start, end = view.span(start, end)
+        out += [text[last:start], (spelling[digits] if digits else "XXX-XX-XXXX") + "\n" * text[start:end].count("\n")]
         last = end
     return "".join(out) + text[last:]
 
@@ -653,12 +800,14 @@ def mask_row_runs(cells: list, runs, *, _conflict_spans=None, tick=lambda: None)
             offset += len(text)
             boundaries.append(offset)
             offset += 1
-    for start, end, digits in _run_spans("".join(chars), runs, _spans=_conflict_spans or (), tick=tick):
+    view = identifier_text("".join(chars))
+    for start, end, digits in _view_run_spans(view, runs, _conflict_spans or (), tick=tick):
+        positions = [view.source(i) for i in range(start, end) if view.text[i] in "0123456789"]
+        start, end = view.span(start, end)
         if _conflict_spans is not None:
             edge = bisect_right(boundaries, start)
             if digits or edge == len(boundaries) or boundaries[edge] >= end:
                 continue
-        positions = [i for i in range(start, end) if chars[i] in "0123456789"]
         whole = bool(digits) and len(positions) % 9 == 0
         for n, i in enumerate(positions):
             if not (whole and n % 9 >= 5):
@@ -699,21 +848,9 @@ def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: 
     # (most of a CSV) skips both regex passes.
     if not isinstance(value, str) or len(value) < 9:
         return value
-    # A newly recognized dash can be glued to its label. Rewriting it in
-    # the sequential passes makes "SSN000..." read as "SSNXXX...", hiding
-    # that label from the comb pass. Use the existing source-span resolver
-    # for new marks too, even when there is no PDF positional evidence.
-    if runs is None and _ID_TYPOGRAPHIC_MARK.search(value):
-        runs = ()
-    runs = runs if runs is None or isinstance(runs, Runs) else prepare_runs(runs)
-    if runs is not None:
-        spans = _text_identifier_spans(value if _original is None else _original, governed=_governed)
-        return mask_runs(value, runs, _spans=spans, tick=tick)
-    out = _mask_under_labels(value)
-    out = _ID_DELIMITED.sub(r"XXX-XX-\1", out)
-    out = _mask_spaced_after_labels(out)
-    out = _ID_LABELED_SAME_LINE.sub(r"\1XXX-XX-\2", out)
-    return _ID_LABELED_SPLIT.sub(r"\1XXX-XX-\2", out)
+    runs = () if runs is None else runs
+    spans = _source_identifier_spans(identifier_text(value if _original is None else _original), governed=_governed)
+    return mask_runs(value, runs, _spans=spans, tick=tick)
 
 
 def first_non_finite(node, _path: tuple = ()) -> "str | None":
@@ -756,7 +893,10 @@ def first_non_finite(node, _path: tuple = ()) -> "str | None":
 # that reads "SSN:" and then the hyphenated number governs nothing after it.
 def _is_id_label_cell(cell) -> bool:
     """True when this cell is an identifier LABEL carrying no value itself."""
-    return isinstance(cell, str) and _label_ends(cell)
+    if not isinstance(cell, str):
+        return False
+    view = identifier_text(cell)
+    return _label_ends(cell) or _label_ends(view.text)
 
 
 def _mask_id_value(cell):
@@ -806,8 +946,8 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
         if runs is not None:
             for column, cell in enumerate(row):
                 if isinstance(cell, str):
-                    spans.extend((offset + start, offset + end) for start, end in
-                                 _text_identifier_spans(cell, governed=column in cell_governed))
+                    spans.extend((offset + start, offset + end) for start, end in _source_identifier_spans(
+                        identifier_text(cell), governed=column in cell_governed))
                     offset += len(cell)
                 offset += 1
         positioned = mask_row_runs(list(row), runs, _conflict_spans=spans, tick=tick) if runs is not None else row
@@ -839,7 +979,11 @@ def names_an_identifier(name: str) -> bool:
     which is a path that opens nothing and which two different documents can
     collide on.
     """
-    return bool(_ID_GOVERNED.search(name) or _ID_SPACED.search(name))
+    view = identifier_text(name)
+    # A wrapped value ends its line, and a name's extension would stand there.
+    stem = name.rpartition(".")[0] or name
+    return bool(_in_either_reading(view, (_ID_GOVERNED, _ID_SPACED, _ID_MARKED_COMB))
+                or any("\n" in stem[a:b] for a, b in _in_either_reading(identifier_text(stem), (_ID_WRAPPED,))))
 
 # The window a bare integer may be PRINTED in. Not a validity check — every
 # caller has its own accepted range and applies it after this — but the bound

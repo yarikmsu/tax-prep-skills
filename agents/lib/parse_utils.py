@@ -19,8 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import preflight  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
-    identifier_spans, is_reparse_point, mask_row_runs, mask_runs, mask_ssn, mask_table, names_an_identifier,
-    prepare_runs, redact, split_spans)
+    identifier_spans, identifier_text, is_reparse_point, mask_row_runs, mask_runs, mask_ssn, mask_table,
+    names_an_identifier, prepare_runs, redact, split_spans)
 from agents.lib.workspace import WorkspaceError, resolve_workspace  # noqa: E402
 
 # Activate defusedxml to protect openpyxl against XXE attacks in crafted .xlsx files.
@@ -1421,15 +1421,18 @@ def _identity_identifiers(row: list[dict], safe: str) -> list[dict]:
         offset += len(word['text']) + 1
     _, values, spelled, _ = identifier_spans(text)
     values += split_spans(text)
+    view = identifier_text(text)
     allowed = set(re.findall(r'(?<![A-Za-z0-9])XXX-XX-[0-9]{4}(?![A-Za-z0-9])', safe))
     out = {}
     for low, high in values + [(a, b) for a, b, _ in spelled]:
-        positions = [low + m.start() for m in re.finditer(r'[0-9]', text[low:high])]
+        digits = [(view.source(m.start()), m[0]) for m in re.compile(r'[0-9]').finditer(
+            view.text, view.canonical(low), view.canonical(high))]
+        positions = [position for position, _ in digits]
         if len(positions) == 4 and text[low:high] in allowed:
             chunks = [(low, high, text[low:high])]
         elif positions and len(positions) % 9 == 0:
             chunks = [(positions[i], positions[i + 8] + 1,
-                       'XXX-XX-' + ''.join(text[j] for j in positions[i + 5:i + 9]))
+                       'XXX-XX-' + ''.join(digit for _, digit in digits[i + 5:i + 9]))
                       for i in range(0, len(positions), 9)]
         else:
             continue
@@ -1476,7 +1479,9 @@ def _masked_words(words: list[dict], tick=lambda: None, *, identity_layout: bool
                 box["identity_identifiers"] = _identity_identifiers(row, safe)
                 out += [{"text": w["text"], **{k: round(float(w[k]), 1) for k in ("x0", "x1", "top", "bottom")}}
                         for w in row if not any(c.isdigit() for c in w["text"])]
-            out.append(box)
+            # A wrapped value masks on its first row and leaves the rest empty.
+            if safe:
+                out.append(box)
     return out
 
 
