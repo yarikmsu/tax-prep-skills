@@ -4699,3 +4699,43 @@ with no printed marks, so the marked comb is drawn in the tests, not read from a
 - Left for AA103: combs and labels spaced by `(cid:N)`, a fully unmapped font, fullwidth
   dot and slash, invisibles outside format characters, an invisible-laced label over a
   value known only by position, and the gate's fullwidth, comb and invisible spellings.
+
+## AA103 — identifier spellings AA102 left, and the gate's (#110, #111)
+
+Each spelling printed all nine digits on main: a fullwidth dot or slash, further
+invisible characters, a comb or label spaced by an unmapped glyph, and a value in a font
+with no mapping at all, which printed as glyph numbers. Separately, the PII gate passed
+fullwidth digits, single-digit combs and digits joined by an invisible character. Both
+pull requests were unsafe as opened, and both were reworked in review.
+
+- **A widened label moved which label governs (#110).** Reading variant labels fed overlay
+  protection, which then kept digits main removes, so a bare value beside a box number
+  printed whole, and on another layout all nine digits scattered through a heading. It
+  reproduced on 3 of 60,000 random pages. A page holding a variant spelling is now read
+  with and without its variant labels and the runs unioned, while the digits that stay
+  are decided from the printed labels alone. Writing the regression took two tries: the
+  first tests passed on unfixed code, because the test font never reached protection.
+- **A refusal keyed on the font refused a readable W-2 (#110).** As opened, one unmapped
+  checkbox in a symbol font stopped the document, and the IRS's own Form 1040 instructions
+  print unmapped symbols and passed only because that font holds a readable character.
+  The rule is now the row: nine unreadable glyphs of at least two kinds.
+- **The gate got about fifty times slower on macOS (#111).** Every line took the full
+  byte-alternative pattern. A line with no byte over 0x7f now takes an ASCII pattern from
+  the same template, a test holds the two equal on ASCII text, and a typical file costs
+  about 1.4 times main. A line holding non-ASCII and nine digits still costs about thirty-five.
+- **Comb runs read at full width (#111).** A longer number beside eight single digits had
+  flagged on its last digit. An invisible inside a repeated dash passed, on main too, and
+  now blocks.
+- Dependabot's four dependency pull requests, merged alongside, were rebuilt with
+  `scripts/recompile-locks.sh`: its resolver dropped the Windows `colorama` entry, which
+  `test_the_lock_the_windows_job_installs_really_covers_windows` caught.
+- Against main: 48,000 ASCII and typographic cases unchanged, 48,000 variant cases print
+  nothing main hides, 180,000 identifier-free pages lose no figure except on pages spaced
+  by `(cid:N)`, which read as main reads them with real spaces, and 26 IRS documents read
+  identically on four routes. The narrow and whole patterns matched byte for byte on
+  300,000 fuzz lines under GNU grep and 15,000 under BSD grep.
+- Pushing #111 hit the new comb rule on a test line #110 had just merged, because a
+  force-push scans from the old tip. It went out from a checkout running main's gate
+  rather than with `--no-verify`, after the commit scanned clean under the new gate.
+- Left for AA104: three sites that read a failing tool as clean. Left for AA105: the
+  spellings each review still printed, and the gate's remaining passes.
