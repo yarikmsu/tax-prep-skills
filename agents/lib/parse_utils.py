@@ -1391,7 +1391,7 @@ def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True, 
         if split:
             # A legacy comb on the label row must not close its column to
             # variant targets. Keep this reading additive and limited to
-            # split/variant targets, preserving ordinary figures below a
+            # variant targets, preserving ordinary figures below a
             # label whose original spelling already fills its box.
             runs |= _governed_reading(words, tick, split=split, measured=measured,
                                       variant_labels=True, comb_fills=False)
@@ -1450,7 +1450,9 @@ def _governed_reading(words: list[dict], tick, *, split: bool, measured: bool,
         runs |= _under([view[k] for k in plain], items, [under[k] for k in plain], printed, tick)
         if splits:
             runs |= _under(view, targets, under, unsplit, tick)
-    return runs if comb_fills else runs & {raw for raw, _, _ in splits}
+    if not comb_fills:
+        runs &= {raw for raw, _, _ in splits if identifier_text(raw).text != raw}
+    return runs
 
 
 def _mask_table_runs(table: list, runs, tick) -> list:

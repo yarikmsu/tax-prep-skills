@@ -30,12 +30,13 @@ def test_a_labels_own_comb_cannot_hide_a_variant_two_rows_below(tmp_path, route,
     assert "850.00" in out
 
 
-def test_variant_protection_keeps_a_filled_labels_original_figures(tmp_path):
+@pytest.mark.parametrize("figure", [ROUTING, " - ".join(("125", "50", "2026"))])
+def test_variant_protection_keeps_a_filled_labels_original_figures(tmp_path, figure):
     # The added reading may protect variant targets, but cannot reinterpret
     # an ordinary routing number or an amount under a filled label as an SSN.
     items = [(36, 700, "SSN " + " ".join(_ssn(""))), (500, 688, "A"),
-             (36, 676, ROUTING), (280, 676, "850.00"), (500, 660, _wide("42"))]
+             (36, 676, figure), (280, 676, "850.00"), (500, 660, _wide("42"))]
     path = _cid_pdf(tmp_path / "figures.pdf", mapped=set("".join(t for _, _, t in items)), items=items)
     for route in ("extract_pdf_text", "extract_pdf_words", "identity_words", "extract_tables"):
         out = _read(route, path, tmp_path)
-        assert ROUTING in out and "850.00" in out
+        assert figure in out and "850.00" in out
