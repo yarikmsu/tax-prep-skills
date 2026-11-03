@@ -4777,3 +4777,24 @@ pull request was unsafe in both halves, and it was rebuilt as one commit.
   macOS awk, mawk and gawk alike, and 400 synthetic PDFs print nothing main masked on any
   route. A second review of the rebuilt commit found one test too weak to catch its own
   defect, now strengthened. Left: AA106 and AA107.
+
+## AA107 — identifier leaks found in AA105's reviews (#116, #117, #118)
+
+Three independent PRs implement the fixes; they remain in the backlog until merged.
+
+- **Table combs (#116).** The table reader recognizes labelled combs across the
+  original row before rewriting either cell, preserving cell boundaries and last
+  fours. Review caught an amount, cents and year being joined into an identifier;
+  only individual comb boxes may supply a new row-wide span.
+- **Comb-label reach (#117).** An additional positional reading protects normalized
+  variant targets beneath a label with its own comb. Its masks are unioned with the
+  original readings. Review caught ordinary ASCII ranges being masked when unrelated
+  Unicode appeared elsewhere; the extra masks now require the target's own spelling
+  to need normalization, preserving original routing numbers and amounts.
+- **Decimal-family boundaries (#118).** A neighbouring digit from another decimal
+  family cannot conceal a nine-digit run. Families are cached from the existing Nd
+  primitive, without a second Unicode table. Endpoint checks retain mixed-script
+  nines, longer numbers within one family, original byte spans and exact allowlisting.
+- The extraction regressions use synthetic ruled PDFs, CSVs and workbooks. Gate
+  regressions cover every supported decimal family and the content, pathname, ref and
+  deleted-history routes. Removing each protection makes its regression fail.
