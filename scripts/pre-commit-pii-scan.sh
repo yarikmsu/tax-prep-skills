@@ -837,6 +837,28 @@ BLOCKED=()
 CONTENT_BLOCKED=()
 scanned_files=0
 
+# A refusal is recorded once per RAW path and message. Deduplicating the printed
+# rows instead (`sort -u`) merged distinct files that redact alike, and not
+# deduplicating at all lists one file once per commit of a range. The search is
+# linear in the refusals so far, which are few: bash 3.2 has no associative array.
+REFUSED=()
+first_refusal() {
+  # $1 — the row's message, $2 — the raw path. Succeeds only the first time.
+  local key="$1"$'\n'"$2" seen
+  for seen in ${REFUSED[@]+"${REFUSED[@]}"}; do
+    [ "$seen" != "$key" ] || return 1
+  done
+  REFUSED+=("$key")
+}
+# Each reads the loop's $file and $safe_file, and returns 0 so `set -e` never
+# reads a repeat as a failure.
+refuse_file() {
+  if first_refusal "$1" "$file"; then BLOCKED+=("  $1: $safe_file"); fi
+}
+refuse_content() {
+  if first_refusal "$1" "$file"; then CONTENT_BLOCKED+=("  $1: $safe_file"); fi
+}
+
 for scope in "${SCOPES[@]}"; do
   load_allowlist "${scope%%|*}"
 
@@ -882,7 +904,7 @@ for scope in "${SCOPES[@]}"; do
     # Parameter expansion has no option parsing and spawns no process.
     filename="${file##*/}"
     # Every message below prints this, never the raw path.
-    safe_file=$(redact "$file")
+    safe_file=$(redact "$file") || die "could not redact a pathname for the report"
 
     scanned_files=$((scanned_files + 1))
 
@@ -897,7 +919,7 @@ for scope in "${SCOPES[@]}"; do
     # above would exit only that subshell and leave the scan running blind.
     [ "$path_hits" = "ERROR" ] && die "grep could not run while scanning a pathname"
     if [ "${path_hits:-0}" -gt 0 ]; then
-      CONTENT_BLOCKED+=("  BLOCKED PATHNAME ($path_hits match(es)): $safe_file")
+      refuse_content "BLOCKED PATHNAME ($path_hits match(es))"
       continue
     fi
 
@@ -922,7 +944,7 @@ for scope in "${SCOPES[@]}"; do
         # recognise as sensitive.
         case "$file" in
           documents/*|*/documents/*|summaries/*|*/summaries/*|reviews/*|*/reviews/*|scenarios/*|*/scenarios/*|projections/*|*/projections/*|withholding/*|*/withholding/*|.planning/*|*/.planning/*|archive/*|*/archive/*)
-            BLOCKED+=("  BLOCKED PATH (runtime workspace): $safe_file")
+            refuse_file "BLOCKED PATH (runtime workspace)"
             continue ;;
         esac
 
@@ -963,17 +985,24 @@ for scope in "${SCOPES[@]}"; do
             case "$filename" in
               .perms-stamp*|.skill-invariants-stamp*|.archive-dirs*|\
               .archive-files*|.archive-index-dirty*|*.local.md|*.local.json)
-                BLOCKED+=("  BLOCKED PATH (agent runtime state): $safe_file")
+                refuse_file "BLOCKED PATH (agent runtime state)"
                 continue ;;
             esac ;;
         esac
 
-        # `printf`, not `echo`: bash's echo consumes a leading -n/-e/-E as a
-        # flag, so a file named exactly `-e` would be tested as an EMPTY name.
-        if printf '%s\n' "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
-          ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]')
-          BLOCKED+=("  BLOCKED FILE TYPE ($ext): $safe_file")
+        # A here-string, not `echo` or a pipe: bash's echo consumes a leading -n/-e/-E
+        # as a flag, so a file named exactly `-e` would be tested as an EMPTY name;
+        # and under pipefail a `grep -q` that matches early breaks the writer's pipe,
+        # whose status 1 then read as "no match" for a long crafted name.
+        if grep -qiE "\.($BLOCKED_EXTENSIONS)$" <<< "$filename"; then
+          ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]') \
+            || die "could not read the blocked extension for $safe_file"
+          refuse_file "BLOCKED FILE TYPE ($ext)"
           continue
+        else
+          filename_status=$?
+          [ "$filename_status" -eq 1 ] \
+            || die "grep could not run while checking the extension for $safe_file"
         fi
 
         # Exact runtime filenames. All of them are gitignored, so anything
@@ -995,13 +1024,17 @@ for scope in "${SCOPES[@]}"; do
         # The filename rule is the only layer with any grip on this file.
         case "$filename" in
           taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json|validation_receipt.json|eval_run.json|generate_tax_pdf.py)
-            BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
+            refuse_file "BLOCKED FILENAME ($(redact "$filename"))"
             continue ;;
         esac
 
-        if printf '%s\n' "$filename" | grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$'; then
-          BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
+        if grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$' <<< "$filename"; then
+          refuse_file "BLOCKED FILENAME ($(redact "$filename"))"
           continue
+        else
+          filename_status=$?
+          [ "$filename_status" -eq 1 ] \
+            || die "grep could not run while checking the runtime filename for $safe_file"
         fi
         ;;
     esac
@@ -1076,7 +1109,7 @@ for scope in "${SCOPES[@]}"; do
     read -r numstat_added _ < "$NUMSTAT" \
       || die "cannot read the numstat row for $safe_file"
     if [ "$numstat_added" = "-" ]; then
-      CONTENT_BLOCKED+=("  BLOCKED BINARY (content not scannable): $safe_file")
+      refuse_content "BLOCKED BINARY (content not scannable)"
       continue
     fi
     # An added count that is not a number is not a count, and it is checked
@@ -1127,17 +1160,21 @@ for scope in "${SCOPES[@]}"; do
       nul_status=$?
       [ "$nul_status" -eq 1 ] \
         || die "could not compare added bytes while checking NUL in $safe_file"
-      CONTENT_BLOCKED+=("  BLOCKED NUL (content not scannable): $safe_file")
+      refuse_content "BLOCKED NUL (content not scannable)"
       continue
     fi
     added=$(<"$ADDED")
 
-    hits=$(count_hits "$(strip_artifact_digests "$file" "$added")")
+    # Check cleanup's status BEFORE passing its output to another command:
+    # a failed nested substitution otherwise becomes empty, clean input.
+    added=$(strip_artifact_digests "$file" "$added") \
+      || die "could not remove artifact digests before scanning $safe_file"
+    hits=$(count_hits "$added")
     [ "$hits" = "ERROR" ] && die "grep could not run while scanning $safe_file"
     if [ "${hits:-0}" -gt 0 ]; then
       # Report the FILE and a COUNT only. Never echo the match — that would put
       # the value into terminal scrollback and CI logs.
-      CONTENT_BLOCKED+=("  BLOCKED CONTENT ($hits match(es)): $safe_file")
+      refuse_content "BLOCKED CONTENT ($hits match(es))"
     fi
   done
 done
@@ -1148,11 +1185,12 @@ if [ ${#BLOCKED[@]} -gt 0 ]; then
   echo "  $CONTEXT BLOCKED — Sensitive files found"
   echo "=========================================="
   echo ""
-  printf '%s\n' "${BLOCKED[@]}" | sort -u
+  # Not `sort -u`: distinct paths may redact alike. first_refusal deduplicated.
+  printf '%s\n' "${BLOCKED[@]}" | sort
   echo ""
   echo "These files should never be committed."
-  echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: $LIST_PATHS_CMD"
+  echo "Names shown as [REDACTED] are conservatively masked; ordinary numbers may match."
+  echo "List the real paths with: $LIST_PATHS_CMD"
   echo "$ESCAPE_HATCH"
   exit 1
 fi
@@ -1163,13 +1201,13 @@ if [ ${#CONTENT_BLOCKED[@]} -gt 0 ]; then
   echo "  $CONTEXT BLOCKED — PII pattern in content"
   echo "=========================================="
   echo ""
-  printf '%s\n' "${CONTENT_BLOCKED[@]}" | sort -u
+  printf '%s\n' "${CONTENT_BLOCKED[@]}" | sort
   echo ""
   echo "A full SSN or credential appears in the changes, or a file could not be"
   echo "scanned because git treats it as binary."
   echo "Store only the last four digits, as XXX-XX-1234."
-  echo "A name shown as [REDACTED] held an SSN-shaped or credential-shaped run;"
-  echo "list the real paths with: $LIST_PATHS_CMD"
+  echo "Names shown as [REDACTED] are conservatively masked; ordinary numbers may match."
+  echo "List the real paths with: $LIST_PATHS_CMD"
   echo "If the value is synthetic, add it to .pii-allowlist."
   echo "$ESCAPE_HATCH"
   exit 1

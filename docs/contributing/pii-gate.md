@@ -210,8 +210,18 @@ Closed, deliberately, in every direction:
 - **Every git failure BLOCKS.**
 - **So does a `grep` that cannot RUN.** `|| true` cannot tell "no match" from "grep
   failed", and the two are the opposite verdict.
+- Filename checks accept only `grep` exit 1 as "no match"; errors block even when
+  the content checks still work. Digest cleanup is checked before its output is
+  scanned, so a failed `sed` cannot turn a requirements line into empty, clean input.
 - Every intermediate lives in ONE 0700 work directory removed by a single trap: the raw
   patch holds the unredacted value.
+
+The report keeps a row per real path and refusal: distinct paths that redact to the
+same text keep a row each, and a path refused alike in several commits of a range
+is listed once.
+Diagnostic redaction is deliberately broader than detection, so ordinary numbers such
+as two dates in a filename may be masked too. The report points to the local git file
+list for the real paths; a masked name alone is not evidence that it held an SSN.
 
 ### Three things it PROVES, and five settings it pins
 
