@@ -837,6 +837,28 @@ BLOCKED=()
 CONTENT_BLOCKED=()
 scanned_files=0
 
+# A refusal is recorded once per RAW path and message. Deduplicating the printed
+# rows instead (`sort -u`) merged distinct files that redact alike, and not
+# deduplicating at all lists one file once per commit of a range. The search is
+# linear in the refusals so far, which are few: bash 3.2 has no associative array.
+REFUSED=()
+first_refusal() {
+  # $1 — the row's message, $2 — the raw path. Succeeds only the first time.
+  local key="$1"$'\n'"$2" seen
+  for seen in ${REFUSED[@]+"${REFUSED[@]}"}; do
+    [ "$seen" != "$key" ] || return 1
+  done
+  REFUSED+=("$key")
+}
+# Each reads the loop's $file and $safe_file, and returns 0 so `set -e` never
+# reads a repeat as a failure.
+refuse_file() {
+  if first_refusal "$1" "$file"; then BLOCKED+=("  $1: $safe_file"); fi
+}
+refuse_content() {
+  if first_refusal "$1" "$file"; then CONTENT_BLOCKED+=("  $1: $safe_file"); fi
+}
+
 for scope in "${SCOPES[@]}"; do
   load_allowlist "${scope%%|*}"
 
@@ -897,7 +919,7 @@ for scope in "${SCOPES[@]}"; do
     # above would exit only that subshell and leave the scan running blind.
     [ "$path_hits" = "ERROR" ] && die "grep could not run while scanning a pathname"
     if [ "${path_hits:-0}" -gt 0 ]; then
-      CONTENT_BLOCKED+=("  BLOCKED PATHNAME ($path_hits match(es)): $safe_file")
+      refuse_content "BLOCKED PATHNAME ($path_hits match(es))"
       continue
     fi
 
@@ -922,7 +944,7 @@ for scope in "${SCOPES[@]}"; do
         # recognise as sensitive.
         case "$file" in
           documents/*|*/documents/*|summaries/*|*/summaries/*|reviews/*|*/reviews/*|scenarios/*|*/scenarios/*|projections/*|*/projections/*|withholding/*|*/withholding/*|.planning/*|*/.planning/*|archive/*|*/archive/*)
-            BLOCKED+=("  BLOCKED PATH (runtime workspace): $safe_file")
+            refuse_file "BLOCKED PATH (runtime workspace)"
             continue ;;
         esac
 
@@ -963,7 +985,7 @@ for scope in "${SCOPES[@]}"; do
             case "$filename" in
               .perms-stamp*|.skill-invariants-stamp*|.archive-dirs*|\
               .archive-files*|.archive-index-dirty*|*.local.md|*.local.json)
-                BLOCKED+=("  BLOCKED PATH (agent runtime state): $safe_file")
+                refuse_file "BLOCKED PATH (agent runtime state)"
                 continue ;;
             esac ;;
         esac
@@ -973,7 +995,7 @@ for scope in "${SCOPES[@]}"; do
         if printf '%s\n' "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
           ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]') \
             || die "could not read the blocked extension for $safe_file"
-          BLOCKED+=("  BLOCKED FILE TYPE ($ext): $safe_file")
+          refuse_file "BLOCKED FILE TYPE ($ext)"
           continue
         else
           filename_status=$?
@@ -1000,12 +1022,12 @@ for scope in "${SCOPES[@]}"; do
         # The filename rule is the only layer with any grip on this file.
         case "$filename" in
           taxpayer_profile.json|result.json|answers.md|parse_ledger.json|holdings.json|projection_inputs.json|crypto_transactions.json|validation_receipt.json|eval_run.json|generate_tax_pdf.py)
-            BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
+            refuse_file "BLOCKED FILENAME ($(redact "$filename"))"
             continue ;;
         esac
 
         if printf '%s\n' "$filename" | grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$'; then
-          BLOCKED+=("  BLOCKED FILENAME ($(redact "$filename")): $safe_file")
+          refuse_file "BLOCKED FILENAME ($(redact "$filename"))"
           continue
         else
           filename_status=$?
@@ -1085,7 +1107,7 @@ for scope in "${SCOPES[@]}"; do
     read -r numstat_added _ < "$NUMSTAT" \
       || die "cannot read the numstat row for $safe_file"
     if [ "$numstat_added" = "-" ]; then
-      CONTENT_BLOCKED+=("  BLOCKED BINARY (content not scannable): $safe_file")
+      refuse_content "BLOCKED BINARY (content not scannable)"
       continue
     fi
     # An added count that is not a number is not a count, and it is checked
@@ -1136,7 +1158,7 @@ for scope in "${SCOPES[@]}"; do
       nul_status=$?
       [ "$nul_status" -eq 1 ] \
         || die "could not compare added bytes while checking NUL in $safe_file"
-      CONTENT_BLOCKED+=("  BLOCKED NUL (content not scannable): $safe_file")
+      refuse_content "BLOCKED NUL (content not scannable)"
       continue
     fi
     added=$(<"$ADDED")
@@ -1150,7 +1172,7 @@ for scope in "${SCOPES[@]}"; do
     if [ "${hits:-0}" -gt 0 ]; then
       # Report the FILE and a COUNT only. Never echo the match — that would put
       # the value into terminal scrollback and CI logs.
-      CONTENT_BLOCKED+=("  BLOCKED CONTENT ($hits match(es)): $safe_file")
+      refuse_content "BLOCKED CONTENT ($hits match(es))"
     fi
   done
 done
@@ -1161,7 +1183,7 @@ if [ ${#BLOCKED[@]} -gt 0 ]; then
   echo "  $CONTEXT BLOCKED — Sensitive files found"
   echo "=========================================="
   echo ""
-  # Distinct paths may redact alike; keep every refusal, as names mode does.
+  # Not `sort -u`: distinct paths may redact alike. first_refusal deduplicated.
   printf '%s\n' "${BLOCKED[@]}" | sort
   echo ""
   echo "These files should never be committed."

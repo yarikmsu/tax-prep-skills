@@ -216,7 +216,9 @@ Closed, deliberately, in every direction:
 - Every intermediate lives in ONE 0700 work directory removed by a single trap: the raw
   patch holds the unredacted value.
 
-Sorting a report does not merge distinct paths that redact to the same text.
+The report keeps a row per real path and refusal: distinct paths that redact to the
+same text keep a row each, and a path refused alike in several commits of a range
+is listed once.
 Diagnostic redaction is deliberately broader than detection, so ordinary numbers such
 as two dates in a filename may be masked too. The report points to the local git file
 list for the real paths; a masked name alone is not evidence that it held an SSN.

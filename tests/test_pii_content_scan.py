@@ -1606,6 +1606,31 @@ def test_distinct_files_that_redact_alike_keep_every_report_row(tmp_path, kind):
         assert "ordinary numbers" in result.stdout, "broad redaction needs an honest explanation"
 
 
+@pytest.mark.parametrize("kind", ["file type", "content"])
+def test_a_file_refused_in_several_commits_of_a_range_is_listed_once(tmp_path, kind):
+    """The dedupe that keeps redacted look-alikes apart must not repeat a row for
+    every commit of a range that touches the same file."""
+    repo = _make_repo(tmp_path)
+    base = _commit(repo, "seed")
+    bare = FAKE_SSN.replace("-", "")
+    for i, matches in enumerate([1, 1, 2]):
+        if kind == "file type":
+            _stage(repo, "statement.pdf", f"version {i}\n")
+        else:
+            _stage(repo, "notes.md", "".join(f"SSN {i}.{k}: {bare}\n" for k in range(matches)))
+        head = _commit(repo, f"change {i}")
+    result = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...{head}"],
+                            cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 1
+    rows = [row for row in result.stdout.splitlines() if "BLOCKED " in row and ":" in row]
+    if kind == "file type":
+        assert rows == ["  BLOCKED FILE TYPE (.pdf): statement.pdf"]
+    else:
+        # A different count is a different refusal, as it was under `sort -u`.
+        assert rows == ["  BLOCKED CONTENT (1 match(es)): notes.md",
+                        "  BLOCKED CONTENT (2 match(es)): notes.md"]
+
+
 def test_no_unredacted_patch_survives_the_scan(tmp_path):
     """Every intermediate this script writes holds the raw value, and only two
     of six temp files were covered by the cleanup trap — a signal or an abort
