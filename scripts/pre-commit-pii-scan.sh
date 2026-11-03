@@ -478,23 +478,13 @@ load_allowlist() {
 # Full SSN in every separated form. The masked XXX-XX-1234 storage format has no
 # leading digits and never matches.
 #
-# `[- ]` — one hyphen or exactly one space — was too narrow in four ways at once,
-# and each committed a full SSN cleanly: a RUN of spaces (aligned columns), a
-# TAB, DOT grouping and SLASH grouping. Dot grouping is not exotic here — this
-# toolkit ingests European documents, where grouping a number with dots is the
-# ordinary convention.
+# Separator families agree at both group edges, so a decimal amount followed
+# by a dash and a year is not a delimited identifier. Spaced dash spellings
+# remain ambiguous with some money ranges; the measured false positives and
+# deliberate refusal are recorded in docs/contributing/pii-gate.md.
 #
-# The alternation requires the SAME separator on both sides, which is how an SSN
-# is actually written, and that consistency is what makes widening safe. The
-# naive widening — one character class plus `+` — also matches a money RANGE
-# (three digits, dot, two digits, then space-hyphen-space, then four digits),
-# and this repository contains five of those. Measured across every tracked line
-# and every tracked pathname, the form below matches nothing but the allowlisted
-# synthetic value.
-#
-# Examples are described rather than written out: a literal in this comment is a
-# literal in a tracked file, and this scan would — correctly — block its own
-# source. It has done so before.
+# Examples use group widths rather than identifier-shaped literals: a literal
+# in this source is content the same gate must scan.
 # UTF-8 marks are ALTERNATIVES, not a bracket class: LC_ALL=C makes a
 # Unicode bracket class a set of unrelated bytes. Octal bytes also work in
 # macOS's Bash 3.2, which does not implement Unicode escapes. These are the
@@ -518,48 +508,19 @@ SSN_INVISIBLE+=$'|\342\201[\246-\257]|\343\205\244|\357\270[\200-\217]|\357\273\
 SSN_INVISIBLE+=$'|\357\277[\271-\273]|\360\221\202\275|\360\221\203\215|\360\223\220[\260-\277]|\360\233\262[\240-\243]'
 SSN_INVISIBLE+=$'|\360\235\205[\263-\272]|\363\240\200\201|\363\240\200[\240-\277]|\363\240\201[\200-\277]|\363\240\204[\200-\277]'
 SSN_INVISIBLE+=$'|\363\240\205[\200-\277]|\363\240\206[\200-\277]|\363\240\207[\200-\257])'
-SSN_DIGIT=$'([0-9]|\357\274[\220-\231])'
+SSN_DIGIT=$'([0-9]|(\331[\240-\251]|\333[\260-\271]|\337[\200-\211]|\340([\245\247\251\253\255\257\261\263\265\267][\246-\257]|[\271\273][\220-\231]|\274[\240-\251])|\341(\201[\200-\211]|[\202\240\247\255][\220-\231]|\237[\240-\251]|\245[\206-\217]|[\252\261][\200-\211\220-\231]|\256[\260-\271])|\352(\230[\240-\251]|[\243\251][\220-\231]|\244[\200-\211]|\247[\220-\231\260-\271]|\257[\260-\271])|\357\274[\220-\231]|\360(\220(\222[\240-\251]|\264[\260-\271]|\265[\200-\211])|\221(\201[\246-\257]|[\203\213\234\257][\260-\271]|\204[\266-\277]|[\207\221\223\231\245\261\265\275][\220-\231]|\233[\200-\211\220-\243]|[\243\266][\240-\251])|\226([\204\265][\260-\271]|\251[\240-\251]|\253[\200-\211]|\255[\220-\231])|\234\263[\260-\271]|\235\237[\216-\277]|\236(\205[\200-\211]|[\213\223][\260-\271]|\227[\261-\272]|\245[\220-\231])|\237\257[\260-\271])))'
 SSN_SPACE=$'([[:space:]\034-\037]|\302\205|\302\240|\341\232\200|\342\200[\200-\212]|\342\200[\250-\251]|\342\200\257|\342\201\237|\343\200\200)'
 SSN_DOT=$'([.]|\357\274\216)'
 SSN_SLASH=$'([/]|\357\274\217)'
+SSN_CID='[(]cid:[0-9][0-9]?[0-9]?[0-9]?[0-9]?[)]'
 SSN_JOIN="(${SSN_INVISIBLE}|${SSN_SPACE})"
-# One spelling, from whichever characters can occur in the text it is run over.
-_ssn_spelled() {
-  # $1 digit, $2 invisibles (a starred class, or empty), $3 space, $4 space or
-  # invisible, $5 dash, $6 dot, $7 slash. Sets _SSN_BOX_GAP and _SSN_SPELLED.
-  local d="$1" i="$2" s="$3" j="$4*" dash="$5" dot="$6" slash="$7"
-  _SSN_BOX_GAP="${i}${s}${j}"
-  local two="${d}(${_SSN_BOX_GAP}${d})" tight_two="${d}(${i}${d})"
-  local three="${d}(${_SSN_BOX_GAP}${d}){2}" four="${d}(${_SSN_BOX_GAP}${d}){3}"
-  local tight_three="${d}(${i}${d}){2}" tight_four="${d}(${i}${d}){3}"
-  local middle="${j}(${dash}${j})+${two}${j}(${dash}${j})+"
-  middle+="|${j}${dot}${j}${two}${j}${dot}${j}"
-  middle+="|${j}${slash}${j}${two}${j}${slash}${j}"
-  local tight="${i}(${dash}${i})+${tight_two}${i}(${dash}${i})+"
-  tight+="|${i}${dot}${i}${tight_two}${i}${dot}${i}"
-  tight+="|${i}${slash}${i}${tight_two}${i}${slash}${i}"
-  local spaced="${tight_three}${i}${s}${j}${tight_two}${i}${s}${j}${tight_four}"
-  _SSN_SPELLED="(${tight_three}(${tight})${tight_four}|${three}(${middle})${four}|${spaced})"
-}
-_ssn_spelled "$SSN_DIGIT" "${SSN_INVISIBLE}*" "$SSN_SPACE" "$SSN_JOIN" "$SSN_DASH" "$SSN_DOT" "$SSN_SLASH"
-SSN_DELIMITED=$_SSN_SPELLED SSN_BOX_GAP=$_SSN_BOX_GAP
-# Every Unicode alternative above holds a byte over 0x7f, so a line with none can
-# only match the ASCII rest. Most added lines have none, and the whole pattern
-# costs a macOS grep far more than this one does on them.
-SSN_NON_ASCII=$'[\200-\377]'
-ssn_ascii_space=$'[[:space:]\034-\037]'
-_ssn_spelled '[0-9]' '' "$ssn_ascii_space" "$ssn_ascii_space" '[-]' '[.]' '[/]'
-SSN_ASCII_DELIMITED=$_SSN_SPELLED SSN_ASCII_BOX_GAP=$_SSN_BOX_GAP
 # The diagnostic sweep is deliberately broader than detection, as before.
-SSN_NUMBER="${SSN_DIGIT}((${SSN_JOIN}|${SSN_DASH}|${SSN_DOT}|${SSN_SLASH})*${SSN_DIGIT}){8,}"
+SSN_NUMBER="${SSN_DIGIT}((${SSN_JOIN}|${SSN_DASH}|${SSN_DOT}|${SSN_SLASH}|${SSN_CID})*${SSN_DIGIT}){8,}"
 
-# Nine contiguous digits is also a full SSN — a plausible result of manual entry
-# or document extraction. Detected by extracting whole alphanumeric tokens and
-# keeping those that are exactly nine digits, so a 10-digit phone number or a
-# longer identifier is not caught and the extracted value is the bare SSN
-# itself (which keeps `grep -vxFf` allowlisting exact). Measured against this
-# repository at the time of writing: zero tracked 9-digit runs, so this costs
-# no false positives here.
+# Bare decimal tokens keep their maximal boundaries. Boxed digits instead
+# use all nine-box windows, because a box number or a second comb cannot
+# safely exempt the adjacent identifier. The tokenizer below retains the
+# original bytes for exact allowlisting.
 #
 # Credentials: hyphens and underscores are INSIDE the secret for project-scoped
 # keys (sk-proj-…, sk-ant-…) and for fine-grained GitHub tokens (github_pat_…),
@@ -587,7 +548,7 @@ SECRET_PATTERN='((AKIA|ASIA)[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z
 AWS_KEY_NAME='[Aa][Ww][Ss][_-][Ss][Ee][Cc][Rr][Ee][Tt][_-][Aa][Cc][Cc][Ee][Ss][Ss][_-][Kk][Ee][Yy]'
 AWS_SECRET_PATTERN="${AWS_KEY_NAME}[^A-Za-z0-9]*[A-Za-z0-9/+=]{40}"
 
-# ONE family list, consumed by both the detector and the redactor. They were separate
+# ONE credential-family list, consumed by the detector and redactor. They were separate
 # lists for exactly one round, and the AWS rule was added to the detector alone
 # — so the scanner blocked a path containing an AWS secret and then printed the
 # secret in the block message. A rule that is detected but not redacted turns
@@ -595,7 +556,7 @@ AWS_SECRET_PATTERN="${AWS_KEY_NAME}[^A-Za-z0-9]*[A-Za-z0-9/+=]{40}"
 # the detector's character primitives; it must cover every detected spelling.
 # Widest first: a credential can contain an SSN-shaped substring. Redacting
 # that substring first would break the credential match and print its suffix.
-PII_PATTERNS=("$AWS_SECRET_PATTERN" "$SECRET_PATTERN" "$SSN_DELIMITED")
+PII_PATTERNS=("$AWS_SECRET_PATTERN" "$SECRET_PATTERN")
 
 # Counting hits is a function because the same patterns must cover BOTH the
 # added lines and the PATHNAME. A file called reports/<ssn>.txt discloses the
@@ -690,65 +651,130 @@ strip_artifact_digests() {
   esac
 }
 
+# Scan complete UTF-8 characters once, retaining byte offsets into each line.
+# No interval expressions: the default Ubuntu awk need not implement them.
+# The original bytes, rather than normalized digits, are what allowlisting sees.
+_ssn_matches() {
+  printf '%s\n' "$1" | awk -v digit="$SSN_DIGIT" -v invisible="$SSN_INVISIBLE" \
+    -v space="$SSN_SPACE" -v dash="$SSN_DASH" -v dot="$SSN_DOT" -v slash="$SSN_SLASH" -v cid="$SSN_CID" '
+    function inv(g) { return g !~ /[^IS]/ }
+    function boxed(g) { return g ~ /[WS]/ && g !~ /[^IWS]/ }
+    function edge(g, mark) {
+      if (mark == "H") return g ~ /[HS]/ && g !~ /[^IWSH]/
+      if (mark == "O") return g ~ /O/ && g !~ /[^IWSO]/
+      return g ~ /L/ && g !~ /[^IWSL]/
+    }
+    # macOS awk cuts a substring by first measuring the whole string, so every
+    # cut from $0 cost the line length. Cut the record into small pieces once
+    # and read only those, which keeps a long line linear.
+    function load(    k,j,big,bl) {
+      L=length($0); pieces=0
+      for (k=1; k<=L; k+=65536) {
+        big=substr($0,k,65536); bl=length(big)
+        for (j=1; j<=bl; j+=512) piece[++pieces]=substr(big,j,512)
+      }
+    }
+    function text(a,len,    out,k,off,take) {
+      if (a+len-1 > L) len=L-a+1
+      out=""
+      while (len>0) {
+        k=int((a-1)/512)+1; off=(a-1)%512+1; take=513-off
+        if (take>len) take=len
+        out=out substr(piece[k],off,take); a+=take; len-=take
+      }
+      return out
+    }
+    function emit(a,b,    key) {
+      key=a SUBSEP b
+      if (!seen[key]++) print text(a,b-a+1)
+    }
+    function flush_ascii() {
+      if (ascii_count==9) emit(ascii_start,ascii_start+8)
+      ascii_count=0
+    }
+    function flush(    i,j,g,tight,comb,raw,joined,delimited,a,b) {
+      for (i=1; i+8<=n; i++) {
+        tight=comb=raw=joined=1
+        for (j=1; j<=8; j++) {
+          g=gap[i+j]
+          if (g != "") raw=0
+          if (!inv(g)) joined=0
+          if (!boxed(g)) comb=0
+          if (j != 3 && j != 5 && !inv(g)) tight=0
+        }
+        a=gap[i+3]; b=gap[i+5]
+        delimited=tight && (edge(a,"H") && edge(b,"H") ||
+          a !~ /W/ && b !~ /W/ && (edge(a,"O") && edge(b,"O") || edge(a,"L") && edge(b,"L")) ||
+          boxed(a) && boxed(b))
+        # Marked combs require all six within-group gaps to be boxes too.
+        if (!delimited) {
+          delimited=1
+          for (j=1; j<=8; j++) if (j != 3 && j != 5 && !boxed(gap[i+j])) delimited=0
+          delimited=delimited && (edge(a,"H") && edge(b,"H") || edge(a,"O") && edge(b,"O") || edge(a,"L") && edge(b,"L"))
+        }
+        # A multi-digit neighbour is not a box; a tenth single box can never
+        # conceal nine identifier boxes. Check all overlapping nine-box spans.
+        comb=comb && (i==1 || gap[i]!="") && (i+8==n || gap[i+9]!="")
+        raw=raw && (i==1 || gap[i]!="") && (i+8==n || gap[i+9]!="")
+        joined=joined && (i==1 || !inv(gap[i])) && (i+8==n || !inv(gap[i+9]))
+        if (delimited || comb || raw || joined) emit(start[i],finish[i+8])
+      }
+      n=0; pending=""
+    }
+    # One reading of the line per digit set. A digit of another script joined to
+    # a run made a comb or joined reading ten digits long, hiding the nine beside
+    # it, so narrower readings follow when the line holds such a digit: ASCII
+    # alone, and ASCII with fullwidth, the set main read before Unicode decimals.
+    function scan(set,    pos,rest,c,width,kind) {
+      n=0; pending=""; ascii_count=0
+      for (pos=1; pos<=L; pos+=width) {
+        # Eleven bytes cover the longest recognized CID; UTF-8 takes at most four.
+        rest=text(pos,11); c=substr(rest,1,1); width=1; kind=""
+        # The bare reading counts ASCII digits only, in either pass.
+        if (c ~ /^[0-9]$/) {
+          if (!ascii_count) ascii_start=pos
+          ascii_count++
+        } else flush_ascii()
+        if (c ~ /^[0-9]$/ || set != "ascii" && c ~ /[\200-\377]/ && match(rest,"^" digit) &&
+            (set == "all" || substr(rest,1,RLENGTH) ~ /^\357\274[\220-\231]$/)) {
+          if (c ~ /^[0-9]$/) width=1
+          else {
+            width=RLENGTH; wide_digit=1
+            if (substr(rest,1,width) !~ /^\357\274[\220-\231]$/) other_digit=1
+          }
+          start[++n]=pos; finish[n]=pos+width-1; gap[n]=pending; pending=""
+        } else {
+          if (match(rest,"^" cid)) { kind="W"; width=RLENGTH }
+          else if (match(rest,"^" invisible)) { kind="I"; width=RLENGTH; if (substr(rest,1,width)=="\302\255") kind="S" }
+          else if (match(rest,"^" space)) { kind="W"; width=RLENGTH }
+          else if (match(rest,"^" dash)) { kind="H"; width=RLENGTH }
+          else if (match(rest,"^" dot)) { kind="O"; width=RLENGTH }
+          else if (match(rest,"^" slash)) { kind="L"; width=RLENGTH }
+          # Gap rules care only which families occur, not their order/count.
+          # Retaining one of each bounds long whitespace/invisible runs too.
+          if (kind=="") flush(); else if (!index(pending,kind)) pending=pending kind
+        }
+      }
+      flush_ascii(); flush()
+    }
+    {
+      for (key in seen) delete seen[key]
+      load(); wide_digit=other_digit=0
+      scan("all")
+      if (wide_digit) scan("ascii")
+      if (other_digit) scan("fullwidth")
+    }' 2>/dev/null || printf 'awk failed\n' > "$GREP_ERR"
+}
+
 count_hits() {
-  local text="$1" pattern found wide narrow
+  local text="$1" pattern found
   : > "$GREP_ERR"
-  found=""
-  # Each line goes to exactly one side, so the split counts nothing twice. A
-  # soft-hyphen comb still counts under two rules, being a dash and an invisible.
-  # A wide line needs nine digits to match anything the whole pattern reads.
-  wide=$(_grep_out "$(_grep_out "$text" -E "$SSN_NON_ASCII")" -E "(${SSN_DIGIT}.*){9}")
-  narrow=$(_grep_out "$text" -vE "$SSN_NON_ASCII")
+  found=$(_ssn_matches "$text")
+  found+=$'\n'
   for pattern in "${PII_PATTERNS[@]}"; do
-    if [ "$pattern" = "$SSN_DELIMITED" ]; then
-      found+=$(_grep_out "$narrow" -oE "$SSN_ASCII_DELIMITED")
-      found+=$'\n'
-      [ -z "$wide" ] || found+=$(_grep_out "$wide" -oE "$SSN_DELIMITED")
-    else
-      found+=$(_grep_out "$text" -oE "$pattern")
-    fi
+    found+=$(_grep_out "$text" -oE "$pattern")
     found+=$'\n'
   done
-  # The bare-nine-digit rule is token-based rather than a regex, so that a
-  # 10-digit phone number or a longer identifier is NOT caught and the extracted
-  # value is the bare SSN itself (which keeps `grep -vxFf` allowlisting exact).
-  #
-  # The token is a run of DIGITS. Letters used to be part of it, which merged a
-  # label with its value — `SSN<nine digits>` became one token that the
-  # exactly-nine-digits test rejected, and a full SSN committed cleanly. Dropping
-  # letters is the same correction already applied to underscore one round
-  # earlier, and for the same reason: `label<digits>` is precisely how this gets
-  # written. A maximal digit run still cannot be a substring of a longer number,
-  # so a 10-digit phone number remains one 10-digit token and is not caught.
-  # Measured across every tracked path and every tracked line: zero nine-digit
-  # runs, so this costs no false positives here.
-  #
-  # `grep -xE` rather than `awk '/^[0-9]{9}$/'`: interval expressions are an
-  # OPTIONAL awk feature, and mawk — Debian and Ubuntu's default awk, which is
-  # what CI runs — treats `{9}` as literal characters instead of erroring. This
-  # rule was one `update-alternatives` away from being a silent no-op in the
-  # exact venue meant to backstop `--no-verify`. grep's interval support is
-  # universal, and dropping awk removes the dependency rather than betting on it.
-  found+=$(_grep_out "$(_grep_out "$text" -oE '[0-9]+')" -xE '[0-9]{9}')
-  found+=$'\n'
-  # A comb is nine SINGLE digit boxes. The run is read at its full width, longer
-  # numbers included, so a tenth box or a two-digit neighbour keeps it out;
-  # grouped amounts and dates are not a comb, and use the separated rule only.
-  found+=$(_grep_out "$(_grep_out "$narrow" -oE "[0-9]+(${SSN_ASCII_BOX_GAP}[0-9]+)*")" -xE "[0-9](${SSN_ASCII_BOX_GAP}[0-9]){8}")
-  found+=$'\n'
-  if [ -n "$wide" ]; then
-    # Add the Unicode reading; never let a joining invisible withdraw an ASCII
-    # token already detected above. Exclude already-counted spellings so counts
-    # and exact allowlisting retain their original meaning.
-    local tokens
-    tokens=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}+")" -xE "${SSN_DIGIT}{9}")
-    found+=$(_grep_out "$tokens" -vE '^[0-9]{9}$')
-    found+=$'\n'
-    tokens=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}(${SSN_INVISIBLE}*${SSN_DIGIT})*")" -xE "${SSN_DIGIT}(${SSN_INVISIBLE}*${SSN_DIGIT}){8}")
-    found+=$(_grep_out "$(_grep_out "$tokens" -vE "^${SSN_DIGIT}{9}$")" -vE "^${SSN_DELIMITED}$")
-    found+=$'\n'
-    found+=$(_grep_out "$(_grep_out "$wide" -oE "${SSN_DIGIT}+(${SSN_BOX_GAP}${SSN_DIGIT}+)*")" -xE "${SSN_DIGIT}(${SSN_BOX_GAP}${SSN_DIGIT}){8}")
-  fi
 
   local nonblank filtered
   nonblank=$(_grep_out "$found" -vE '^[[:space:]]*$')
@@ -774,10 +800,6 @@ redact() {
     # `#` as the delimiter: `/` appears inside the AWS value class and `|` is
     # the alternation in SECRET_PATTERN, so either would terminate the command
     # early. No pattern contains `#`.
-    # The expanded UTF-8 detector is larger than macOS sed accepts in a
-    # substitution. This shorter diagnostic superset uses the SAME character
-    # primitives and also covers the token-based bare/comb rules below.
-    if [ "$pattern" = "$SSN_DELIMITED" ]; then pattern="$SSN_NUMBER"; fi
     text=$(printf '%s' "$text" | sed -E "s#$pattern#[REDACTED]#g")
   done
   # DELIBERATELY BROADER than the detector's token rule, which requires exactly
@@ -806,7 +828,7 @@ if [ -n "$NAMES_REV" ]; then
     names_seen=$((names_seen + 1))
     hits=$(count_hits "$_name")
     if [ "$hits" = "ERROR" ]; then
-      die "a grep could not run while checking the names — refusing to call them clean"
+      die "a pattern matcher could not run while checking the names — refusing to call them clean"
     fi
     if [ "$hits" != "0" ]; then
       NAME_BLOCKED+=("  BLOCKED NAME ($hits match(es)): $(redact "$_name")")
@@ -917,7 +939,7 @@ for scope in "${SCOPES[@]}"; do
     path_hits=$(count_hits "$file")
     # Checked HERE, in the parent shell: `die` inside the command substitution
     # above would exit only that subshell and leave the scan running blind.
-    [ "$path_hits" = "ERROR" ] && die "grep could not run while scanning a pathname"
+    [ "$path_hits" = "ERROR" ] && die "a pattern matcher could not run while scanning a pathname"
     if [ "${path_hits:-0}" -gt 0 ]; then
       refuse_content "BLOCKED PATHNAME ($path_hits match(es))"
       continue
@@ -1099,8 +1121,8 @@ for scope in "${SCOPES[@]}"; do
     # an awk that could not RUN yielded the empty string, which is not "-", so
     # the file was declared scannable and the added-lines scan below then found
     # no `+` lines in a binary patch and reported clean. That is the same
-    # "a tool that failed reads as no match" shape this script removed awk for
-    # once already, arriving through the one call it kept.
+    # "a tool that failed reads as no match" shape the identifier tokenizer's
+    # awk call guards against by recording its failure.
     # `|| die` although the row count above already makes `read` succeed: a
     # bare `read` that returned non-zero would abort under `set -e` with no
     # banner at all, and this script's own rule is that a refusal explains
@@ -1170,7 +1192,7 @@ for scope in "${SCOPES[@]}"; do
     added=$(strip_artifact_digests "$file" "$added") \
       || die "could not remove artifact digests before scanning $safe_file"
     hits=$(count_hits "$added")
-    [ "$hits" = "ERROR" ] && die "grep could not run while scanning $safe_file"
+    [ "$hits" = "ERROR" ] && die "a pattern matcher could not run while scanning $safe_file"
     if [ "${hits:-0}" -gt 0 ]; then
       # Report the FILE and a COUNT only. Never echo the match — that would put
       # the value into terminal scrollback and CI logs.

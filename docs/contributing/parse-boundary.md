@@ -148,7 +148,12 @@ value in such a font split across rows, interleaved with readable text, or with 
 of its digits mapped. Re-export with searchable text or make a local OCR copy rather
 than guessing its digits.
 
-A comb with printed separators and a value wrapped across lines need a label
+A comb with printed dash, dot or slash separators, or soft hyphens between its
+single digits, needs a label or matching positional evidence. Soft hyphens count
+only as the comb's one separator: mixed with spaces, a run of them beside a spaced
+comb took that comb's first digits and left the rest of the SSN printing. Diagnostic masking
+also reads soft hyphens used in both separator and invisible roles together.
+A value wrapped across lines needs a label
 or matching positional evidence, as spaced digits do. A line break counts only
 beside a dash, or with every group or comb box alone on its line, and the value
 must open its line or follow its label, as a split value does. Anywhere else figures total

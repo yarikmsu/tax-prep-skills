@@ -146,7 +146,7 @@ Four rules, in the order they are cheapest to reason about:
    `.claude/` is the one directory that cannot take a directory rule, because it also
    holds tracked project config — there the directory is the SCOPE and the basename is
    the RULE.
-4. **Content**, over the ADDED lines only: ASCII/fullwidth-digit SSNs grouped with dashes,
+4. **Content**, over the ADDED lines only: Unicode decimal-digit SSNs grouped with dashes,
    spaces, tabs, dots or slashes, nine bare digits, or nine single-digit comb
    boxes, plus high-confidence
    credentials. Dash edges may differ or repeat: the ASCII hyphen, Unicode 16.0
@@ -165,24 +165,43 @@ same script working on macOS's Bash 3.2 and on Linux. Matches retain their origi
 spelling: an ASCII allowlist entry does not exempt its Unicode spelling. The
 detector and redactor share the character primitives, with whole credentials first
 so an identifier inside a credential cannot fragment it before redaction. The
-expanded SSN detector is too large for macOS sed's substitution parser; diagnostic
-redaction uses a shorter, broader pattern over the same primitives, also covering
+numeric detector retains byte offsets while scanning characters; diagnostic
+redaction uses a broader pattern over the same primitives, also covering
 bare and comb tokens. Distinct names that redact identically retain separate
 refusals in the names report.
 
-A line with no byte over 0x7f takes an ASCII pattern built from the same template,
-because every Unicode alternative holds such a byte and the full pattern costs a
-macOS grep far more. A test holds the two equal on ASCII text. A line with such a byte
-and fewer than nine digits skips the SSN rules, since none can match it.
+The tokenizer uses no awk interval expressions, which the default Ubuntu awk
+need not support. Its execution failure blocks, just as a failed grep does.
+Each step reads at most eleven bytes (the longest CID token) from 512-byte pieces
+cut from the line once: macOS awk measures the whole string on every substring, so
+reading from the line itself grew with the square of its length. Gap families are
+retained once each, keeping whitespace runs linear too.
+The decimal-character primitive covers Unicode 16.0 Nd, tested as complete UTF-8
+characters against Python's Unicode inventory. CID tokens between groups act as
+separators, with their font-local numbers excluded from digit counting.
 
-Raw ASCII and fullwidth digit tokens remain separate readings from the one that
+A digit of another set joined to a run makes it ten digits long, so a line holding
+a non-ASCII digit is read again over ASCII digits alone, and a line holding a digit
+outside ASCII and fullwidth again over those two: an adjoining digit of another
+script cannot conceal nine ASCII or fullwidth digits, in any reading. Both
+retain original byte spans for exact allowlisting and deduplicate shared matches.
+Raw decimal digit tokens also remain separate readings from the one that
 joins invisible characters: joining a tenth digit must never withdraw an existing
-nine-digit match. Bare and unmarked comb runs are checked at their maximal length,
-longer neighbours included, so a ten-digit phone number does not become its first nine
-digits and `100 1 2 3 4 5 6 7 8` is not a comb. Two combs in one run, or a comb after
-a single-digit box number, therefore pass here, though the masker reads them under a label. Whitespace
-beside a dash, dot or slash still requires a complete comb, so a 3-2-4 with spaces beside
-its dashes passes too, preserving ranges and amounts ending a sentence before a year.
+nine-digit match. Bare numbers retain maximal digit boundaries, so an ordinary
+ten-digit phone number passes. Comb windows retain single-digit boundaries, so
+`100 1 2 3 4 5 6 7 8` is not a comb. Multiple combs, a neighbouring tenth box,
+or a box number cannot conceal nine single-digit boxes. Consequently a phone
+number written as ten separate boxes also blocks, and so does any run of nine or
+more single digits apart, such as a counted list or a row of zeros. Spaces beside dashes are
+accepted for a 3-2-4; dots and slashes beside spaces still require a complete
+comb, preserving amounts ending a sentence before a year.
+
+Scanned as if added fresh, the tracked tree has illustrative money ranges, comb
+examples and CID samples in docs and tests that these rules match, and no pathname
+that they match. Such text now blocks when added; describe their group widths or build
+synthetic examples from parts rather than globally allowlisting a possible SSN.
+This stricter commit boundary does not change the extraction masker's requirement
+for an identifier label. Diagnostic redaction covers the same new spellings.
 
 **The same SSN patterns run against the PATHNAME, before any exemption** — a file named
 after an SSN discloses it whatever it contains — and every path printed in a block

@@ -187,6 +187,21 @@ _ID_VARIANT = re.compile(r"\x00|[^\x00-\x7f]|\(cid:[0-9]{1,5}\)")
 _ID_GLYPH_SEPARATOR = " "
 _ID_INVISIBLE = "\x00\u0332\u034f\u115f\u1160\u17b4\u17b5\u3164\uffa0"
 _ID_ADDED_VARIANT = re.compile(r"[\x00\u0332\u115f\u1160\u17b4\u17b5\u3164\uffa0\uff0e\uff0f]|\(cid:")
+# Unicode 16 adds these eight decimal sets. Python 3.13 knows Unicode 15.1;
+# keep its recognition/redaction equal to the gate and Python 3.14.
+# https://www.unicode.org/versions/Unicode16.0.0/ (Numeric Property Issues)
+_ID_DECIMAL_16 = (0x10D40, 0x116D0, 0x116DA, 0x11BF0, 0x16130, 0x16D70, 0x1CCF0, 0x1E5F1)
+
+
+def _identifier_decimal(char: str) -> str | None:
+    digit = unicodedata.decimal(char, None)
+    if digit is not None:
+        return str(digit)
+    for zero in _ID_DECIMAL_16:
+        offset = ord(char) - zero
+        if 0 <= offset < 10:
+            return str(offset)
+    return None
 
 
 def identifier_text(text: str, *, _legacy: bool = False, _soft_hyphen: bool = False) -> _IdentifierText:
@@ -203,8 +218,8 @@ def identifier_text(text: str, *, _legacy: bool = False, _soft_hyphen: bool = Fa
             replacement = ""
         elif not _legacy and char in "\uff0e\uff0f":
             replacement = "." if char == "\uff0e" else "/"
-        elif unicodedata.category(char) == "Nd":
-            replacement = str(unicodedata.decimal(char))
+        elif (decimal := _identifier_decimal(char)) is not None:
+            replacement = decimal
         else:
             continue
         parts += [text[last:match.start()], replacement]
@@ -271,14 +286,15 @@ def redact(text) -> str:
     # credential families to the front cannot fragment an SSN.
     for pattern in (_AWS_SECRET, _SECRET):
         out = pattern.sub("[REDACTED]", out)
-    patterns = (_SSN_DELIMITED, _NINE_DIGITS, _DIAGNOSTIC_COMB, _ID_GOVERNED, _ID_SPACED,
+    patterns: tuple[re.Pattern, ...] = (_SSN_DELIMITED, _NINE_DIGITS, _DIAGNOSTIC_COMB, _ID_GOVERNED, _ID_SPACED,
                 _ID_MARKED_COMB, _ID_WRAPPED)
+    if "\u00ad" in out:
+        patterns += (_DIAGNOSTIC_NUMBER,)
     spans = _in_either_reading(identifier_text(out), patterns)
     if "\u00ad" in out:
         # In diagnostics a discretionary soft hyphen may also be invisible
         # inside digits. Add this reading without changing document masking. It
-        # flips every soft hyphen at once, so one read as both still prints, and an
-        # EIN or amount broken by one masks here.
+        # EIN or amount broken by one masks here too.
         spans = sorted({*spans, *_in_either_reading(identifier_text(out, _soft_hyphen=True), patterns)})
     parts, last = [], 0
     for start, end in spans:
@@ -407,12 +423,22 @@ _ID_VALUE_RE = re.compile(
 # forms print an SSN, and a flattened one extracts as nine digits apart. Like
 # the whitespace spelling it is masked only under a label: Form 1040 prints
 # the refund routing number in a comb field too.
-_ID_SPACED = re.compile(r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}")
+#
+# A soft hyphen between every digit is a comb too, but only when EVERY gap holds
+# one. A class allowing either let six soft-hyphen digits join a spaced comb
+# beside them, consuming that SSN's area digits so the rest printed.
+_ID_SPACE_COMB = r"(?<![0-9])[0-9](?![0-9])(?:[^\S\n]+[0-9](?![0-9])){8,}"
+_ID_SOFT_GAP = r"[^\S\n]*\u00ad[^\S\n]*"
+_ID_SPACED = re.compile(rf"{_ID_SPACE_COMB}|(?<![0-9])[0-9](?:{_ID_SOFT_GAP}[0-9]){{8,}}(?![0-9])")
 # A comb can retain the form's printed marks between its groups. Its digits
 # are still separate boxes; an ordinary unlabelled figure stays untouched.
-_ID_MARKED_COMB = re.compile(
-    rf"(?<![0-9])[0-9](?:[^\S\n]+[0-9]){{2}}{_ID_GAP}{_ID_MARK}{_ID_GAP}"
-    rf"[0-9][^\S\n]+[0-9]{_ID_GAP}{_ID_MARK}{_ID_GAP}[0-9](?:[^\S\n]+[0-9]){{3}}(?![0-9])")
+_ID_MARKED_COMB = re.compile("|".join(
+    rf"(?<![0-9])[0-9](?:{box}[0-9]){{2}}{_ID_GAP}{mark}{_ID_GAP}"
+    rf"[0-9]{box}[0-9]{_ID_GAP}{mark}{_ID_GAP}[0-9](?:{box}[0-9]){{3}}(?![0-9])"
+    for mark in (_ID_MARK, r"\.", "/") for box in (r"[^\S\n]+", _ID_SOFT_GAP)))
+# Diagnostics may over-mask amounts. Reading all separator roles together
+# prevents a soft hyphen used both inside digits and between groups leaking.
+_DIAGNOSTIC_NUMBER = re.compile(rf"[0-9](?:[\s{re.escape(_ID_DASHES)}./-]*[0-9]){{8,}}")
 # Diagnostics cover each gate comb family without treating a two-seven EIN or
 # an amount with one decimal point as nine arbitrarily separated digits.
 _DIAGNOSTIC_COMB = re.compile("|".join(
@@ -482,8 +508,10 @@ _ID_LABELED_WRAPPED = re.compile(rf"({_ID_INTRODUCED})({_ID_WRAPPED.pattern})", 
 # text joins a label to the columns across the page, so an identifier-shaped
 # figure further along its row, a wage with its cents apart and then a year,
 # is no sign the label has its value, and the SSN printed under it masks.
+# A soft-hyphen comb is left out: a shape wider than main's would let the label
+# carry and stop governing the rows under it.
 _ID_ADJACENT_VALUE = re.compile(
-    rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_FILLED_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACED.pattern}"
+    rf"[^\S\n]*(?:\)[^\S\n]*)?(?:[:#.][^\S\n]*)?(?:{_ID_FILLED_DELIMITED.pattern}|{_ID_VALUE_RE.pattern}|{_ID_SPACE_COMB}"
     rf"|(?:XXX|\*\*\*)-(?:XX|\*\*)-(?:[0-9]{{4}}|XXXX))", re.IGNORECASE)
 _ID_ALIAS = re.compile(r"[^\S\n]*(?:/|or|\()[^\S\n]*", re.IGNORECASE)
 
