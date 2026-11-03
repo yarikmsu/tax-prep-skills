@@ -664,6 +664,29 @@ _ssn_matches() {
       if (mark == "O") return g ~ /O/ && g !~ /[^IWSO]/
       return g ~ /L/ && g !~ /[^IWSL]/
     }
+    function utf8(p) {
+      if (p<128) return sprintf("%c",p)
+      if (p<2048) return sprintf("%c%c",192+int(p/64),128+p%64)
+      if (p<65536) return sprintf("%c%c%c",224+int(p/4096),128+int(p/64)%64,128+p%64)
+      return sprintf("%c%c%c%c",240+int(p/262144),128+int(p/4096)%64,128+int(p/64)%64,128+p%64)
+    }
+    function decimal_family(s,    size,p,i,first,raw) {
+      if (s in family_cache) return family_cache[s]
+      if (!bytes_ready) {
+        for (i=1; i<256; i++) byte[sprintf("%c",i)]=i
+        bytes_ready=1
+      }
+      size=length(s); p=byte[substr(s,1,1)]-(size==2 ? 192 : size==3 ? 224 : 240)
+      for (i=2; i<=size; i++) p=p*64+byte[substr(s,i,1)]-128
+      # Nd families contain ten consecutive code points; several can touch.
+      # Derive and cache them from the SAME digit primitive, without another
+      # Unicode table or a UTF-8 prefix that splits one family across bytes.
+      first=p
+      while (first>0 && utf8(first-1) ~ ("^" digit "$")) first--
+      for (p=first; (raw=utf8(p)) ~ ("^" digit "$"); p++)
+        family_cache[raw]=first+10*int((p-first)/10)
+      return family_cache[s]
+    }
     # macOS awk cuts a substring by first measuring the whole string, so every
     # cut from $0 cost the line length. Cut the record into small pieces once
     # and read only those, which keeps a long line linear.
@@ -692,7 +715,7 @@ _ssn_matches() {
       if (ascii_count==9) emit(ascii_start,ascii_start+8)
       ascii_count=0
     }
-    function flush(    i,j,g,tight,comb,raw,joined,delimited,a,b) {
+    function flush(    i,j,g,tight,comb,raw,joined,delimited,a,b,left,right) {
       for (i=1; i+8<=n; i++) {
         tight=comb=raw=joined=1
         for (j=1; j<=8; j++) {
@@ -714,9 +737,13 @@ _ssn_matches() {
         }
         # A multi-digit neighbour is not a box; a tenth single box can never
         # conceal nine identifier boxes. Check all overlapping nine-box spans.
-        comb=comb && (i==1 || gap[i]!="") && (i+8==n || gap[i+9]!="")
-        raw=raw && (i==1 || gap[i]!="") && (i+8==n || gap[i+9]!="")
-        joined=joined && (i==1 || !inv(gap[i])) && (i+8==n || !inv(gap[i+9]))
+        # A different decimal family supplies an endpoint boundary too.
+        # Do not split the token: mixed-script nines must still be detected.
+        left=i>1 && family[i]!=family[i-1]
+        right=i+8<n && family[i+8]!=family[i+9]
+        comb=comb && (i==1 || gap[i]!="" || left) && (i+8==n || gap[i+9]!="" || right)
+        raw=raw && (i==1 || gap[i]!="" || left) && (i+8==n || gap[i+9]!="" || right)
+        joined=joined && (i==1 || !inv(gap[i]) || left) && (i+8==n || !inv(gap[i+9]) || right)
         if (delimited || comb || raw || joined) emit(start[i],finish[i+8])
       }
       n=0; pending=""
@@ -743,6 +770,7 @@ _ssn_matches() {
             if (substr(rest,1,width) !~ /^\357\274[\220-\231]$/) other_digit=1
           }
           start[++n]=pos; finish[n]=pos+width-1; gap[n]=pending; pending=""
+          family[n]=width==1 ? 48 : decimal_family(substr(rest,1,width))
         } else {
           if (match(rest,"^" cid)) { kind="W"; width=RLENGTH }
           else if (match(rest,"^" invisible)) { kind="I"; width=RLENGTH; if (substr(rest,1,width)=="\302\255") kind="S" }
