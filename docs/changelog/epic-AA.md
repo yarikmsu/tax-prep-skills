@@ -4739,3 +4739,41 @@ pull requests were unsafe as opened, and both were reworked in review.
   rather than with `--no-verify`, after the commit scanned clean under the new gate.
 - Left for AA104: three sites that read a failing tool as clean. Left for AA105: the
   spellings each review still printed, and the gate's remaining passes.
+
+## AA104 — the PII gate's remaining fail-opens (#113)
+
+Three sites read a failing tool as clean: digest cleanup, whose failure left empty text
+to scan, and the blocked-extension and runtime-filename rules, which read `grep` exit 2
+as no match. Each now blocks, and the `[REDACTED]` message no longer says a masked name
+held an SSN.
+
+- **Dropping `sort -u` repeated rows.** It kept files that redact alike apart, but a range
+  scans each commit on its own, so a file refused in three commits printed three times.
+  Refusals are now recorded once per raw path and message, before redaction.
+- **An early `grep -q` match read as no match**, on main too. Under `pipefail`, grep exits
+  on its first matching line, its writer's pipe breaks, and the pipeline returns the
+  writer's 1. A crafted tree entry, `a.pdf`, a newline and a 200 KB name, scanned clean in
+  range mode. Both rules now read a here-string.
+
+## AA105 — identifier spellings AA103 left (#114)
+
+The gate passed several combs in a run, a comb beside a box number, a spaced 3-2-4, CID
+separators and Unicode 16 digits, and the masker read no soft-hyphen comb. As opened the
+pull request was unsafe in both halves, and it was rebuilt as one commit.
+
+- **A gap class allowing spaces or soft hyphens unmasked two layouts on all four PDF
+  routes.** Six soft-hyphen digits joined a spaced SSN beside them and took its area
+  digits, and a label whose value matched only the wider shape stopped governing the rows
+  below. Every gap of a soft-hyphen comb must now hold one, and the label check keeps
+  main's shape.
+- **The rewritten refusal was dropped.** It refused an unmapped checkbox beside an 8-digit
+  amount and an unmapped leader before one; it is AA106.
+- **A digit of another script hid nine beside it in the gate.** The wider digit set made
+  the run ten long. A line holding one is read again over ASCII, and over ASCII with
+  fullwidth.
+- **The tokenizer was quadratic on macOS awk**, which measures the whole string on every
+  substring. It now reads 512-byte pieces cut once from the line.
+- Against main: 24,000 gate lines and 18,000 masker texts lose nothing main caught, under
+  macOS awk, mawk and gawk alike, and 400 synthetic PDFs print nothing main masked on any
+  route. A second review of the rebuilt commit found one test too weak to catch its own
+  defect, now strengthened. Left: AA106 and AA107.
