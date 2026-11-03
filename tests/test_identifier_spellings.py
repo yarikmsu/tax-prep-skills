@@ -222,7 +222,7 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert MASKED in out and "850.00" in out
 
 
-def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=()):
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(), items=None):
     """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
 
     A TrueType font with only ToUnicode entries removed is NOT an unmapped
@@ -236,7 +236,9 @@ def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(
             "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
             f"{len(mapped)} beginbfchar\n{mapping}\nendbfchar\nendcmap end end").encode()
     content = b""
-    for x, y, text in ((36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00")):
+    if items is None:
+        items = ((36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00"))
+    for x, y, text in items:
         content += f"BT /F1 9 Tf {x} {y} Td <{text.encode('utf-16be').hex()}> Tj ET\n".encode()
     content += b"32 670 m 520 670 l 520 715 l 32 715 l h S 32 693 m 520 693 l S 270 670 m 270 715 l S"
     if shared_name:

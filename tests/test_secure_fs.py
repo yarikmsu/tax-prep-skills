@@ -1370,7 +1370,6 @@ class TestTheRedactorMirrorsEveryGateFamily:
     # the shell VARIABLE NAME so a family added there and not here fails below
     # rather than passing silently.
     FAMILY_SAMPLES = {
-        "SSN_DELIMITED": "documents/W2_000-00-0000.pdf",
         "SECRET_PATTERN": "keys/AKIAAAAAAAAAAAAAAAAA.txt",
         "AWS_SECRET_PATTERN": f"env/{AWS_SECRET_KEYWORD}={FAKE_AWS_SECRET_PATHSAFE}",
     }
@@ -1397,6 +1396,12 @@ class TestTheRedactorMirrorsEveryGateFamily:
                       "AKIAAAAAAAAAAAAAAAAA"):
             if token in sample:
                 assert token not in out, f"{family}: the value survived"
+
+    def test_tokenized_identifiers_are_also_redacted(self):
+        # Numeric rules are tokenized separately from credential regexes.
+        digits = "000" + "00" + "0000"
+        for value in (digits, " ".join(digits), "-".join((digits[:3], digits[3:5], digits[5:]))):
+            assert redact(value) == "[REDACTED]"
 
     def test_an_aws_secret_containing_a_digit_run_is_fully_masked(self):
         """The substitution ORDER is load-bearing. Run the SSN or nine-digit

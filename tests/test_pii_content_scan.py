@@ -3216,40 +3216,13 @@ def test_unicode_gate_primitives_cover_runtime_invisibles_as_whole_characters():
     invisible |= {chr(i) for i in range(0xfe00, 0xfe10)} | {chr(i) for i in range(0xe0100, 0xe01f0)}
     unexpected = {'é', '€', '\u2019', '\u17b6', '\u115e', '０', ' '}
     script = SCAN.read_text(encoding='utf-8')
-    definitions = script[script.index('SSN_DASH='):script.index('# Nine contiguous digits')]
+    definitions = script[script.index('SSN_DASH='):script.index('# Bare decimal tokens')]
     result = subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + '\ngrep -xE "$SSN_INVISIBLE"'],
                             input='\n'.join(sorted(invisible | unexpected)) + '\n', capture_output=True, text=True)
     assert result.returncode == 0
     assert set(result.stdout.splitlines()) == invisible
     bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
     assert all(runtime_redact(char.join(bare)) == '[REDACTED]' for char in invisible)
-
-
-def _ascii_lines():
-    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
-    comb = ' '.join(bare)
-    groups = (_SSN_AREA, _SSN_GROUP, _SSN_SERIAL)
-    spaced = [' '.join(part) for part in groups]
-    lines = [comb, comb.replace(' ', '\t'), comb.replace(' ', '\x1c'), comb.replace(' ', '\x0b'),
-             ' - '.join(spaced), ' . '.join(spaced), ' / '.join(spaced), '-'.join(spaced), '--'.join(spaced), ' - - '.join(spaced),
-             FAKE_SSN, FAKE_SSN.replace('-', ' '), FAKE_SSN.replace('-', '  '), FAKE_SSN.replace('-', '.'),
-             FAKE_SSN.replace('-', '/'), FAKE_SSN.replace('-', '--'), bare[:3] + ' - ' + bare[3:5] + ' - ' + bare[5:],
-             'Date 2026-01-31', 'Fee $125.50. 2025 rates', '1 2 3 4 5 6 7 8', 'Range $1,400.00 - 2400',
-             bare[:3] + '-' + bare[3:5] + '.' + bare[5:], 'SSN' + FAKE_SSN + 'x']
-    return lines + [prefix + line + ' tail' for line in lines for prefix in ('a ', '1')]
-
-
-def test_the_ascii_pattern_finds_exactly_what_the_whole_one_does_on_ascii_text():
-    script = SCAN.read_text(encoding='utf-8')
-    definitions = script[script.index('SSN_DASH='):script.index('# Nine contiguous digits')]
-    def matches(pattern):
-        return subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + f'\ngrep -oE "${pattern}"'],
-                              input='\n'.join(_ascii_lines()) + '\n', capture_output=True, text=True).stdout
-    assert matches('SSN_DELIMITED') and matches('SSN_DELIMITED') == matches('SSN_ASCII_DELIMITED')
-    def combs(gap):
-        return subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + f'\ngrep -oE "[0-9](${gap}[0-9])*"'],
-                              input='\n'.join(_ascii_lines()) + '\n', capture_output=True, text=True).stdout
-    assert combs('SSN_BOX_GAP') and combs('SSN_BOX_GAP') == combs('SSN_ASCII_BOX_GAP')
 
 
 @pytest.mark.parametrize('line', ['ordinary prose', 'caf\u00e9 notes'])
@@ -3308,11 +3281,13 @@ def test_unicode_gate_ref_names_and_deleted_history_still_block(tmp_path):
     assert all(value not in history.stdout + history.stderr for value in values)
 
 
-@pytest.mark.parametrize('style', ['wide', 'comb', 'invisible'])
+@pytest.mark.parametrize('style', ['wide', 'comb', 'invisible', 'arabic', 'cid', 'spaced-dash'])
 def test_unicode_allowlisting_keeps_the_original_spelling_and_requires_staging(tmp_path, style):
     repo = _make_repo(tmp_path)
     bare = '000' + '00' + '0000'
-    value = {'wide': _wide_digits(bare), 'comb': ' '.join(bare), 'invisible': '\u200b'.join(bare)}[style]
+    value = {'wide': _wide_digits(bare), 'comb': ' '.join(bare), 'invisible': '\u200b'.join(bare),
+             'arabic': '\u0660' * 9, 'cid': '(cid:3)'.join((bare[:3], bare[3:5], bare[5:])),
+             'spaced-dash': ' - '.join((bare[:3], bare[3:5], bare[5:]))}[style]
     _stage(repo, 'notes.md', value + '\n')
     assert _run(repo).returncode == 1
     allow = repo / '.pii-allowlist'
@@ -3332,13 +3307,145 @@ def test_joining_invisibles_cannot_withdraw_an_existing_ascii_or_wide_token(tmp_
     assert all(value not in result.stdout + result.stderr for value in values)
 
 
+@pytest.mark.parametrize('side', ['before', 'after', 'both'])
+@pytest.mark.parametrize('location', ['content', 'pathname', 'ref'])
+def test_unicode_neighbours_cannot_conceal_a_bare_ascii_identifier(tmp_path, side, location):
+    repo = _make_repo(tmp_path)
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    value = ('３' if side in {'before', 'both'} else '') + bare + ('４' if side in {'after', 'both'} else '')
+    if location == 'ref':
+        base = _commit(repo, 'seed')
+        result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh', '--names', base], cwd=repo,
+                                input='refs/heads/' + value + '\n', capture_output=True, text=True)
+    else:
+        _stage(repo, 'notes.md' if location == 'content' else f'tests/fixtures/{value}.md',
+               value + '\n' if location == 'content' else 'ordinary work\n')
+        result = _run(repo)
+    assert result.returncode == 1
+    assert value not in result.stdout + result.stderr
+    assert bare not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('secret', [False, True])
+@pytest.mark.parametrize('fill', ['x', ' '])
+def test_long_added_lines_finish_and_still_scan_the_tail(tmp_path, secret, fill):
+    repo = _make_repo(tmp_path)
+    tail = ' ' + FAKE_SSN if secret else ' ordinary work'
+    _stage(repo, 'notes.md', fill * 100_000 + tail + '\n')
+    result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh'], cwd=repo,
+                            capture_output=True, text=True, timeout=8)
+    assert result.returncode == int(secret)
+    assert FAKE_SSN not in result.stdout + result.stderr
+
+
+def test_the_tokenizer_cuts_the_record_only_while_loading_its_pieces():
+    """macOS awk measures the whole string on every substring, so a cut from
+    $0 per character made a long line quadratic. Pinned in the source because
+    a timing assertion at a size that shows it would be minutes long, or flaky."""
+    script = (REPO / "scripts/pre-commit-pii-scan.sh").read_text()
+    program = script[script.index("_ssn_matches() {"):script.index("count_hits() {")]
+    load = program[program.index("function load("):program.index("function text(")]
+    assert program.count("substr($0") == load.count("substr($0") == 1
+
+
+@pytest.mark.parametrize("kind", ["comb then arabic", "arabic then comb", "joined then arabic",
+                                  "joined then devanagari", "fullwidth then devanagari",
+                                  "comb then fullwidth"])
+def test_a_digit_of_another_script_cannot_hide_nine_beside_it(tmp_path, kind):
+    """Joined to a run, a digit from a wider set made the comb, joined and bare
+    readings ten digits long; the narrower readings must still see the nine."""
+    digits = "".join(("000", "47", "6789"))
+    arabic, devanagari = "\u0661", "\u0967"
+    value = {
+        "comb then arabic": " ".join(digits) + arabic,
+        "arabic then comb": arabic + " ".join(digits),
+        "joined then arabic": "\ufeff".join(digits) + arabic,
+        "joined then devanagari": "\u200b".join(digits) + devanagari,
+        "fullwidth then devanagari": _wide_digits(digits) + devanagari,
+        # Missed on main as well: the ASCII-only reading is what finds it.
+        "comb then fullwidth": " ".join(digits) + _wide_digits("1"),
+    }[kind]
+    repo = _make_repo(tmp_path)
+    _stage(repo, "notes.md", f"Reference {value} end\n")
+    result = _run(repo)
+    assert result.returncode == 1, "a digit of another script hid the identifier beside it"
+    assert value not in result.stdout + result.stderr
+
+
 def test_unicode_longer_numbers_dates_and_money_ranges_remain_committable(tmp_path):
     repo = _make_repo(tmp_path)
     phone = '555' + '123' + '4567'
-    text = '\n'.join([phone, _wide_digits(phone), ' '.join(phone), _wide_digits(' '.join(phone)),
+    text = '\n'.join([phone, _wide_digits(phone),
                        'Date ０１／３１／２０２６', 'Range $１,４００．００ - ２４００', 'Amount １２３ ４５６ ７８９', 'Fee $125.50. 2025 rates', 'Fee $１２５．５０． ２０２５ rates'])
     _stage(repo, 'notes.md', text + '\n')
     assert _run(repo).returncode == 0
+
+
+def _residual_gate_values():
+    bare = _SSN_AREA + _SSN_GROUP + _SSN_SERIAL
+    comb = ' '.join(bare)
+    return [comb + ' ' + comb, comb + ' 0', '12 ' + comb, '1 ' + comb,
+            FAKE_SSN.replace('-', ' - '), FAKE_SSN.replace('-', '(cid:3)'),
+            ''.join(chr(0x0660 + int(c)) for c in bare),
+            ''.join(chr(0x1d7ce + int(c)) if c.isdigit() else c for c in FAKE_SSN)]
+
+
+@pytest.mark.parametrize('index', range(len(_residual_gate_values())))
+@pytest.mark.parametrize('location', ['content', 'pathname', 'ref'])
+def test_aa105_residual_gate_spellings_block_without_disclosure(tmp_path, index, location):
+    repo = _make_repo(tmp_path)
+    value = _residual_gate_values()[index]
+    if location == 'ref':
+        base = _commit(repo, 'seed')
+        result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh', '--names', base], cwd=repo,
+                                input='refs/heads/' + value + '\n', capture_output=True, text=True)
+    else:
+        _stage(repo, 'notes.md' if location == 'content' else f'tests/fixtures/{value}.md',
+               value + '\n' if location == 'content' else 'ordinary work\n')
+        result = _run(repo)
+    assert result.returncode == 1
+    assert value not in result.stdout + result.stderr
+
+
+def test_gate_decimal_primitive_covers_whole_unicode_characters():
+    from agents.lib.secure_fs import _ID_DECIMAL_16
+    digits = {chr(i) for i in range(0x110000) if unicodedata.category(chr(i)) == 'Nd'}
+    # The floor interpreter uses UCD 15.1; the scanner covers UCD 16.0 on both.
+    digits |= {chr(zero + n) for zero in _ID_DECIMAL_16 for n in range(10)}
+    unexpected = {'é', '€', '²', '①', '\u066a', '\U0001d7cd', ' '}
+    script = SCAN.read_text(encoding='utf-8')
+    definitions = script[script.index('SSN_DASH='):script.index('# Bare decimal tokens')]
+    result = subprocess.run(['bash', '-c', 'export LC_ALL=C\n' + definitions + '\ngrep -xE "$SSN_DIGIT"'],
+                            input='\n'.join(sorted(digits | unexpected)) + '\n', capture_output=True, text=True)
+    assert result.returncode == 0
+    assert set(result.stdout.splitlines()) == digits
+
+
+def test_new_gate_spellings_cannot_be_hidden_by_a_later_deletion(tmp_path):
+    repo = _make_repo(tmp_path)
+    base = _commit(repo, 'seed')
+    values = _residual_gate_values()
+    _stage(repo, 'notes.md', '\n'.join(values) + '\n')
+    _commit(repo, 'synthetic spellings')
+    _stage(repo, 'notes.md', 'ordinary work\n')
+    head = _commit(repo, 'remove spellings')
+    result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh', f'{base}...{head}'], cwd=repo,
+                            capture_output=True, text=True)
+    assert result.returncode == 1 and 'BLOCKED CONTENT' in result.stdout
+    assert all(value not in result.stdout + result.stderr for value in values)
+
+
+def test_identifier_tokenizer_cannot_fail_open(tmp_path):
+    repo = _make_repo(tmp_path)
+    _stage(repo, 'notes.md', 'ordinary work\n')
+    shim = repo / 'shim'
+    shim.mkdir()
+    path = shim / 'awk'
+    path.write_text('#!/bin/bash\nexit 2\n')
+    os.chmod(path, 0o755)
+    result = subprocess.run(['bash', 'scripts/pre-commit-pii-scan.sh'], cwd=repo, capture_output=True, text=True,
+                            env={**os.environ, 'PATH': f"{shim}:{os.environ['PATH']}"})
+    assert result.returncode == 1 and 'scan could not run' in result.stdout
 
 
 def test_an_invalid_utf8_byte_does_not_hide_a_unicode_identifier(tmp_path):
