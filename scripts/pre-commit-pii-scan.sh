@@ -904,7 +904,7 @@ for scope in "${SCOPES[@]}"; do
     # Parameter expansion has no option parsing and spawns no process.
     filename="${file##*/}"
     # Every message below prints this, never the raw path.
-    safe_file=$(redact "$file")
+    safe_file=$(redact "$file") || die "could not redact a pathname for the report"
 
     scanned_files=$((scanned_files + 1))
 
@@ -990,9 +990,11 @@ for scope in "${SCOPES[@]}"; do
             esac ;;
         esac
 
-        # `printf`, not `echo`: bash's echo consumes a leading -n/-e/-E as a
-        # flag, so a file named exactly `-e` would be tested as an EMPTY name.
-        if printf '%s\n' "$filename" | grep -qiE "\.($BLOCKED_EXTENSIONS)$"; then
+        # A here-string, not `echo` or a pipe: bash's echo consumes a leading -n/-e/-E
+        # as a flag, so a file named exactly `-e` would be tested as an EMPTY name;
+        # and under pipefail a `grep -q` that matches early breaks the writer's pipe,
+        # whose status 1 then read as "no match" for a long crafted name.
+        if grep -qiE "\.($BLOCKED_EXTENSIONS)$" <<< "$filename"; then
           ext=$(printf '%s\n' "$filename" | grep -oiE "\.($BLOCKED_EXTENSIONS)$" | tr '[:upper:]' '[:lower:]') \
             || die "could not read the blocked extension for $safe_file"
           refuse_file "BLOCKED FILE TYPE ($ext)"
@@ -1026,7 +1028,7 @@ for scope in "${SCOPES[@]}"; do
             continue ;;
         esac
 
-        if printf '%s\n' "$filename" | grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$'; then
+        if grep -qE '^(tax_law_.*\.json|FBAR_.*\.md|[0-9]{4}-review\.md|tax_calendar_.*\.ics)$' <<< "$filename"; then
           refuse_file "BLOCKED FILENAME ($(redact "$filename"))"
           continue
         else

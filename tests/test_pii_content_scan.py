@@ -1581,6 +1581,31 @@ def test_selective_tool_failures_cannot_turn_a_scan_clean(tmp_path, name, tool, 
     assert FAKE_SSN not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("name,label", [
+    ("a.pdf\n" + "x" * 200_000 + ".pdf", "BLOCKED FILE TYPE"),
+    ("tax_law_2026.json\n" + "x" * 200_000, "BLOCKED FILENAME"),
+])
+def test_a_long_name_matching_early_is_not_read_as_no_match(tmp_path, name, label):
+    """Fed through a pipe, `grep -q` exits on its first matching line and the
+    writer's broken pipe made the pipeline's status 1, read as "no match". Only
+    a crafted tree reaches it: a real file name fits in the pipe buffer."""
+    repo = _make_repo(tmp_path)
+    base = _commit(repo, "seed")
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=repo, input=b"ordinary\n",
+                          capture_output=True, check=True).stdout.decode().strip()
+    listing = subprocess.run(["git", "ls-tree", "-z", "HEAD"], cwd=repo,
+                             capture_output=True, check=True).stdout
+    entry = f"100644 blob {blob}\t{name}\0".encode()
+    tree = subprocess.run(["git", "mktree", "-z"], cwd=repo, input=listing + entry,
+                          capture_output=True, check=True).stdout.decode().strip()
+    head = subprocess.run(["git", "commit-tree", tree, "-p", base, "-m", "crafted"], cwd=repo,
+                          capture_output=True, check=True).stdout.decode().strip()
+    result = subprocess.run(["bash", "scripts/pre-commit-pii-scan.sh", f"{base}...{head}"],
+                            cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 1, "an early grep match on a long name read as clean"
+    assert label in result.stdout
+
+
 @pytest.mark.parametrize("kind", ["file type", "pathname", "content"])
 def test_distinct_files_that_redact_alike_keep_every_report_row(tmp_path, kind):
     repo = _make_repo(tmp_path)

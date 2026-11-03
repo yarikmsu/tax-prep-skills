@@ -3576,7 +3576,7 @@ class TestRuntimePermissionsHook:
         # filenames at all. A near miss, not a hypothetical: the `.claude/`
         # runtime-state rule was added directly above this one.
         m = re.search(
-            r"^\s*([^\s()|]+\.json\|[^)\n]*)\)\s*\n\s*BLOCKED\+=\(\"\s*"
+            r"^\s*([^\s()|]+\.json\|[^)\n]*)\)\s*\n\s*refuse_file\s+\"\s*"
             r"BLOCKED FILENAME", scan, re.M)
         assert m, "the sensitive-filename case in the PII scan has moved"
         canonical = {n.strip() for n in m.group(1).split("|")}
