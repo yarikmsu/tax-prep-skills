@@ -185,9 +185,15 @@ a non-ASCII digit is read again over ASCII digits alone, and a line holding a di
 outside ASCII and fullwidth again over those two: an adjoining digit of another
 script cannot conceal nine ASCII or fullwidth digits, in any reading. Both
 retain original byte spans for exact allowlisting and deduplicate shared matches.
+Every decimal family also supplies a boundary where its digits touch another
+family. These families are derived and cached from the existing Nd primitive,
+including adjacent sets of ten, rather than maintained in a second table or
+inferred from UTF-8 prefixes. The added boundary applies at a candidate's
+endpoints; the token is not split, so nine digits mixing scripts internally
+remain detectable. Matched spans keep their original bytes.
 Raw decimal digit tokens also remain separate readings from the one that
 joins invisible characters: joining a tenth digit must never withdraw an existing
-nine-digit match. Bare numbers retain maximal digit boundaries, so an ordinary
+nine-digit match. Bare numbers within one family retain maximal digit boundaries, so an ordinary
 ten-digit phone number passes. Comb windows retain single-digit boundaries, so
 `100 1 2 3 4 5 6 7 8` is not a comb. Multiple combs, a neighbouring tenth box,
 or a box number cannot conceal nine single-digit boxes. Consequently a phone
