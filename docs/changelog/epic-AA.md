@@ -4803,7 +4803,7 @@ and #118's backlog edits left to this record.
   nothing main masks on any route; 24,000 gate lines lose nothing, the tracked tree
   reports identically, and the gate tests pass under macOS awk, mawk and gawk. Left: AA108.
 
-## AA108 — table and label layouts
+## AA108 — table and label layouts (#120)
 
 - An above-value table label introduces the next row's crossing comb only when
   it starts in that label's column. Later flag and count rows remain readable;
@@ -4829,11 +4829,12 @@ and #118's backlog edits left to this record.
   flag or count to a whole date in the next cell: `["Has SSN", "Date"]` over
   `["1", "05/05/2026"]` masked both and printed the year as a false last four.
   A cell that starts inside the candidate and holds a whole day, month and year
-  now keeps the pair apart. Candidates are collected only for a row with a
+  now keeps the pair apart when the cells before it hold the first digits alone;
+  a label in their cell still masks. Candidates are collected only for a row with a
   label or the row under one, which halves the cost this PR added to a plain
   table.
 
-## AA106 — unreadable identifier fields
+## AA106 — unreadable identifier fields (#121)
 
 - Retains the existing refusal for nine unreadable glyphs of two kinds on a
   row, and adds a classification-only probe for partially readable identifier
@@ -4870,3 +4871,4 @@ and #118's backlog edits left to this record.
   The symbol sweep refuses none of the 577 pages, the punctuation sweep six
   fewer, and every digit decode failure on the 62 sample-return pages refuses
   exactly the pages it refused before.
+- Left by both reviews, each printing on main: AA109.
