@@ -1028,7 +1028,8 @@ def _in_reach(row: list[dict], starts: list[int], value_starts: list[int], end: 
             and row[bisect.bisect_right(starts, value_starts[at]) - 1]["x0"] - reach <= _BESIDE * height)
 
 
-def _page_identifiers(words: list[dict], tick, *, variant_labels=False) -> tuple[list, list, list, set, list]:
+def _page_identifiers(words: list[dict], tick, *, variant_labels=False,
+                      comb_fills=True) -> tuple[list, list, list, set, list]:
     """The page's identifier labels (box, carries, where its row's reach
     starts), runs still to mask (text, box), identifiers spelled another way
     (box, masked by the page itself), the ids of every word an identifier
@@ -1044,7 +1045,8 @@ def _page_identifiers(words: list[dict], tick, *, variant_labels=False) -> tuple
     for row in rows:
         tick()
         text, starts = _row_text(row)
-        found_labels, found_values, found_spelled, notes = identifier_spans(text, variant_labels=variant_labels)
+        found_labels, found_values, found_spelled, notes = identifier_spans(
+            text, variant_labels=variant_labels, comb_fills=comb_fills)
         value_starts = sorted({low for low, _ in found_values} | {low for low, _, _ in found_spelled})
         row_top = min(w["top"] for w in row)
         phrases = _phrases(row)
@@ -1386,12 +1388,21 @@ def _governed_runs(words: list[dict], tick=lambda: None, *, split: bool = True, 
     runs = _governed_reading(words, tick, split=split, measured=measured)
     if any(identifier_text(w["text"]).text != w["text"] for w in words):
         runs |= _governed_reading(words, tick, split=split, measured=measured, variant_labels=True)
+        if split:
+            # A legacy comb on the label row must not close its column to
+            # variant targets. Keep this reading additive and limited to
+            # variant targets, preserving ordinary figures below a
+            # label whose original spelling already fills its box.
+            runs |= _governed_reading(words, tick, split=split, measured=measured,
+                                      variant_labels=True, comb_fills=False)
     return runs
 
 
-def _governed_reading(words: list[dict], tick, *, split: bool, measured: bool, variant_labels=False) -> set[str]:
+def _governed_reading(words: list[dict], tick, *, split: bool, measured: bool,
+                      variant_labels=False, comb_fills=True) -> set[str]:
     """One positional reading; added labels cannot withdraw an original mask."""
-    labels, values, spelled, covered, splits = _page_identifiers(words, tick, variant_labels=variant_labels)
+    labels, values, spelled, covered, splits = _page_identifiers(
+        words, tick, variant_labels=variant_labels, comb_fills=comb_fills)
     if not split:
         labels, splits = [entry for entry in labels if not entry[0].get("split_tail")], []
     if not measured:
@@ -1439,6 +1450,8 @@ def _governed_reading(words: list[dict], tick, *, split: bool, measured: bool, v
         runs |= _under([view[k] for k in plain], items, [under[k] for k in plain], printed, tick)
         if splits:
             runs |= _under(view, targets, under, unsplit, tick)
+    if not comb_fills:
+        runs &= {raw for raw, _, _ in splits if identifier_text(raw).text != raw}
     return runs
 
 

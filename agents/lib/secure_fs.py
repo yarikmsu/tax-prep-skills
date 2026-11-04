@@ -573,7 +573,8 @@ _ID_SPELLED = re.compile(
     r"|(?<![0-9])[0-9]{2}-[0-9]{7}(?![0-9])", re.IGNORECASE)
 
 
-def identifier_spans(row: str, *, variant_labels: bool = False) -> tuple[list, list, list, list]:
+def identifier_spans(row: str, *, variant_labels: bool = False,
+                     comb_fills: bool = True) -> tuple[list, list, list, list]:
     """Where one row of page text prints an identifier label, an
     identifier-shaped run still to mask, an identifier spelled another way
     (`_ID_SPELLED`), and a note continuing a label ("(see instructions)",
@@ -582,8 +583,14 @@ def identifier_spans(row: str, *, variant_labels: bool = False) -> tuple[list, l
     `carries` says whether a value immediately follows the label on its row, `masked`
     whether the page masked that identifier itself (`XXX-XX-1234`). A reader
     that knows where the row sits on the page decides which label governs
-    which run; `mask_runs` masks them."""
-    labels = [(m.start(), m.end(), bool(_ID_ADJACENT_VALUE.match(row, m.end())))
+    which run; `mask_runs` masks them. `comb_fills=False` is an additional
+    positional reading for variant targets only; the ordinary figures under
+    a filled label must retain the original reading."""
+    def carries(at):
+        match = _ID_ADJACENT_VALUE.match(row, at)
+        return bool(match and (comb_fills or not _ID_SPACED.search(row, match.start(), match.end())))
+
+    labels = [(m.start(), m.end(), carries(m.end()))
               for m in _ID_LABEL_RE.finditer(row)]
     if variant_labels:
         # This is an ADDITIONAL positional reading. Values and occupied boxes
@@ -591,7 +598,7 @@ def identifier_spans(row: str, *, variant_labels: bool = False) -> tuple[list, l
         # labels separately: a new label must never take their column away.
         view = identifier_text(row)
         extra = [view.span(m.start(), m.end()) for m in _ID_LABEL_RE.finditer(view.text)]
-        labels = sorted({*labels, *((a, b, bool(_ID_ADJACENT_VALUE.match(row, b))) for a, b in extra)})
+        labels = sorted({*labels, *((a, b, carries(b)) for a, b in extra)})
     # "SSN or ITIN", "SSN/ITIN" and "social security number (SSN)"
     # name one field. Walk aliases backwards once, without scanning or
     # copying the remaining row for each label in a crafted long chain.
