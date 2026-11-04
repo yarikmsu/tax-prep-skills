@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA107** — identifier leaks found in AA105's reviews; **AA106** — refuse unreadable identifier fields without refusing readable pages. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114. | AA107's table split is the likeliest of its leaks on a real form. AA106 has to be measured on filled forms before it refuses anything. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA108** — table and label layouts AA107's reviews left; **AA106** — refuse unreadable identifier fields without refusing readable pages. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114, AA107 in #116, #117 and #118. | AA108's comb under a header label is Form 1040's own layout once no positional run is read. AA106 has to be measured on filled forms before it refuses anything. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -199,13 +199,18 @@ Trigger and range behavior is documented in
   gate closed until the missing covered-year inputs and the planner's CA
   contracts can be reviewed; do not derive them from the announced inflation
   percentage or substitute TY2025 values. Found by the same review.
-- **AA107 (P2, S): Identifier leaks found in AA105's reviews.** Each prints on main.
-  `extract_tables` splits an SSN label and a spaced comb across two cells of a ruled
-  table, seven digits and two, and prints all nine. A label whose own spaced comb counts
-  as its value stops governing the rows below, so an unlabelled fullwidth SSN two rows
-  down prints whole. In the gate, nine digits of a script other than ASCII or fullwidth
-  pass when one more digit of another script touches them; treating a change of script
-  between two digits as a boundary would close it.
+- **AA108 (P2, M): Table and label layouts AA107's reviews left.** Each prints on main.
+  A comb cut across cells under a header label, Form 1040's label-above-boxes layout,
+  prints whole wherever the positional reader established no run. Reading such a comb
+  from the label's column masked every later row of flags or counts under a header such
+  as "Has SSN" (19,990 of 20,000 rows in a CSV), so a rule has to stop at the row the
+  label introduces, as the text route does, and be measured on tables with header
+  columns. Grouped or hyphenated spellings split across cells print ("SSN 000-" beside
+  "12-3456"); an amount, its cents and a year share the 3-2-4 shape, which is why
+  AA107 joined only single comb digits. A comb whole in its own cell prints when a spacer
+  or another cell stands between it and its label, Form 1040's dependents in the marked
+  spelling included. A variant-spelled SSN under a label carrying a dashed or plain value
+  prints, by the carrying rule that keeps an ASCII figure there.
 - **AA106 (P3, M): Refuse unreadable identifier fields without refusing readable pages.**
   Glyph numbers still print for an identifier overlaid on a readable label, with mapped
   letters between its groups, with one digit mapped, or one glyph per row. #114 as opened
@@ -522,6 +527,7 @@ merge.
 | AA96 | #94 | Split runs are positional targets only, never a sign that a label's value is there. Still printing: an unlabelled split. On a tilted page the overlay pass drops a split under a label whole, as on main, so its last four is lost. A split-shaped figure a label governs by position masks as an SSN, and one after a heading wrapped onto "number" makes the heading a label, which then masks nine-digit figures down its column, the safe direction. Two governed runs sharing digits mask whole, their neighbour's digits included. |
 | AA99 | #97 | A run governed on neither the original page nor the cleaned one still prints, as on main. A figure whose digits match a run governed on the original page masks wherever it prints, the safe direction. |
 | AA98 | #96 | A value is a label's own only within `_BESIDE` heights of the label or its dot leader. One further along its row leaves the label governing the line under it, which masks an identifier-shaped figure there, the safe direction. The overlay pass still decides which copies to keep as page text reads labels. |
+| AA107 | #116, #117, #118 | A table row is read as one line for a comb its cells cut apart that a label on the row introduces, a dependent's comb after a whole one included. A label whose own value is a spaced comb still governs variant spellings below it. The gate bounds a candidate where its digits change script. What it left is AA108. |
 | AA105 | #114 | The gate reads identifier spellings with one awk tokenizer that keeps byte spans for exact allowlisting, in linear time on macOS; a digit of another script cannot hide nine ASCII or fullwidth digits. The masker reads a comb with a soft hyphen in every gap. What it left is AA106 and AA107. |
 | AA104 | #113 | Digest cleanup and both filename rules block when their tool fails, an early `grep -q` match included. The report keeps one row per real path and refusal. |
 | AA103 | #110, #111 | The view reads the remaining spellings and adds to what is printed. Which drawn-over digits stay is decided from the printed labels alone. Nine unreadable glyphs of two kinds in a row refuse the read, and a heading in an unmapped font refuses too. The gate reads Unicode spellings, and ASCII lines take a pattern their size. What it left is AA104 and AA105. |
