@@ -4802,3 +4802,33 @@ and #118's backlog edits left to this record.
 - Against main: 12,000 random tables, 300 split-comb PDFs and 400 label-reach PDFs print
   nothing main masks on any route; 24,000 gate lines lose nothing, the tracked tree
   reports identically, and the gate tests pass under macOS awk, mawk and gawk. Left: AA108.
+
+## AA108 — table and label layouts
+
+- An above-value table label introduces the next row's crossing comb only when
+  it starts in that label's column. Later flag and count rows remain readable;
+  the ordinary whole-cell column protection continues separately.
+- A whole comb past a spacer or another cell on the label's row now masks.
+  Printed group separators may cross cells, even inside a digit group, and
+  whitespace groups can continue from a cell carrying their label. Separate
+  amount, cents and year columns remain separate.
+- Plain, dashed and masked values no longer close a label to variant targets.
+  The added reading contributes only changed spellings, through text, table
+  columns and PDF position; ordinary figures retain the original reading.
+- Local review reproduced the filled-label leak in text and spreadsheet routes
+  after the PDF fix and extended protection to them. Baseline mutation checks
+  fail for each of the five masking changes; a 20,000-row header regression
+  preserves later flags, and 12,000 synthetic tables restore no baseline-masked
+  digit by per-cell digit counts. Fixtures use invalid synthetic prefixes and
+  retain no filled PDFs in the repository.
+- A final label-variant review found that the new whitespace-grouped crossing
+  rule recognized only printed labels in the first cell. It now reads labels
+  through the additive recognition view too; invisible-laced labels have a
+  regression that fails on the first implementation.
+- Review found that a crossing boundary inside the first group also joined a
+  flag or count to a whole date in the next cell: `["Has SSN", "Date"]` over
+  `["1", "05/05/2026"]` masked both and printed the year as a false last four.
+  A cell that starts inside the candidate and holds a whole day, month and year
+  now keeps the pair apart. Candidates are collected only for a row with a
+  label or the row under one, which halves the cost this PR added to a plain
+  table.

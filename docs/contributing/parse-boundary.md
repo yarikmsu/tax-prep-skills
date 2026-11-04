@@ -136,6 +136,23 @@ without those labels, and the runs each reading masks are unioned. Which drawn-o
 digits stay on the page is decided from the printed labels alone, because keeping one
 moves which label governs what else is there.
 
+A filled label also stays open for variant targets: a plain or dashed value,
+like a spaced comb, cannot hide a fullwidth or invisible-laced identifier below
+it. This additional reading masks only changed spellings; the original figures
+under a filled label retain their original reading, in text and table columns
+as well as by PDF position.
+
+Table cells retain their boundaries. A comb introduced on its label's row can
+sit past a spacer or another cell, and one starting in the label's column on
+the very next row can cross cells. That crossing-row reach expires after one
+row; it must not consume later flags or counts below a header such as "Has SSN".
+Printed dash, dot or slash group separators can cross cells, including a split
+inside a group. A whitespace-grouped value can continue from a cell holding its
+label. Plain amount, cents and year columns stay separate, and so do a flag or
+count and a whole date in the next cell. Whole cell values keep their own
+boundaries and last fours; overlapping masks resolve together before any digits
+are rewritten.
+
 **A row printing nine unreadable glyphs refuses the read** on every PDF route, for
 any page it reaches, because a `(cid:N)` number names a glyph, not a character, and
 no mask can find digits nothing can read. Only a letter or digit it can read ends the
