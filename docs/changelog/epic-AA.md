@@ -4777,3 +4777,28 @@ pull request was unsafe in both halves, and it was rebuilt as one commit.
   macOS awk, mawk and gawk alike, and 400 synthetic PDFs print nothing main masked on any
   route. A second review of the rebuilt commit found one test too weak to catch its own
   defect, now strengthened. Left: AA106 and AA107.
+
+## AA107 — identifier leaks found in AA105's reviews (#116, #117, #118)
+
+Three independent pull requests, one per leak. #116 was rebuilt as one commit after three
+review rounds; #117 and #118 shipped as opened, with a documentation line added to #117
+and #118's backlog edits left to this record.
+
+- **Table combs (#116).** A ruled table cut a labelled comb so no cell recognized it, and
+  every table route printed all nine digits without a positional run. Each row is now read
+  as one line for a comb crossing cells that a label on the row introduces; only single
+  comb digits join, so amount, cents and year columns stay apart. Review found it, as
+  opened, still printing a dependent's comb after a whole SSN, missing combs typed one
+  number per workbook cell, and able to print a digit the row pass had masked in an
+  irregular long run; reading every row also tripled a large CSV's time. Reading a comb
+  under a header label was tried and dropped: a header governs its whole column, and
+  every row of flags beneath one was masked. That layout is AA108.
+- **Comb-label reach (#117).** A label whose own value is a spaced comb stopped governing
+  the rows below, so a fullwidth SSN two rows down printed. An added positional reading
+  keeps such labels open for variant spellings only, unioned with the original readings.
+- **Decimal-family boundaries (#118).** A digit of another script touching nine digits hid
+  them from the gate. A change of decimal family now bounds a candidate at its endpoints
+  without splitting the token.
+- Against main: 12,000 random tables, 300 split-comb PDFs and 400 label-reach PDFs print
+  nothing main masks on any route; 24,000 gate lines lose nothing, the tracked tree
+  reports identically, and the gate tests pass under macOS awk, mawk and gawk. Left: AA108.
