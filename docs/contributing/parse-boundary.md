@@ -173,6 +173,14 @@ are protected before probing. Leaders cannot borrow a neighbouring caption or
 amount's digits; two glyphs on the same row cannot form a stack. A repeated symbol
 alone remains a leader except for a nine-box identifier field or printed group
 marks, where the value cannot safely be called readable.
+Beside readable digits of its own font, at least two different ones, an unknown
+glyph counts as a possible digit only within their range of widths, relative to
+font size: tax forms draw digits at one width, and a dash, bullet or checkbox is
+drawn at its own. Any other unknown glyph is still a possible digit. Counted as a digit, the em
+dash in "—12/31/2025" or the hyphen of the W-2's "OMB No. 1545-0029" beside its
+SSN box completes nine. A glyph that is not a digit still bounds the digits
+beside it. A font with proportional figures whose every narrow digit is unmapped
+falls outside this rule and prints its glyph numbers, as before AA106.
 
 Measurement on 2026-11-04 used three public filled return exports from
 [Utah State University Rural Tax Education](https://extension.usu.edu/ruraltax/sample-tax-returns-main):

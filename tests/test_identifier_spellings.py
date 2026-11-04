@@ -222,8 +222,9 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert MASKED in out and "850.00" in out
 
 
-def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(), items=None):
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(), items=None, widths=None):
     """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
+    Every glyph is 600 units wide unless `widths` maps a character to another.
 
     A TrueType font with only ToUnicode entries removed is NOT an unmapped
     ASCII font: pdfminer falls back to WinAnsi and still reads its space/digits.
@@ -253,11 +254,14 @@ def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(
     def stream(data):
         return f"<< /Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
 
+    glyph_widths = " ".join(f"{ord(c)} [{w}]" for c, w in sorted((widths or {}).items()))
+    glyph_widths = f"/W [{glyph_widths}]".encode() if widths else b""
     objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
                b"<< /Type /Font /Subtype /Type0 /BaseFont /Test /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>",
-               b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 600 /FontDescriptor 8 0 R >>",
+               (b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Test /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 600 "
+                + glyph_widths + b" /FontDescriptor 8 0 R >>"),
                stream(cmap), stream(content),
                b"<< /Type /FontDescriptor /FontName /Test /Flags 32 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>"]
     if shared_name:

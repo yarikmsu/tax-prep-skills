@@ -4856,3 +4856,17 @@ and #118's backlog edits left to this record.
   refused every affected identifier page, with no additional nonidentifier
   refusal. A dot decode failure kept all 62 pages readable. Synthetic Type0
   fonts also exercise actual missing mappings; no filled PDFs are committed.
+- Review found the probe still refusing readable pages. With only symbol
+  glyphs unmapped (digits readable), 6 of 577 official IRS and sample-return
+  pages refused, each from an em dash before a date ("—12/31/2025" read as a
+  slash-separated identifier under a TIN label); with all punctuation unmapped,
+  the W-2's "OMB No. 1545-0029" beside its SSN box refused too. An unknown
+  glyph now counts as a possible digit only within the range of widths of
+  readable digits in its own font, relative to size, once two different digits
+  there are readable; otherwise it still does. Only a group that could hold
+  nine digits classifies its glyphs. One
+  that is not a digit bounds its neighbours as a space, in the candidates and
+  in the probe, so a readable digit cannot join a field and hide its shape.
+  The symbol sweep refuses none of the 577 pages, the punctuation sweep six
+  fewer, and every digit decode failure on the 62 sample-return pages refuses
+  exactly the pages it refused before.

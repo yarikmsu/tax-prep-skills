@@ -797,15 +797,29 @@ def _readable_identifier_glyphs(words: list[dict], tick, *, positional=True) -> 
     return protected
 
 
-def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected: set[int], tick) -> list:
+# How far outside the readable digits' widths an unknown glyph may sit and
+# still be counted as one of them. Tabular figures share one width exactly.
+_DIGIT_WIDTH_TOLERANCE = 0.12
+
+
+def _em(c) -> float:
+    """A glyph's width relative to its font size, so sizes compare."""
+    return (c["x1"] - c["x0"]) / (c.get("size") or 1)
+
+
+def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected: set[int],
+                                  tick) -> tuple[list, set[int]]:
     """Identifier shapes containing an unknown glyph, in rows or a stack.
 
     Unknowns stand for possible digits only during classification. Readable
     letters between groups do not prove the field readable; printed decimal
     points and other punctuation retain their meaning, so a checkbox beside
-    an eight-digit amount is not nine identifier digits.
+    an eight-digit amount is not nine identifier digits. Also returns the
+    unknown glyphs read as marks, never as a digit, in every group.
     """
     found: dict[frozenset[int], list[dict]] = {}
+    digits: set[int] = set()
+    marks: set[int] = set()
     source_ids = {id(c) for c in chars}
 
     def source(c):
@@ -817,19 +831,47 @@ def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected
 
     def consider(group):
         tick()
-        atoms = [c for c in group if id(source(c)) in unknown or numeral(c)]
-        if len(atoms) < _IDENTIFIER_DIGITS or not any(id(source(c)) in unknown for c in atoms):
+        # Tax forms draw digits at one width per font size. Beside readable
+        # digits, an unknown glyph outside the whole range of their widths is
+        # a dash, bullet or checkbox, not a digit: "—12/31/2025" or the
+        # "1545-0029" printed beside a W-2's SSN box would otherwise complete
+        # nine. The range, not one width, keeps a proportional "1" a digit
+        # wherever one is readable. Widths compare within one font only, and
+        # only once two different digits are readable in it: otherwise the
+        # glyph is a possible digit.
+        widths: dict[str, list[float]] = {}
+        kinds: dict[str, set[str]] = {}
+        for c in group:
+            if numeral(c):
+                widths.setdefault(c.get("fontname", ""), []).append(_em(c))
+                kinds.setdefault(c.get("fontname", ""), set()).add(identifier_text(c["text"]).text)
+
+        def possible(c):
+            if id(source(c)) not in unknown:
+                return False
+            font = c.get("fontname", "")
+            own = widths.get(font, [])
+            return len(kinds.get(font, ())) < 2 or (min(own) * (1 - _DIGIT_WIDTH_TOLERANCE) <= _em(c)
+                                                    <= max(own) * (1 + _DIGIT_WIDTH_TOLERANCE))
+
+        atoms = [c for c in group if possible(c) or numeral(c)]
+        if len(atoms) < _IDENTIFIER_DIGITS or not any(possible(c) for c in atoms):
             return
-        missing_atoms = [source(c) for c in atoms if id(source(c)) in unknown]
+        # Only a group that could hold an identifier says what its glyphs are.
+        for c in group:
+            if id(source(c)) in unknown:
+                (digits if possible(c) else marks).add(id(source(c)))
+        missing_atoms = [source(c) for c in atoms if possible(c)]
         if len(missing_atoms) >= _IDENTIFIER_DIGITS and len({c["text"] for c in missing_atoms}) > 1:
             glyphs = {id(source(c)): source(c) for c in atoms}
             found[frozenset(glyphs)] = list(glyphs.values())
         parts, owners, missing = [], [], set()
         length = 0
         for c in group:
-            piece = ("0" if id(source(c)) in unknown else
+            # A glyph that is not a digit still bounds the digits beside it.
+            piece = ("0" if possible(c) else " " if id(source(c)) in unknown else
                      "" if c["text"].isalpha() else identifier_text(c["text"]).text)
-            if id(source(c)) in unknown:
+            if possible(c):
                 missing.add(length)
             parts.append(piece)
             owners.extend([source(c)] * len(piece))
@@ -838,7 +880,7 @@ def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected
         for a, b in _source_identifier_spans(identifier_text(shape), governed=True):
             if any(a <= at < b for at in missing):
                 glyphs = {id(c): c for c in owners[a:b] if id(c) in source_ids}
-                absent = [c for c in glyphs.values() if id(c) in unknown]
+                absent = [c for c in glyphs.values() if possible(c)]
                 plain_symbols = (len({c["text"] for c in absent}) == 1
                                  and all(c in "0123456789" or c.isspace() for c in shape[a:b]))
                 whole_field = len(atoms) == len(absent) == _IDENTIFIER_DIGITS
@@ -880,7 +922,7 @@ def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected
             group.extend([actual, {**actual, "text": " "}])
             last = actual
         consider(group)
-    return list(found.values())
+    return list(found.values()), marks - digits
 
 
 def _refuse_unreadable_field(chars: list[dict], unknown: set[int], tick) -> None:
@@ -888,10 +930,13 @@ def _refuse_unreadable_field(chars: list[dict], unknown: set[int], tick) -> None
 
     words = extract_words(chars, return_chars=True)
     protected = _readable_identifier_glyphs(words, tick)
-    candidates = _unreadable_field_candidates(chars, unknown, protected, tick)
+    candidates, marks = _unreadable_field_candidates(chars, unknown, protected, tick)
     if not candidates:
         return
-    probe = [{**c, "text": "0" if id(c) in unknown and id(c) not in protected else c["text"]} for c in chars]
+    # A mark stands in as a space, as the candidates were read: a digit in its
+    # place would join a readable neighbour to the field and hide its shape.
+    probe = [{**c, "text": c["text"] if id(c) not in unknown or id(c) in protected
+              else " " if id(c) in marks else "0"} for c in chars]
     # Read only textual spans here. Spreading a stand-in's digits as a known
     # positional run would lend evidence to unrelated figures elsewhere.
     textual = _readable_identifier_glyphs(extract_words(probe, return_chars=True), tick, positional=False)

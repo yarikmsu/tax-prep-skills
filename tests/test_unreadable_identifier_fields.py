@@ -159,3 +159,74 @@ def test_an_unreadable_variant_below_a_filled_label_still_refuses(tmp_path, rout
     path = _cid_pdf(tmp_path / "filled-label.pdf", mapped=mapped, items=items)
     with pytest.raises(ValueError, match="unmapped font"):
         _read(route, path, tmp_path)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("label, value, mark, width", [
+    ("RECIPIENT'S TIN", "\u2014" + "/".join(("12", "31", "2025")), "\u2014", 1000),
+    ("a Employee's social security number OMB No.", "-".join(("1545", "0029")), "-", 333),
+])
+def test_an_unknown_mark_of_another_width_is_not_a_digit(tmp_path, route, label, value, mark, width):
+    # A dash before a date, or the hyphen of the OMB number printed beside a
+    # W-2's SSN box, is drawn at its own width; counted as a digit it would
+    # complete nine and refuse a readable page.
+    items = [(36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00")]
+    mapped = set("".join(t for _, _, t in items)) - {mark}
+    path = _cid_pdf(tmp_path / "mark.pdf", mapped=mapped, items=items, widths={mark: width})
+    out = _read(route, path, tmp_path)
+    assert value.replace(mark, "") in out.replace(f"(cid:{ord(mark)})", "") and "850.00" in out
+
+
+@pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("widths", [{"-": 333}, "proportional"], ids=["tabular", "proportional"])
+def test_an_unknown_glyph_of_digit_width_beside_readable_digits_still_refuses(tmp_path, route, widths):
+    digits = _ssn("")
+    if widths == "proportional":
+        # A narrow readable digit widens the range an unknown digit may take.
+        widths = {digits[0]: 400, digits[-1]: 420}
+    items = [(36, 700, "SSN"), (280, 700, _ssn("-")), (36, 680, "Wages"), (280, 680, "850.00")]
+    mapped = set("".join(t for _, _, t in items)) - {digits[-1]}
+    path = _cid_pdf(tmp_path / "digit.pdf", mapped=mapped, items=items, widths=widths)
+    with pytest.raises(ValueError, match="unmapped font"):
+        _read(route, path, tmp_path)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_a_wide_unknown_mark_still_bounds_the_digits_beside_it(tmp_path, route):
+    # Read as nothing, the mark would join the readable 7 to the field and
+    # hide its shape; it parts them, as a printed dash would.
+    items = [(36, 700, "SSN"), (280, 700, "7\u2014" + _ssn("-")), (36, 680, "Wages"), (280, 680, "850.00")]
+    mapped = set("".join(t for _, _, t in items)) - {"\u2014", _ssn("")[-1]}
+    path = _cid_pdf(tmp_path / "bounded.pdf", mapped=mapped, items=items, widths={"\u2014": 1000})
+    with pytest.raises(ValueError, match="unmapped font"):
+        _read(route, path, tmp_path)
+
+
+def test_widths_compare_only_within_the_unknown_glyphs_own_font(tmp_path):
+    import pdfplumber
+
+    from agents.lib.parse_utils import _refuse_unreadable_identifier
+    digits = _ssn("")
+    items = [(36, 700, "SSN"), (280, 700, _ssn("-")), (36, 680, "Wages"), (280, 680, "850.00")]
+    mapped = set("".join(t for _, _, t in items)) - {digits[-1]}
+    # Drawn wider than the readable digits, an unknown in the SAME font is a mark...
+    path = _cid_pdf(tmp_path / "wide.pdf", mapped=mapped, items=items, widths={digits[-1]: 1000})
+    with pdfplumber.open(path) as document:
+        chars = list(document.pages[0].chars)
+    _refuse_unreadable_identifier(chars, lambda: None)
+    # ...but from another font, nothing on the row tells its digits' width.
+    other = [{**c, "fontname": "Other"} if c["text"].startswith("(cid:") else c for c in chars]
+    with pytest.raises(ValueError, match="unmapped font"):
+        _refuse_unreadable_identifier(other, lambda: None)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_one_readable_digit_does_not_set_the_fonts_digit_width(tmp_path, route):
+    # Only "1" maps, narrow as a proportional figure; the other digits are
+    # unknown and wider. One readable digit says nothing about the rest.
+    value = "1" + _ssn("")[1:]
+    items = [(36, 700, "SSN"), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00")]
+    mapped = (set("".join(t for _, _, t in items)) - set("0123456789")) | {"1"}
+    path = _cid_pdf(tmp_path / "one.pdf", mapped=mapped, items=items, widths={"1": 300})
+    with pytest.raises(ValueError, match="unmapped font"):
+        _read(route, path, tmp_path)
