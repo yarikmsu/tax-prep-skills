@@ -4832,3 +4832,27 @@ and #118's backlog edits left to this record.
   now keeps the pair apart. Candidates are collected only for a row with a
   label or the row under one, which halves the cost this PR added to a plain
   table.
+
+## AA106 — unreadable identifier fields
+
+- Retains the existing refusal for nine unreadable glyphs of two kinds on a
+  row, and adds a classification-only probe for partially readable identifier
+  shapes. Unknowns are possible digits, never inferred character values.
+  Text, existing positional ownership and the overlay reader decide whether
+  an identifier field would otherwise print font codes.
+- Source glyph ownership protects readable identifiers and their separators.
+  Substitute digits never become known positional runs; opaque targets cannot
+  fill a label. Row candidates keep punctuation, while vertical candidates
+  require one glyph per row. Repeated leaders cannot borrow an adjacent
+  caption or amount, but a repeated nine-box field still refuses under its
+  label, as do tight marked spellings without a label.
+- The first measurement on filled exports reproduced false refusals of dot
+  leaders and missed a tight partially mapped identifier. Local review fixed
+  those, caption digits borrowed by leaders, same-row glyphs pooled into a
+  stack, and ligatures in labels. Regressions include readable checkboxes,
+  six-figure amounts with cents, bullets and separators on all PDF routes.
+- The source record is in `docs/contributing/parse-boundary.md`. Across three
+  filled exports (62 pages), each decimal digit's controlled decode failure
+  refused every affected identifier page, with no additional nonidentifier
+  refusal. A dot decode failure kept all 62 pages readable. Synthetic Type0
+  fonts also exercise actual missing mappings; no filled PDFs are committed.
