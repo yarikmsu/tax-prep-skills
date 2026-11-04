@@ -61,6 +61,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 import contextlib
 import errno
+from itertools import accumulate
 import math
 import os
 import re
@@ -847,46 +848,80 @@ def _view_run_spans(view: _IdentifierText, runs: Runs, spans, *, tick=lambda: No
     return _run_spans(view.text, runs, _spans=[(view.canonical(a), view.canonical(b)) for a, b in spans], tick=tick)
 
 
-def mask_runs(text: str, runs, *, _spans=(), tick=lambda: None) -> str:
+def mask_runs(text: str, runs, *, _spans=(), _original=None, tick=lambda: None) -> str:
     """Mask each of `runs` (run texts, or `prepare_runs` of them),
     identifier-shaped text a layout reader found in an identifier label's
     box, wherever its digits occur in `text` however they are spaced, in the
-    spelling `mask_ssn` writes."""
+    spelling `mask_ssn` writes. `_original` supplies boundaries before an
+    in-place row mask; replacements must preserve that mask's removals."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
-    view = identifier_text(text)
+    source = text if _original is None else _original
+    view = identifier_text(source)
     spelling = {**prepare_runs(view.text[view.canonical(start):view.canonical(end)]
                                for start, end in _spans).spelling, **runs.spelling}
     out, last = [], 0
-    for start, end, digits in _view_run_spans(view, runs, _spans, tick=tick):
-        start, end = view.span(start, end)
-        out += [text[last:start], (spelling[digits] if digits else "XXX-XX-XXXX") + "\n" * text[start:end].count("\n")]
+    for a, b, digits in _view_run_spans(view, runs, _spans, tick=tick):
+        start, end = view.span(a, b)
+        replacement = (spelling[digits] if digits else "XXX-XX-XXXX") + "\n" * text[start:end].count("\n")
+        if text[start:end] != source[start:end]:
+            positions = [view.source(i) for i in range(a, b) if view.text[i] in "0123456789"]
+            replacement = _after_row_pass(text, source, start, end, positions, digits, replacement)
+        out += [text[last:start], replacement]
         last = end
-    return "".join(out) + text[last:]
+    masked = "".join(out) + text[last:]
+    # A row pass's mask also ends groups: a known run can start where it
+    # wrote, mid-group in the original. Reading the masked text once more
+    # finds it, and a reading of the masked text can only mask more.
+    if text != source and runs.spelling:
+        return mask_runs(masked, runs, tick=tick)
+    return masked
 
 
-def mask_row_runs(cells: list, runs, *, _conflict_spans=None, tick=lambda: None) -> list:
+def _after_row_pass(text: str, source: str, start: int, end: int, positions: list, digits: str,
+                    replacement: str) -> str:
+    """A run `mask_row_runs` already masked in part, resolved from the cell's
+    original boundaries: only a digit that survived that pass, at a last-four
+    place, prints again, so a conflict's removal is never undone."""
+    whole = bool(digits) and len(positions) % 9 == 0
+    keep = [whole and n % 9 >= 5 and text[i] == source[i] for n, i in enumerate(positions)]
+    if not any(text[i] == source[i] for i in positions):
+        return text[start:end]
+    # The spelling's digits are each nine's last four, in order, for every
+    # run but an irregular long one. Write that spelling only when they line
+    # up; otherwise mask in place, which keeps each digit where it printed.
+    if _DIGIT.findall(replacement) == [digits[n] for n in range(len(digits)) if whole and n % 9 >= 5]:
+        retained = iter(k for n, k in enumerate(keep) if n % 9 >= 5)
+        return _DIGIT.sub(lambda m: m[0] if next(retained, False) else "X", replacement)
+    chars = list(text[start:end])
+    for i, kept in zip(positions, keep):
+        if not kept:
+            chars[i - start] = "X"
+    return "".join(chars)
+
+
+def mask_row_runs(cells: list, runs, *, _spans=None, tick=lambda: None) -> list:
     """`mask_runs` across one table row, whose cells can split a run: Form
     1040's comb boxes come out of a table as "000 | 00 | 1234". Each digit is
     masked in place, a whole nine keeping its last four, so every cell keeps
-    its own text around them. `_conflict_spans` is `mask_table`'s pass: the
-    row's textual spans, masking only conflicts spanning cells, before a
+    its own text around them. `_spans` is `mask_table`'s pass: the
+    row's textual spans, masking only runs spanning cells, before a
     cell's own mask could hide the row's boundaries."""
     runs = runs if isinstance(runs, Runs) else prepare_runs(runs)
     texts = [cell if isinstance(cell, str) else "" for cell in cells]
     chars = list(" ".join(texts))
     boundaries, offset = [], 0
-    if _conflict_spans is not None:
+    if _spans is not None:
         for text in texts[:-1]:
             offset += len(text)
             boundaries.append(offset)
             offset += 1
     view = identifier_text("".join(chars))
-    for start, end, digits in _view_run_spans(view, runs, _conflict_spans or (), tick=tick):
+    for start, end, digits in _view_run_spans(view, runs, _spans or (), tick=tick):
         positions = [view.source(i) for i in range(start, end) if view.text[i] in "0123456789"]
         start, end = view.span(start, end)
-        if _conflict_spans is not None:
+        if _spans is not None:
             edge = bisect_right(boundaries, start)
-            if digits or edge == len(boundaries) or boundaries[edge] >= end:
+            if edge == len(boundaries) or boundaries[edge] >= end:
                 continue
         whole = bool(digits) and len(positions) % 9 == 0
         for n, i in enumerate(positions):
@@ -899,7 +934,7 @@ def mask_row_runs(cells: list, runs, *, _conflict_spans=None, tick=lambda: None)
     return out
 
 
-def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: None):
+def mask_ssn(value, runs=None, *, _original=None, _governed=False, _reached=(), tick=lambda: None):
     """Mask every SSN/ITIN shape in extracted document text to `XXX-XX-{last4}`.
 
     The extraction boundary is where this runs — every string
@@ -923,6 +958,8 @@ def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: 
     shapes when its label is in another cell. `mask_table` passes each cell's
     `_original`, the text those spans are read from, since its across-cell
     pass may have masked digits in place; that keeps the cell's length.
+    `_reached` adds the spans of a run that label's row reaches inside this
+    cell, past a whole identifier in another.
     """
     # Nine bare digits is the shortest maskable shape; every shorter cell
     # (most of a CSV) skips both regex passes.
@@ -930,7 +967,7 @@ def mask_ssn(value, runs=None, *, _original=None, _governed=False, tick=lambda: 
         return value
     runs = () if runs is None else runs
     spans = _source_identifier_spans(identifier_text(value if _original is None else _original), governed=_governed)
-    return mask_runs(value, runs, _spans=spans, tick=tick)
+    return mask_runs(value, runs, _spans=[*spans, *_reached], _original=_original, tick=tick)
 
 
 def first_non_finite(node, _path: tuple = ()) -> "str | None":
@@ -1003,6 +1040,97 @@ def _mask_id_value(cell):
     return masked if masked != text else cell
 
 
+def _mask_row_combs(row, runs, governed: set, tick) -> tuple[list, dict]:
+    """`mask_row_runs` over a table row, before any cell is rewritten: a
+    ruled table can cut a labelled comb into fragments no cell recognizes,
+    even where the page's positional reader established no run. Returns the
+    row, and the spans of a labelled run that lie inside one cell, by column,
+    for the cell pass. A cell that is not text reads as what it prints, so a
+    comb a workbook types one number per cell is read as one, and a figure,
+    a date or a flag between two fragments parts them, as on a page. A
+    masked number comes back as text, like `_mask_id_value`'s."""
+    texts = ["" if cell is None else cell if isinstance(cell, str) else _cell_text(cell) for cell in row]
+    ends = list(accumulate(len(text) + 1 for text in texts))
+    view = identifier_text(" ".join(texts))
+    combs = _in_either_reading(view, _ROW_COMBS)
+    # The pass masks only what spans cells, and reads only a comb a label on
+    # the row introduces: without a known run, a row with no label or no
+    # comb crossing a cell keeps every cell for the cell pass alone.
+    labelled = (any(_crosses(ends, start, end) for start, end in combs)
+                and bool(_in_either_reading(view, (_ID_LABEL_RE,))))
+    if not labelled and (runs is None or not runs.spelling):
+        return list(row), {}
+    spans: list[tuple[int, int]] = []
+    for column, (cell, offset) in enumerate(zip(row, [0, *ends])):
+        if isinstance(cell, str):
+            spans.extend((offset + start, offset + end) for start, end in _source_identifier_spans(
+                identifier_text(cell), governed=column in governed))
+    added = _row_combs(view, ends, combs, spans, tick) if labelled else []
+    masked = mask_row_runs(texts, () if runs is None else runs, _spans=spans + added, tick=tick)
+    # A comb read past a whole identifier can lie inside one cell, which no
+    # label governs on its own: the cell pass masks that span alone.
+    reached: dict[int, list] = {}
+    for start, end in added:
+        if not _crosses(ends, start, end):
+            column = bisect_right(ends, start)
+            offset = ends[column - 1] if column else 0
+            reached.setdefault(column, []).append((start - offset, end - offset))
+    return [cell if new == text and not isinstance(cell, str) else new
+            for cell, text, new in zip(row, texts, masked)], reached
+
+
+def _cell_text(cell) -> str:
+    """What a cell that is not text prints."""
+    try:
+        return str(cell)
+    except Exception:  # noqa: BLE001 - a cell that cannot print is no comb box,
+        return "#"     # an integer past the interpreter's digit limit included
+
+
+# Grouped figures in separate columns can be an amount, its cents and a year:
+# only single comb boxes join across cells.
+_ROW_COMBS = (_ID_SPACED, _ID_MARKED_COMB)
+
+
+def _crosses(ends: list, start: int, end: int) -> bool:
+    """True when a span of a row's joined text runs past the end of a cell;
+    `ends` holds where each cell after the first starts."""
+    return ends[bisect_left(ends, start + 1)] <= end
+
+
+def _row_combs(view: _IdentifierText, ends: list, combs: list, cell_spans: list, tick) -> list:
+    """Which combs the row pass reads: those labelled on the row. One inside a
+    cell joins the pass only where it overlaps one crossing, so their
+    boundaries conflict. A whole identifier inside one cell keeps its
+    boundary, so the next cell's count never joins it, while a dependent's
+    comb after it is still read, wherever it ends."""
+    labelled = set(_source_identifier_spans(view))
+    whole = [(a, b) for a, b in sorted(cell_spans)
+             if sum(c in "0123456789" for c in view.text[view.canonical(a):view.canonical(b)]) % 9 == 0]
+    starts = [a for a, _ in whole]
+    found = []
+    for start, end in combs:
+        tick()
+        if (start, end) not in labelled:
+            continue
+        inside = []
+        for a, b in whole[bisect_left(starts, start):bisect_left(starts, end)]:
+            if b <= end and (a, b) != (start, end):
+                inside.append((a, b))
+        if not inside:
+            found.append((start, end))
+            continue
+        # What is left beside a whole cell identifier is a comb only if it
+        # still reads as one.
+        cursor = start
+        for a, b in [*inside, (end, end)]:
+            if a > cursor:
+                found.extend((cursor + s, cursor + e) for s, e in
+                             _in_either_reading(identifier_text(view.raw[cursor:a]), _ROW_COMBS))
+            cursor = max(cursor, b)
+    return found
+
+
 def mask_table(rows, runs=None, *, tick=lambda: None):
     """`mask_ssn` over every cell, plus the labels only the TABLE can see.
 
@@ -1022,16 +1150,9 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
             continue
         labels = [column for column, cell in enumerate(row) if _is_id_label_cell(cell)]
         cell_governed = governed | {column + 1 for column in labels}
-        spans, offset = [], 0
-        if runs is not None:
-            for column, cell in enumerate(row):
-                if isinstance(cell, str):
-                    spans.extend((offset + start, offset + end) for start, end in _source_identifier_spans(
-                        identifier_text(cell), governed=column in cell_governed))
-                    offset += len(cell)
-                offset += 1
-        positioned = mask_row_runs(list(row), runs, _conflict_spans=spans, tick=tick) if runs is not None else row
-        out = [mask_ssn(cell, runs, _original=original, _governed=column in cell_governed, tick=tick)
+        positioned, reached = _mask_row_combs(row, runs, cell_governed, tick)
+        out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None,
+                        _governed=column in cell_governed, _reached=reached.get(column, ()), tick=tick)
                for column, (cell, original) in enumerate(zip(positioned, row))]
         # The columns a PREVIOUS row's label governs, before this row's own
         # labels are read: a header governs what is under it, never itself.
