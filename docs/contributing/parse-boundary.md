@@ -160,10 +160,41 @@ run, and it needs two different glyphs. The rule is narrow because a refusal sto
 read and an unmapped symbol is ordinary: a stray checkbox, a bullet or a repeated
 leader on a readable page still parses, and the IRS's own Form 1040 general
 instructions print unmapped symbols. Nine glyphs of two kinds cannot be told from
-digits, so a heading in such a font refuses too. Glyph numbers still print for a
-value in such a font split across rows, interleaved with readable text, or with some
-of its digits mapped. Re-export with searchable text or make a local OCR copy rather
-than guessing its digits.
+digits, so a heading in such a font refuses too.
+
+**Unreadable identifier fields also refuse (AA106).** A classification-only probe
+treats an unknown glyph as a possible digit. It must fall in an identifier shape
+the text or printed label governs: partially mapped digits, readable letters
+between groups, overlays and a stack of single boxes are included. Tight marked
+spellings keep their label-independent text rule. The probe never decodes a
+glyph number, returns a substitute digit, or lends substitute digits as positional
+evidence elsewhere. Original readable identifiers and their unmapped separators
+are protected before probing. Leaders cannot borrow a neighbouring caption or
+amount's digits; two glyphs on the same row cannot form a stack. A repeated symbol
+alone remains a leader except for a nine-box identifier field or printed group
+marks, where the value cannot safely be called readable.
+Beside readable digits of its own font, at least two different ones, an unknown
+glyph counts as a possible digit only within their range of widths, relative to
+font size: tax forms draw digits at one width, and a dash, bullet or checkbox is
+drawn at its own. Any other unknown glyph is still a possible digit. Counted as a digit, the em
+dash in "—12/31/2025" or the hyphen of the W-2's "OMB No. 1545-0029" beside its
+SSN box completes nine. A glyph that is not a digit still bounds the digits
+beside it. A font with proportional figures whose every narrow digit is unmapped
+falls outside this rule and prints its glyph numbers, as before AA106.
+
+Measurement on 2026-11-04 used three public filled return exports from
+[Utah State University Rural Tax Education](https://extension.usu.edu/ruraltax/sample-tax-returns-main):
+[2021 example](https://extension.usu.edu/ruraltax/files/joe-farmer-1040-2021.pdf),
+[MG example](https://extension.usu.edu/ruraltax/files/formsMG.pdf), and
+[IH example](https://extension.usu.edu/ruraltax/files/IHforms.pdf), totalling 62 pages.
+Controlled decoder failures for each decimal digit refused every affected
+identifier page and no additional nonidentifier page. Removing dot decoding left
+all 62 pages readable. The first implementation failed both directions; the final
+regressions pin leaders, captions, counts and a tight partially mapped identifier.
+These historical exports test PDF layouts and fonts, not tax-law values or all
+current software. They stay local; no source or filled PDF is committed.
+Re-export an unreadable field with searchable text or make a local OCR copy
+rather than guessing its digits.
 
 A comb with printed dash, dot or slash separators, or soft hyphens between its
 single digits, needs a label or matching positional evidence. Soft hyphens count
