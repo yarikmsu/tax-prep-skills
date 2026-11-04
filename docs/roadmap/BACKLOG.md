@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA107** — fixes in #116, #117 and #118 await merge; **AA106** — refuse unreadable identifier fields without refusing readable pages. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114. | AA107's table split is the likeliest of its leaks on a real form. AA106 has to be measured on filled forms before it refuses anything. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA107** — identifier leaks found in AA105's reviews; **AA106** — refuse unreadable identifier fields without refusing readable pages. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114. | AA107's table split is the likeliest of its leaks on a real form. AA106 has to be measured on filled forms before it refuses anything. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -206,11 +206,6 @@ Trigger and range behavior is documented in
   down prints whole. In the gate, nine digits of a script other than ASCII or fullwidth
   pass when one more digit of another script touches them; treating a change of script
   between two digits as a boundary would close it.
-  **Implemented; awaiting merge:** [#116](https://github.com/yarikmsu/tax-prep-skills/pull/116)
-  masks combs split across cells; [#117](https://github.com/yarikmsu/tax-prep-skills/pull/117)
-  preserves comb-label reach for variant targets;
-  [#118](https://github.com/yarikmsu/tax-prep-skills/pull/118) closes the decimal-family
-  bypass in the gate. Each is an independent PR against main.
 - **AA106 (P3, M): Refuse unreadable identifier fields without refusing readable pages.**
   Glyph numbers still print for an identifier overlaid on a readable label, with mapped
   letters between its groups, with one digit mapped, or one glyph per row. #114 as opened
