@@ -68,9 +68,10 @@ def test_a_header_cannot_consume_later_flags_or_unrelated_amount_columns():
     assert mask_table(rows) == rows
 
 
-def test_grouped_digits_need_an_introduction_inside_the_first_cell():
+@pytest.mark.parametrize("label", ["SSN", "S\u200bSN", "Recipient's TIN", "Recipient's\u200b TIN"])
+def test_grouped_digits_need_an_introduction_inside_the_first_cell(label):
     first, second = _ssn("")[:3], _ssn("")[3:5] + " " + _ssn("")[5:]
-    assert mask_table([["SSN " + first, second]]) == [["SSN XXX", "XX " + _ssn("")[5:]]]
+    assert mask_table([[label + " " + first, second]]) == [[label + " XXX", "XX " + _ssn("")[5:]]]
 
 
 @pytest.mark.parametrize("own", [_ssn("-"), _ssn(""), "XXX-XX-1234"], ids=["dashed", "plain", "masked"])

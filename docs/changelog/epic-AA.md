@@ -4821,3 +4821,7 @@ and #118's backlog edits left to this record.
   preserves later flags, and 12,000 synthetic tables restore no baseline-masked
   digit by per-cell digit counts. Fixtures use invalid synthetic prefixes and
   retain no filled PDFs in the repository.
+- A final label-variant review found that the new whitespace-grouped crossing
+  rule recognized only printed labels in the first cell. It now reads labels
+  through the additive recognition view too; invisible-laced labels have a
+  regression that fails on the first implementation.

@@ -1074,7 +1074,8 @@ def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dic
     for a, b in _in_either_reading(view, (_ID_VALUE_RE,)):
         column = bisect_right(ends, a)
         offset = ends[column - 1] if column else 0
-        if _crosses(ends, a, b) and _ID_LABEL_RE.search(view.raw, offset, a):
+        if (_crosses(ends, a, b)
+                and _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,))):
             grouped.append((a, b))
     combs = sorted(set(combs + marked + grouped))
     # Read only candidates introduced on this row or starting in an above
