@@ -148,9 +148,10 @@ the very next row can cross cells. That crossing-row reach expires after one
 row; it must not consume later flags or counts below a header such as "Has SSN".
 Printed dash, dot or slash group separators can cross cells, including a split
 inside a group. A whitespace-grouped value can continue from a cell holding its
-label. Plain amount, cents and year columns stay separate. Whole cell values
-keep their own boundaries and last fours; overlapping masks resolve together
-before any digits are rewritten.
+label. Plain amount, cents and year columns stay separate, and so do a flag or
+count and a whole date in the next cell. Whole cell values keep their own
+boundaries and last fours; overlapping masks resolve together before any digits
+are rewritten.
 
 **A row printing nine unreadable glyphs refuses the read** on every PDF route, for
 any page it reaches, because a `(cid:N)` number names a glyph, not a character, and

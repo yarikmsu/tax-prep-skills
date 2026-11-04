@@ -4825,3 +4825,10 @@ and #118's backlog edits left to this record.
   rule recognized only printed labels in the first cell. It now reads labels
   through the additive recognition view too; invisible-laced labels have a
   regression that fails on the first implementation.
+- Review found that a crossing boundary inside the first group also joined a
+  flag or count to a whole date in the next cell: `["Has SSN", "Date"]` over
+  `["1", "05/05/2026"]` masked both and printed the year as a false last four.
+  A cell that starts inside the candidate and holds a whole day, month and year
+  now keeps the pair apart. Candidates are collected only for a row with a
+  label or the row under one, which halves the cost this PR added to a plain
+  table.

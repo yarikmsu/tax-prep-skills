@@ -80,3 +80,24 @@ def test_a_filled_label_still_protects_variant_text_and_table_values(own, value)
     label = "SSN " + own
     assert mask_ssn(label + "\n" + value).endswith(MASKED)
     assert mask_table([[label], [value], [ROUTING]])[-2:] == [[MASKED], [ROUTING]]
+
+
+@pytest.mark.parametrize("rows", [
+    [["Has SSN", "Date"], ["1", "05/05/2026"]],
+    [["SSN verified", "Verified on"], ["0", "12-31-2025"]],
+    [["Employee's SSN", "8", "09/04/2021", "Wages 850.00"]],
+])
+def test_a_flag_beside_a_date_is_not_a_split_identifier(rows):
+    # A boundary inside the first group is how "SSN 00" + "0-12-3456" splits,
+    # but a flag in a cell of its own beside a whole date is a date: masking
+    # the pair would destroy it and print its year as a false last four.
+    assert mask_table(rows) == rows
+
+
+@pytest.mark.parametrize("first, tail", [("SSN 1", "23-05-2019"), ("SSN: 0", "12/25/2020"),
+                                         ("Has SSN 1", "05.05.2026")])
+def test_a_label_in_the_first_cell_keeps_a_date_shaped_tail_masked(first, tail):
+    # The label introduces the digits beside it, so the tail's shape cannot
+    # exempt them: the exemption is for a flag alone in its cell.
+    out = mask_table([[first, tail]])[0]
+    assert out[0].endswith("X") and out[1].startswith("XX")

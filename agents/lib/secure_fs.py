@@ -1064,24 +1064,12 @@ def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dic
     texts = ["" if cell is None else cell if isinstance(cell, str) else _cell_text(cell) for cell in row]
     ends = list(accumulate(len(text) + 1 for text in texts))
     view = identifier_text(" ".join(texts))
-    combs = _in_either_reading(view, _ROW_COMBS)
-    # Printed group separators can cross a cell too. Pure numeric columns
-    # remain separate: amount, cents and year have exactly the 3-2-4 shape.
-    marked = _in_either_reading(view, (_ROW_MARKED,))
-    grouped = []
-    # A grouped value introduced inside its first cell can continue into the
-    # next. Three separate numeric columns supply no such introduction.
-    for a, b in _in_either_reading(view, (_ID_VALUE_RE,)):
-        column = bisect_right(ends, a)
-        offset = ends[column - 1] if column else 0
-        if (_crosses(ends, a, b)
-                and _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,))):
-            grouped.append((a, b))
-    combs = sorted(set(combs + marked + grouped))
     # Read only candidates introduced on this row or starting in an above
     # label's column on the next row. Complete cell values go to the cell
     # pass; only a crossing candidate needs the across-cell mask.
-    labelled = bool(combs) and (bool(below) or bool(_in_either_reading(view, (_ID_LABEL_RE,))))
+    introduced = bool(below) or bool(_in_either_reading(view, (_ID_LABEL_RE,)))
+    combs = _row_candidates(view, ends) if introduced else []
+    labelled = bool(combs)
     if not labelled and (runs is None or not runs.spelling):
         return list(row), {}
     spans: list[tuple[int, int]] = []
@@ -1105,6 +1093,25 @@ def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dic
             for cell, text, new in zip(row, texts, masked)], reached
 
 
+def _row_candidates(view: _IdentifierText, ends: list) -> list:
+    """Every comb or grouped value on a row that a label could introduce."""
+    combs = _in_either_reading(view, _ROW_COMBS)
+    # Printed group separators can cross a cell too. Pure numeric columns
+    # remain separate: amount, cents and year have exactly the 3-2-4 shape.
+    marked = [(a, b) for a, b in _in_either_reading(view, (_ROW_MARKED,))
+              if not _date_after_boundary(view, ends, a, b)]
+    grouped = []
+    # A grouped value introduced inside its first cell can continue into the
+    # next. Three separate numeric columns supply no such introduction.
+    for a, b in _in_either_reading(view, (_ID_VALUE_RE,)):
+        column = bisect_right(ends, a)
+        offset = ends[column - 1] if column else 0
+        if (_crosses(ends, a, b)
+                and _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,))):
+            grouped.append((a, b))
+    return sorted(set(combs + marked + grouped))
+
+
 def _cell_text(cell) -> str:
     """What a cell that is not text prints."""
     try:
@@ -1123,6 +1130,27 @@ _ROW_MARKED = re.compile("|".join(
     rf"[0-9](?:[^\S\n]*[0-9]){{3}}(?![0-9])"
     for mark in (_ID_MARK, r"\.", "/")))
 _ROW_LABELED_MARKED = re.compile(rf"({_ID_INTRODUCED})({_ROW_MARKED.pattern})", re.IGNORECASE)
+# A boundary inside the first group is how "SSN 00" + "0-12-3456" splits, and
+# also how a flag or count reaches the date in the next cell. A cell holding
+# a whole day, month and year is a date: masking the pair would destroy it and
+# print its year as a false last four.
+_DATE_CELL = re.compile(rf"[^\S\n]*(?:0?[1-9]|[12][0-9]|3[01])(?P<mark>{_ID_DASH}|[./])"
+                        r"(?:0?[1-9]|[12][0-9]|3[01])(?P=mark)(?:19|20)[0-9]{2}")
+
+
+def _date_after_boundary(view: _IdentifierText, ends: list, start: int, end: int) -> bool:
+    """Whether a cell inside the candidate starts a whole date that ends it,
+    after cells holding only the candidate's first digits. A label sharing
+    those digits' cell introduces the value: "SSN 1" beside "23-05-2019" is
+    an identifier however its tail reads, and over-masking is the safe side."""
+    column = bisect_right(ends, start)
+    first = ends[column - 1] if column else 0
+    return any(_DATE_CELL.fullmatch(identifier_text(view.raw[at:end]).text)
+               and not _LETTER.search(identifier_text(view.raw[first:at]).text)
+               for at in ends[bisect_right(ends, start):bisect_left(ends, end)])
+
+
+_LETTER = re.compile(r"[^\W\d_]")
 
 
 def _crosses(ends: list, start: int, end: int) -> bool:
