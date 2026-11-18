@@ -14,6 +14,7 @@ import re
 import sys
 import time
 import zipfile
+from itertools import accumulate, combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -70,6 +71,7 @@ MAX_COMPRESSION_RATIO = 200                       # 100 KB expanding to 20 MB
 MAX_EXTRACTED_CHARS = 20 * 1024 * 1024            # 20 MB of returned text
 MAX_PAGES = 2000                                  # pages in one PDF
 MAX_OVERLAY_INDEX_ENTRIES = 100_000              # per-page spatial-index memory budget
+MAX_SEPARATOR_HYPOTHESES = 256                  # per-page unknown-glyph subset budget
 PARSE_TIME_BUDGET_SECONDS = 300                   # wall clock inside one call
 
 
@@ -797,80 +799,156 @@ def _readable_identifier_glyphs(words: list[dict], tick, *, positional=True) -> 
     return protected
 
 
-# How far outside the readable digits' widths an unknown glyph may sit and
-# still be counted as one of them. Tabular figures share one width exactly.
-_DIGIT_WIDTH_TOLERANCE = 0.12
+def _field_targets_owned(words: list[dict], targets: list, tick) -> bool:
+    """The original label readings own a classification-only field target."""
+    markers = {target[0] for target in targets}
+    owned = _governed_reading(words, tick, split=True, measured=True, extra_targets=targets)
+    for carries in (True, False):
+        owned |= _governed_reading(words, tick, split=True, measured=True,
+                                   variant_labels=True, values_carry=carries, extra_targets=targets)
+    return bool(owned & markers)
 
 
-def _em(c) -> float:
-    """A glyph's width relative to its font size, so sizes compare."""
-    return (c["x1"] - c["x0"]) / (c.get("size") or 1)
+def _printed_omb_glyphs(chars: list[dict], words: list[dict], tick) -> set[int]:
+    """An explicitly captioned IRS OMB control number is form metadata.
+
+    PDF streams need not contain spaces between printed words, but joining a
+    row cannot give OMB ownership of another field. An independent identifier
+    caption keeps its original positional reach before metadata is protected.
+    Only the IRS agency prefix 1545 qualifies: the W-2 prints its SSN heading
+    in the OMB caption's own phrase, and that heading's value has the same
+    four, unknown, four shape when its fifth digit is unmapped.
+    """
+    found: set[int] = set()
+    for row in _overlay_rows(chars, tick):
+        text = "".join(c["text"] for c in row)
+        ends = list(accumulate(len(c["text"]) for c in row))
+        for match in re.finditer(r"(?P<caption>OMB\s*No(?:\.|\(cid:[0-9]{1,5}\))?)\s*"
+                                 r"(?P<value>1545\s*\(cid:[0-9]{1,5}\)\s*[0-9]{4})(?![0-9])",
+                                 text, re.I):
+            tick()
+            def glyphs(group):
+                return row[bisect.bisect_right(ends, match.start(group)):
+                           bisect.bisect_left(ends, match.end(group)) + 1]
+
+            caption = {id(c.get("_overlay_source", c)) for c in glyphs("caption")}
+            # W-2 prints its SSN heading and OMB caption in one phrase. That
+            # shared heading is not a second field; captions elsewhere are.
+            shared: set[int] = set()
+            for line in _word_rows(words):
+                for phrase in _phrases(line):
+                    tick()
+                    if any(id(c) in caption for w in phrase for c in w["chars"]):
+                        shared.update(id(w) for w in phrase)
+            independent = [w for w in words if id(w) not in shared]
+            value = glyphs("value")
+            value_ids = {id(c.get("_overlay_source", c)) for c in value}
+            targets = [("\x00omb-field", _box([c.get("_overlay_source", c) for c in value]),
+                        {id(w) for w in words if any(id(c) in value_ids for c in w["chars"])})]
+            if _field_targets_owned(independent, targets, tick):
+                continue
+            found.update(id(c.get("_overlay_source", c)) for c in
+                         row[bisect.bisect_right(ends, match.start()):bisect.bisect_left(ends, match.end()) + 1])
+    return found
 
 
 def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected: set[int],
-                                  tick) -> tuple[list, set[int]]:
+                                  tick) -> tuple[list, set[frozenset[int]]]:
     """Identifier shapes containing an unknown glyph, in rows or a stack.
 
     Unknowns stand for possible digits only during classification. Readable
     letters between groups do not prove the field readable; printed decimal
     points and other punctuation retain their meaning, so a checkbox beside
     an eight-digit amount is not nine identifier digits. Also returns the
-    unknown glyphs read as marks, never as a digit, in every group.
+    separator hypotheses needed to read a candidate. Each is additive: an
+    unknown glyph is always also read as a possible digit, whatever its width.
     """
     found: dict[frozenset[int], list[dict]] = {}
-    digits: set[int] = set()
-    marks: set[int] = set()
+    markings: set[frozenset[int]] = {frozenset()}
+    remaining = MAX_SEPARATOR_HYPOTHESES
+    # Subsets of kinds already paid for, by kind set and size limit. A statement
+    # repeats the same unmapped "$", "," and "." on every row.
+    hypotheses: dict[tuple, list[tuple]] = {}
     source_ids = {id(c) for c in chars}
 
     def source(c):
         return c.get("_overlay_source", c)
 
+    @functools.lru_cache(maxsize=256)
+    def normalized(text):
+        return identifier_text(text).text
+
     def numeral(c):
-        text = identifier_text(c["text"]).text
+        text = normalized(c["text"])
         return len(text) == 1 and text in "0123456789"
 
     def consider(group):
-        tick()
-        # Tax forms draw digits at one width per font size. Beside readable
-        # digits, an unknown glyph outside the whole range of their widths is
-        # a dash, bullet or checkbox, not a digit: "—12/31/2025" or the
-        # "1545-0029" printed beside a W-2's SSN box would otherwise complete
-        # nine. The range, not one width, keeps a proportional "1" a digit
-        # wherever one is readable. Widths compare within one font only, and
-        # only once two different digits are readable in it: otherwise the
-        # glyph is a possible digit.
-        widths: dict[str, list[float]] = {}
-        kinds: dict[str, set[str]] = {}
+        nonlocal remaining
+        kinds: dict[tuple, set[int]] = {}
         for c in group:
-            if numeral(c):
-                widths.setdefault(c.get("fontname", ""), []).append(_em(c))
-                kinds.setdefault(c.get("fontname", ""), set()).add(identifier_text(c["text"]).text)
+            tick()
+            if id(source(c)) in unknown:
+                key = (c.get("_font_resource", c.get("fontname", "")), c["text"])
+                kinds.setdefault(key, set()).add(id(source(c)))
+        if not kinds:
+            return
+        read(group)
+        extra = sum(id(source(c)) in unknown or numeral(c) for c in group) - _IDENTIFIER_DIGITS
+        # Several unknown punctuation kinds can surround one field, such as
+        # dashes plus a final period. Probe their combinations as well as each
+        # kind alone, keeping the possible-digit reading additive. A choice
+        # leaving fewer than nine atoms cannot expose an identifier.
+        sizes = range(1, min(len(kinds), extra) + 1)
+        signature = (frozenset(kinds), len(sizes))
+        choices = hypotheses.get(signature)
+        if choices is None:
+            # Bound work BEFORE enumeration and candidate/marking accumulation.
+            # Count even weight-ineligible subsets: they still cost enumeration.
+            # Rows and columns share the budget across the whole page; a group
+            # repeating kinds already enumerated reuses them without a charge.
+            count = 0
+            for size in sizes:
+                tick()
+                count += math.comb(len(kinds), size)
+                if count > remaining:
+                    _unmapped_field_error()
+            remaining -= count
+            choices = hypotheses[signature] = []
+            for size in sizes:
+                for choice in combinations(list(kinds), size):
+                    tick()
+                    choices.append(choice)
+        for choice in choices:
+            tick()
+            separated = [kinds[key] for key in choice]
+            # Glyph counts per kind differ between groups sharing kinds.
+            if sum(map(len, separated)) <= extra:
+                read(group, frozenset().union(*separated))
+
+    def read(group, separated=frozenset()):
+        tick()
+        # A proportional digit or a separately scaled box need not have the
+        # width of any readable digit. Geometry cannot certify punctuation.
 
         def possible(c):
-            if id(source(c)) not in unknown:
-                return False
-            font = c.get("fontname", "")
-            own = widths.get(font, [])
-            return len(kinds.get(font, ())) < 2 or (min(own) * (1 - _DIGIT_WIDTH_TOLERANCE) <= _em(c)
-                                                    <= max(own) * (1 + _DIGIT_WIDTH_TOLERANCE))
+            key = id(source(c))
+            return key in unknown and key not in separated
 
         atoms = [c for c in group if possible(c) or numeral(c)]
         if len(atoms) < _IDENTIFIER_DIGITS or not any(possible(c) for c in atoms):
             return
-        # Only a group that could hold an identifier says what its glyphs are.
-        for c in group:
-            if id(source(c)) in unknown:
-                (digits if possible(c) else marks).add(id(source(c)))
         missing_atoms = [source(c) for c in atoms if possible(c)]
         if len(missing_atoms) >= _IDENTIFIER_DIGITS and len({c["text"] for c in missing_atoms}) > 1:
             glyphs = {id(source(c)): source(c) for c in atoms}
             found[frozenset(glyphs)] = list(glyphs.values())
+            markings.add(separated)
         parts, owners, missing = [], [], set()
         length = 0
         for c in group:
+            tick()
             # A glyph that is not a digit still bounds the digits beside it.
             piece = ("0" if possible(c) else " " if id(source(c)) in unknown else
-                     "" if c["text"].isalpha() else identifier_text(c["text"]).text)
+                     "" if c["text"].isalpha() else normalized(c["text"]))
             if possible(c):
                 missing.add(length)
             parts.append(piece)
@@ -888,6 +966,7 @@ def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected
                         and (len(absent) >= _IDENTIFIER_DIGITS or not any(numeral(c) for c in glyphs.values()))):
                     continue  # a leader alone cannot borrow the next amount's digits
                 found[frozenset(glyphs)] = list(glyphs.values())
+                markings.add(separated)
 
     for row in _overlay_rows(chars, tick):
         group: list[dict] = []
@@ -922,54 +1001,83 @@ def _unreadable_field_candidates(chars: list[dict], unknown: set[int], protected
             group.extend([actual, {**actual, "text": " "}])
             last = actual
         consider(group)
-    return list(found.values()), marks - digits
+    return list(found.values()), markings
 
 
 def _refuse_unreadable_field(chars: list[dict], unknown: set[int], tick) -> None:
     from pdfplumber.utils import extract_words
 
     words = extract_words(chars, return_chars=True)
-    protected = _readable_identifier_glyphs(words, tick)
-    candidates, marks = _unreadable_field_candidates(chars, unknown, protected, tick)
+    protected = _readable_identifier_glyphs(words, tick) | _printed_omb_glyphs(chars, words, tick)
+    candidates, markings = _unreadable_field_candidates(chars, unknown, protected, tick)
     if not candidates:
         return
     # A mark stands in as a space, as the candidates were read: a digit in its
     # place would join a readable neighbour to the field and hide its shape.
-    probe = [{**c, "text": c["text"] if id(c) not in unknown or id(c) in protected
-              else " " if id(c) in marks else "0"} for c in chars]
-    # Read only textual spans here. Spreading a stand-in's digits as a known
-    # positional run would lend evidence to unrelated figures elsewhere.
-    textual = _readable_identifier_glyphs(extract_words(probe, return_chars=True), tick, positional=False)
-    reached = {id(c) for c, replacement in zip(chars, probe) if id(replacement) in textual}
-    if any(reached & {id(c) for c in group} & unknown for group in candidates):
-        _unmapped_field_error()
+    for marks in markings:
+        probe = [{**c, "text": c["text"] if id(c) not in unknown or id(c) in protected
+                  else " " if id(c) in marks else "0"} for c in chars]
+        # Stand-ins classify only; they never become known positional runs.
+        textual = _readable_identifier_glyphs(extract_words(probe, return_chars=True), tick, positional=False)
+        reached = {id(c) for c, replacement in zip(chars, probe) if id(replacement) in textual}
+        if any(reached & {id(c) for c in group} & unknown for group in candidates):
+            _unmapped_field_error()
+        hidden = _overlaid_digits(probe, tick)
+        crossed = {id(c) for c, replacement in zip(chars, probe) if id(replacement) in hidden}
+        if any(crossed & {id(c) for c in group} & unknown for group in candidates):
+            _unmapped_field_error()
     # The original positional rules decide ownership. Extra targets cannot
     # fill a label or change its meaning, and carry opaque markers rather
     # than guessed digits. Their source words cease to be column barriers.
     by_glyph = {id(c): id(w) for w in words for c in w["chars"]}
     targets = [(f"\x00unreadable-field:{n}", _box(group), {by_glyph[id(c)] for c in group if id(c) in by_glyph})
                for n, group in enumerate(candidates)]
-    markers = {t[0] for t in targets}
-    owned = _governed_reading(words, tick, split=True, measured=True, extra_targets=targets)
     # CID gaps can be part of a readable label, and a filled label remains
     # open to variant targets as in the ordinary AA108 positional reading.
-    for carries in (True, False):
-        owned |= _governed_reading(words, tick, split=True, measured=True,
-                                   variant_labels=True, values_carry=carries, extra_targets=targets)
-    if owned & markers:
-        _unmapped_field_error()
-    # Interleaved label letters obscure ownership in page text. Probe only
-    # candidate glyphs the overlay reader would remove, preserving its label
-    # recognition and geometry without returning any stand-in character.
-    hidden = _overlaid_digits(probe, tick)
-    crossed = {id(c) for c, replacement in zip(chars, probe) if id(replacement) in hidden}
-    if any(crossed & {id(c) for c in group} & unknown for group in candidates):
+    if _field_targets_owned(words, targets, tick):
         _unmapped_field_error()
 
 
 def _unmapped_field_error():
     raise ValueError("PDF contains an unreadable identifier field (an unmapped font). Refusing extraction: "
                      "re-export with searchable text or use a local OCR copy.")
+
+
+def _font_resource_chars(page, tick):
+    """Classification copies retaining the decoder's actual font identity.
+
+    pdfplumber exposes a font name, which multiple resources can share. Replay
+    only pages with unknowns through its own device, tagging LTChars while the
+    font object is available. Source page objects and returned words stay intact.
+    Keep fonts alive during replay, including uncached inline form resources,
+    so object identities cannot be recycled between forms.
+    """
+    from pdfminer.layout import LTChar, LTContainer
+    from pdfminer.pdfinterp import PDFPageInterpreter
+    from pdfplumber.page import PDFPageAggregatorWithMarkedContent
+
+    fonts: dict[int, object] = {}
+
+    class ResourceDevice(PDFPageAggregatorWithMarkedContent):
+        def render_char(self, matrix, font, *args, **kwargs):
+            tick()
+            advance = super().render_char(matrix, font, *args, **kwargs)
+            fonts[id(font)] = font
+            self.cur_item._objs[-1]._identifier_font_resource = id(font)
+            return advance
+
+    device = ResourceDevice(page.pdf.rsrcmgr, pageno=page.page_number, laparams=page.pdf.laparams)
+    PDFPageInterpreter(page.pdf.rsrcmgr, device).process_page(page.page_obj)
+
+    def collect(obj):
+        tick()
+        if isinstance(obj, LTChar):
+            yield {**page.process_object(obj), "_font_resource": obj._identifier_font_resource}
+        elif isinstance(obj, LTContainer):
+            for child in obj:
+                yield from collect(child)
+
+    return list(collect(device.get_result()))
 
 
 def _safe_pdf_page(page, tick):
@@ -984,7 +1092,10 @@ def _safe_pdf_page(page, tick):
     from and those the original page's labels govern in full.
     """
     tick()
-    _refuse_unreadable_identifier(page.chars, tick)
+    chars = page.chars
+    if any(_UNMAPPED_GLYPH.fullmatch(c["text"]) for c in chars):
+        chars = _font_resource_chars(page, tick)
+    _refuse_unreadable_identifier(chars, tick)
     hidden = _overlaid_digits(page.chars, tick)
     if not hidden:
         return page, set()

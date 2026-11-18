@@ -85,7 +85,7 @@ def test_a_filled_label_still_protects_variant_text_and_table_values(own, value)
 @pytest.mark.parametrize("rows", [
     [["Has SSN", "Date"], ["1", "05/05/2026"]],
     [["SSN verified", "Verified on"], ["0", "12-31-2025"]],
-    [["Employee's SSN", "8", "09/04/2021", "Wages 850.00"]],
+    [["Has SSN", "8", "09/04/2021", "Wages 850.00"]],
 ])
 def test_a_flag_beside_a_date_is_not_a_split_identifier(rows):
     # A boundary inside the first group is how "SSN 00" + "0-12-3456" splits,

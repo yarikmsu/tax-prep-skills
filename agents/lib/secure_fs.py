@@ -61,7 +61,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 import contextlib
 import errno
-from itertools import accumulate
+from itertools import accumulate, zip_longest
 import math
 import os
 import re
@@ -1025,13 +1025,23 @@ def _is_id_label_cell(cell) -> bool:
     if not isinstance(cell, str):
         return False
     view = identifier_text(cell)
-    return _label_ends(cell) or any(_label_ends(reading.text) for reading in _identifier_readings(view))
+    if _label_ends(cell) or any(_label_ends(reading.text) for reading in _identifier_readings(view)):
+        return True
+    if "\n" in cell and not any(c.isdecimal() for c in cell):
+        flat = identifier_text(cell.replace("\n", " "))
+        for reading in _identifier_readings(flat):
+            if _label_ends(reading.text):
+                for match in _ID_LABEL_RE.finditer(reading.text):
+                    start, end = reading.span(match.start(), match.end())
+                    if "\n" in cell[start:end]:
+                        return True
+    return False
 
 
 def _mask_id_value(cell):
     """Mask every identifier-shaped run in a cell a label GOVERNS.
 
-    An integer is masked here and nowhere else. `mask_ssn` leaves a numeric
+    An integer or integral float is masked here and nowhere else. `mask_ssn` leaves a numeric
     cell alone because an SSN typed as a number carries neither delimiter nor
     label — under a label it carries one, and a workbook that stores the nine
     bare digits in its SSN column is exactly the case that rationale excluded.
@@ -1043,16 +1053,18 @@ def _mask_id_value(cell):
         return cell
     if isinstance(cell, int):
         text = str(cell)
+    elif isinstance(cell, float) and math.isfinite(cell) and cell.is_integer():
+        text = str(int(cell))
     elif isinstance(cell, str):
         text = cell
     else:
         return cell
-    masked = _mask_spaced(_ID_GOVERNED.sub(r"XXX-XX-\1",
-                                           _ID_DELIMITED.sub(r"XXX-XX-\1", text)))
+    masked = mask_ssn(text, _governed=True)
     return masked if masked != text else cell
 
 
-def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dict]:
+def _mask_row_combs(row, runs, governed: set, tick, below=(), dates=(), separate=(), aligned=(),
+                    finance=(), kept=()) -> tuple[list, dict]:
     """`mask_row_runs` over a table row, before any cell is rewritten: a
     ruled table can cut a labelled comb into fragments no cell recognizes,
     even where the page's positional reader established no run. Returns the
@@ -1068,16 +1080,36 @@ def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dic
     # label's column on the next row. Complete cell values go to the cell
     # pass; only a crossing candidate needs the across-cell mask.
     introduced = bool(below) or bool(_in_either_reading(view, (_ID_LABEL_RE,)))
-    combs = _row_candidates(view, ends) if introduced else []
+    combs, extended_groups = _row_candidates(view, ends, dates=dates) if introduced else ([], set())
     labelled = bool(combs)
     if not labelled and (runs is None or not runs.spelling):
         return list(row), {}
     spans: list[tuple[int, int]] = []
+    # Whole values the cell pass does not mask still bound a crossing comb, so
+    # it cannot borrow the next amount's digits. A named column's own comb is
+    # read as a comb of its own when a candidate reaches it; only a routing or
+    # account column (`kept`) keeps nine digits as its value.
+    boundaries: list[tuple[int, int]] = []
+    reread: list[tuple[int, int]] = []
     for column, (cell, offset) in enumerate(zip(row, [0, *ends])):
         if isinstance(cell, str):
+            cell_view = identifier_text(cell)
             spans.extend((offset + start, offset + end) for start, end in _source_identifier_spans(
-                identifier_text(cell), governed=column in governed))
-    added = _row_combs(view, ends, combs, spans, tick, below=below) if labelled else []
+                cell_view, governed=column in governed))
+            if column in separate:
+                values = [(offset + start, offset + end)
+                          for start, end in _source_identifier_spans(cell_view, governed=True)]
+                boundaries.extend(values)
+                if column not in kept:
+                    reread.extend(values)
+            boundaries.extend((offset + start, offset + end)
+                              for start, end in _in_either_reading(cell_view, (_ID_SPELLED,)))
+    fields = {column for column, cell in enumerate(row) if isinstance(cell, str)
+              and _TABLE_FIELD_CAPTION.fullmatch(identifier_text(cell).text.strip())}
+    added = (_row_combs(view, ends, combs, sorted(set(spans + boundaries)), tick,
+                        below=below, fields=fields, extended_groups=extended_groups,
+                        aligned=aligned, separate=separate, finance=finance, reread=set(reread))
+             if labelled else [])
     crossing = any(_crosses(ends, start, end) for start, end in added)
     masked = (mask_row_runs(texts, () if runs is None else runs, _spans=spans + added, tick=tick)
               if crossing or (runs is not None and runs.spelling) else texts)
@@ -1093,23 +1125,82 @@ def _mask_row_combs(row, runs, governed: set, tick, below=()) -> tuple[list, dic
             for cell, text, new in zip(row, texts, masked)], reached
 
 
-def _row_candidates(view: _IdentifierText, ends: list) -> list:
-    """Every comb or grouped value on a row that a label could introduce."""
-    combs = _in_either_reading(view, _ROW_COMBS)
+def _row_candidates(view: _IdentifierText, ends: list, *, dates=()) -> tuple[list, set]:
+    """Row candidates and the ones that rely on new cross-cell grouping."""
+    def matches(patterns):
+        spans = set(_in_either_reading(view, patterns))
+        if "\u00ad" in view.raw:
+            spans.update(_in_either_reading(identifier_text(view.raw, _soft_hyphen=True), patterns))
+        return sorted(spans)
+
+    combs = matches(_ROW_COMBS)
     # Printed group separators can cross a cell too. Pure numeric columns
     # remain separate: amount, cents and year have exactly the 3-2-4 shape.
-    marked = [(a, b) for a, b in _in_either_reading(view, (_ROW_MARKED,))
-              if not _date_after_boundary(view, ends, a, b)]
+    marked = [(a, b) for a, b in matches((_ROW_MARKED,))
+              if not _date_after_boundary(view, ends, a, b, dates)]
     grouped = []
+    extended_groups = set()
     # A grouped value introduced inside its first cell can continue into the
     # next. Three separate numeric columns supply no such introduction.
-    for a, b in _in_either_reading(view, (_ID_VALUE_RE,)):
+    for a, b in matches((_ID_VALUE_RE, _ROW_GROUPED)):
         column = bisect_right(ends, a)
         offset = ends[column - 1] if column else 0
-        if (_crosses(ends, a, b)
-                and _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,))):
+        if not _crosses(ends, a, b):
+            continue
+        if _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,)):
             grouped.append((a, b))
-    return sorted(set(combs + marked + grouped))
+        elif _grouped_inside_cell(view, ends, a, b):
+            grouped.append((a, b))
+            extended_groups.add((a, b))
+    # A complete crossing field bounds a later loose grouping. Otherwise its
+    # tail can borrow the integer part of the next amount to complete nine.
+    fixed = sorted(set(combs + marked))
+    accepted = []
+    reach = 0
+    index = 0
+    for a, b in sorted(set(grouped)):
+        while index < len(fixed) and fixed[index][0] < a:
+            reach = max(reach, fixed[index][1])
+            index += 1
+        if a < reach:
+            continue
+        accepted.append((a, b))
+        reach = max(reach, b)
+    return sorted(set(fixed + accepted)), extended_groups.difference(fixed)
+
+
+def _grouped_inside_cell(view: _IdentifierText, ends: list, start: int, end: int) -> bool:
+    """Printed grouping or a digit comb must survive removal of cell boundaries.
+
+    Amount, cents and year in separate cells supply only the inserted spaces.
+    A thousands separator is not identifier grouping either. Both 3/2/4 group
+    breaks must be printed or supplied by a cell boundary, with at least one
+    printed inside a cell. Boundaries inside a group do not add a printed gap.
+    """
+    # Its invisible reading adds candidates, not grouping evidence. Apply
+    # the same financial-field boundary in both soft-hyphen readings.
+    for soft in (False, True) if "\u00ad" in view.raw[start:end] else (False,):
+        cells = []
+        printed = False
+        digits = 0
+        for column in range(bisect_right(ends, start), bisect_left(ends, end) + 1):
+            left = ends[column - 1] if column else 0
+            cell = view.raw[max(start, left):min(end, ends[column] - 1)]
+            text = identifier_text(cell, _soft_hyphen=soft).text.strip()
+            cells.append(text)
+            printed |= bool(re.search(r"[0-9][^\S\n]+[0-9]", text))
+            digits += sum(c in "0123456789" for c in text)
+            if digits in (3, 5):
+                cells.append(" ")
+        joined = "".join(cells)
+        if printed and re.fullmatch(r"[0-9]{3}[^\S\n]+[0-9]{2}[^\S\n]+[0-9]{4}", joined):
+            return True
+        # A soft-hyphen comb has a printed separator between every single
+        # digit. Boundary duplicates still separate boxes, while a grouped
+        # amount with one incidental soft hyphen cannot supply this shape.
+        if not soft and re.fullmatch(r"[0-9](?:[^\S\n]+[0-9]){8}", joined.replace("\u00ad", " ")):
+            return True
+    return False
 
 
 def _cell_text(cell) -> str:
@@ -1122,6 +1213,7 @@ def _cell_text(cell) -> str:
 
 # Plain figures in separate numeric columns can be amount, cents and year.
 _ROW_COMBS = (_ID_SPACED, _ID_MARKED_COMB)
+_ROW_GROUPED = re.compile(r"(?<![0-9])[0-9](?:[^\S\n]*[0-9]){8}(?![0-9])")
 # A table boundary can split a group itself. Require both printed separators;
 # spaces inserted between plain numeric columns are not group separators.
 _ROW_MARKED = re.compile("|".join(
@@ -1131,26 +1223,47 @@ _ROW_MARKED = re.compile("|".join(
     for mark in (_ID_MARK, r"\.", "/")))
 _ROW_LABELED_MARKED = re.compile(rf"({_ID_INTRODUCED})({_ROW_MARKED.pattern})", re.IGNORECASE)
 # A boundary inside the first group is how "SSN 00" + "0-12-3456" splits, and
-# also how a flag or count reaches the date in the next cell. A cell holding
-# a whole day, month and year is a date: masking the pair would destroy it and
-# print its year as a false last four.
+# also how a flag or count reaches the date in the next cell. A cell holding a
+# whole day, month and year stays a date only in a column the header owns as
+# one, or on a row a flag label ("Has SSN") introduces. Beside any other label,
+# "SSN" | "9" | "12-31-2025" is the same shape as a count before a date and is
+# masked as an identifier: that destroys a true date and leaves its year
+# reading as a false last four, which is the safe side of the trade.
 _DATE_CELL = re.compile(rf"[^\S\n]*(?:0?[1-9]|[12][0-9]|3[01])(?P<mark>{_ID_DASH}|[./])"
                         r"(?:0?[1-9]|[12][0-9]|3[01])(?P=mark)(?:19|20)[0-9]{2}")
 
 
-def _date_after_boundary(view: _IdentifierText, ends: list, start: int, end: int) -> bool:
-    """Whether a cell inside the candidate starts a whole date that ends it,
-    after cells holding only the candidate's first digits. A label sharing
-    those digits' cell introduces the value: "SSN 1" beside "23-05-2019" is
-    an identifier however its tail reads, and over-masking is the safe side."""
+def _date_after_boundary(view: _IdentifierText, ends: list, start: int, end: int, dates) -> bool:
+    """Whether the candidate's last cell is a whole date in an owned date column
+    (`dates`), after cells holding only the candidate's first digits. A date
+    outside such a column is not exempt, and neither is one whose first digits
+    share a label's cell: "SSN 1" beside "23-05-2019" is an identifier however
+    its tail reads, and over-masking is the safe side."""
     column = bisect_right(ends, start)
+    tail = bisect_left(ends, end)
+    if tail <= column or tail not in dates:
+        return False
     first = ends[column - 1] if column else 0
-    return any(_DATE_CELL.fullmatch(identifier_text(view.raw[at:end]).text)
-               and not _LETTER.search(identifier_text(view.raw[first:at]).text)
-               for at in ends[bisect_right(ends, start):bisect_left(ends, end)])
+    at = ends[tail - 1]
+    # An empty date column cannot exempt a date-shaped tail in a later cell.
+    return (bool(_DATE_CELL.fullmatch(identifier_text(view.raw[at:end]).text))
+            and not identifier_text(view.raw[end:ends[tail] - 1]).text.strip()
+            and not _LETTER.search(identifier_text(view.raw[first:at]).text))
 
 
 _LETTER = re.compile(r"[^\W\d_]")
+_ID_FLAG_RE = re.compile(rf"\bhas[^\S\n]+{_ID_LABEL}|{_ID_LABEL}[^\S\n]+verified\b", re.I)
+# A same-row caption starts its own field. Unlike column headings, arbitrary
+# words here can be a dependent's name, so only explicit field captions bound
+# the extended label reach. A later identifier label starts a new reach.
+_TABLE_FIELD_CAPTION = re.compile(
+    # The two spacing runs must have a colon between them. Making the colon
+    # optional would repeatedly repartition padding on a failed caption.
+    r"(?:(?:box[^\S\n]+)?(?:\([0-9]+[a-z]?\)|[0-9]+[a-z]?[.)]?)(?:[^\S\n]*[:：][^\S\n]*|[^\S\n]+))?"
+    r"(?:wages(?:,? tips(?:,? (?:and|other) compensation)?)?|amount|dividends|interest|(?:tax )?year|"
+    r"routing(?: (?:number|no\.?))?|account(?: (?:number|no\.?))?|"
+    r"(?:federal|state|local) (?:income tax |tax )?withheld|gross (?:income|pay)|"
+    r"date(?: of birth)?|birth(?:date|day)|d\.?\s*o\.?\s*b\.?)\s*[:#]?", re.I)
 
 
 def _crosses(ends: list, start: int, end: int) -> bool:
@@ -1159,45 +1272,173 @@ def _crosses(ends: list, start: int, end: int) -> bool:
     return ends[bisect_left(ends, start + 1)] <= end
 
 
-def _row_combs(view: _IdentifierText, ends: list, combs: list, cell_spans: list, tick, below=()) -> list:
+def _row_combs(view: _IdentifierText, ends: list, combs: list, cell_spans: list, tick,
+               *, below=(), fields=(), extended_groups=(), aligned=(), separate=(), finance=(),
+               reread=frozenset()) -> list:
     """Candidates introduced on the row or starting under its preceding label.
     A candidate inside a cell can be reached past a spacer or another cell.
     A whole identifier keeps its
     boundary, so the next cell's count never joins it, while a dependent's
-    comb after it is still read, wherever it ends."""
+    comb after it is still read, wherever it ends. `cell_spans` bound every
+    candidate; of those the cell pass does not mask, the ones in `reread` are
+    read as combs of their own once a candidate reaches them."""
     labelled = set(_source_identifier_spans(view))
     labelled.update((m.start(2), m.end(2)) for m in _ROW_LABELED_MARKED.finditer(view.raw))
     for reading in _identifier_readings(view):
         labelled.update(reading.span(m.start(2), m.end(2)) for m in _ROW_LABELED_MARKED.finditer(reading.text))
-    if below:
-        # An above-value label introduces only the next row. Its persistent
-        # column rule still masks complete cell values on later rows, but
-        # cannot join later columns of flags into a comb.
-        labelled.update((a, b) for a, b in combs if bisect_right(ends, a) in below)
+    # Cells between a printed label and its value can contain a dependent's
+    # name. The table supplies those boundaries even when the text rule's
+    # short same-line introduction no longer reaches the value. Standalone
+    # captions bound only this extension (including new cross-cell grouped
+    # shapes). A caption-like surname cannot undo an existing comb mask.
+    labels = _in_either_reading(view, (_ID_LABEL_RE,))
+    label_columns = sorted({bisect_right(ends, end) for _, end in labels})
+    field_columns = sorted(fields)
+    column_boundaries = sorted(separate)
+    finance_columns = sorted(finance)
+
+    def crosses_column(columns, first, last):
+        at = bisect_left(columns, first)
+        return at < len(columns) and columns[at] <= last
+
     whole = [(a, b) for a, b in sorted(cell_spans)
-             if sum(c in "0123456789" for c in view.text[view.canonical(a):view.canonical(b)]) % 9 == 0]
+             if sum(c in "0123456789" for c in view.text[view.canonical(a):view.canonical(b)]) % 9 == 0
+             or _ID_SPELLED.fullmatch(identifier_text(view.raw[a:b]).text)]
     starts = [a for a, _ in whole]
+    reach = list(accumulate((b for _, b in whole), max))  # furthest end so far
     found = []
     for start, end in combs:
         tick()
-        if (start, end) not in labelled:
-            continue
-        inside = []
-        for a, b in whole[bisect_left(starts, start):bisect_left(starts, end)]:
-            if b <= end and (a, b) != (start, end):
-                inside.append((a, b))
-        if not inside:
+        span = (start, end)
+        column = bisect_right(ends, start)
+        if span in extended_groups:
+            # New grouping alone cannot claim a separately named field.
+            # When an identifier starts one cell off its heading, move its
+            # companion boundaries with it. Existing masks still apply.
+            tail = bisect_left(ends, end)
+            if column in below and any(
+                    anchor in aligned and crosses_column(column_boundaries, anchor + 1, tail + anchor - column)
+                    for anchor in (column - 1, column, column + 1)):
+                continue
+            shifted = aligned and column in below and column not in aligned
+            if not shifted and crosses_column(finance_columns, column, tail):
+                continue
+        existing = span in labelled and span not in extended_groups
+        # A label immediately above the value supplies independent evidence.
+        if not existing and column not in below:
+            if not label_columns or (label_columns[0] >= column and span not in labelled):
+                continue
+            label = bisect_right(label_columns, column) - 1
+            if label < 0:
+                continue
+            field = bisect_right(field_columns, column) - 1
+            if field >= 0 and field_columns[field] > label_columns[label]:
+                continue
+        # A whole value bounds the candidate wherever they meet, including one
+        # it only partly covers. Regex matches never overlap, so a run that
+        # starts inside one identifier is the only candidate holding the next
+        # identifier's opening digits; dropping it would print that one whole.
+        last = first = bisect_left(starts, end)
+        while first and reach[first - 1] > start:
+            first -= 1
+        covered = [(a, b) for a, b in whole[first:last] if b > start and (a, b) != (start, end)]
+        if not covered:
             found.append((start, end))
             continue
-        # What is left beside a whole cell identifier is a comb only if it
-        # still reads as one.
+        # What is left beside a whole cell value is a comb only if it still
+        # reads as one, so a whole identifier never borrows the next amount.
         cursor = start
-        for a, b in [*inside, (end, end)]:
+        for a, b in [*covered, (end, end)]:
             if a > cursor:
                 found.extend((cursor + s, cursor + e) for s, e in
                              _in_either_reading(identifier_text(view.raw[cursor:a]), _ROW_COMBS))
+            if (a, b) in reread:
+                found.extend((a + s, a + e) for s, e in
+                             _in_either_reading(identifier_text(view.raw[a:b]), _ROW_COMBS))
             cursor = max(cursor, b)
     return found
+
+
+def _table_row_width(row) -> int:
+    """Populated extent for shift inference; trailing empty fields are padding."""
+    return next((column + 1 for column in range(len(row) - 1, -1, -1)
+                 if row[column] is not None and not (isinstance(row[column], str) and not row[column].strip())), 0)
+
+
+def _table_cell_changes(row, header) -> set:
+    """How many cells a row has more than its header, read two ways.
+
+    openpyxl pads every row to the sheet width with None, so a workbook row
+    shows a lost or extra cell only once trailing Nones are dropped; a caller's
+    None can also be a real empty cell, which the raw count keeps. Both readings
+    count, so neither layout hides a shift.
+    """
+    def trimmed(cells):
+        count = len(cells)
+        while count and cells[count - 1] is None:
+            count -= 1
+        return count
+
+    return {len(row) - len(header), trimmed(row) - trimmed(header)}
+
+
+def _table_row_shift(row, header) -> bool:
+    """One populated cell more/fewer, with a physical cell change that agrees.
+
+    An empty value in an existing headered column is not a lost cell either.
+    """
+    difference = _table_row_width(row) - _table_row_width(header)
+    return abs(difference) == 1 and difference in _table_cell_changes(row, header)
+
+
+# A heading whose own values are nine-digit numbers that are not identifiers.
+# Only these keep a whole comb beside the identifier column; under any other
+# heading (Spouse, Note, Wages) nine spaced digits are an identifier's shape.
+_NINE_DIGIT_FIELD = re.compile(r"(?i)\b(?:routing|account|transit)\b")
+
+
+def _table_other_field(caption) -> bool:
+    """A named nonidentifier column, rather than space for shifted identity."""
+    if not isinstance(caption, str) or _is_id_label_cell(caption):
+        return False
+    text = identifier_text(caption).text
+    return bool(_LETTER.search(text)
+                and not re.search(r"(?i)\bname\b|\brelationship\b|^\s*other\s*$", text))
+
+
+def _table_header_cell(upper, lower):
+    """Join wrapped captions while retaining typed values for occupancy."""
+    if lower is None or (isinstance(lower, str) and not lower.strip()):
+        return upper
+    if isinstance(upper, str) and isinstance(lower, str):
+        return (upper.strip() + " " + lower.strip()).strip()
+    return lower
+
+
+_TABLE_MISSING = re.compile(r"(?:n/?a|null|none|not (?:available|applicable)|[-\u2013\u2014]+)?", re.I)
+
+
+def _table_identifier_neighbours(row, header, columns: set) -> set:
+    """An occupied identifier column does not lend its label to its neighbours.
+
+    A populated trailing note can change row width without moving any field.
+    Masked values also fill their field and keep their last-four boundary.
+    """
+    neighbours = set(columns)
+    for column in columns:
+        if column < len(row):
+            view = identifier_text(_cell_text(row[column]))
+            if (_source_identifier_spans(view, governed=True)
+                    or _in_either_reading(view, (_ID_SPELLED,))):
+                continue
+        for neighbour in (column - 1, column + 1):
+            if neighbour < 0:
+                continue
+            caption = header[neighbour] if neighbour < len(header) else None
+            if _table_other_field(caption):
+                continue  # an independently named column keeps its ownership
+            neighbours.add(neighbour)
+    return neighbours
 
 
 def mask_table(rows, runs=None, *, tick=lambda: None):
@@ -1214,22 +1455,82 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
     governed: set = set()
     below: set = set()
     variant_columns: set = set()
+    previous: list = []
+    dates: set = set()
+    finance: set = set()
+    shift_dates = False
+    can_shift = False
+    dependent_columns: set = set()
+    dependent_header: list = []
     for row in rows:
         tick()
         if not isinstance(row, (list, tuple)):
             masked.append(mask_ssn(row, runs, tick=tick))
             below = set()
+            previous = []
             continue
         labels = [column for column, cell in enumerate(row) if _is_id_label_cell(cell)]
-        cell_governed = governed | {column + 1 for column in labels}
-        positioned, reached = _mask_row_combs(row, runs, cell_governed, tick, below=below)
+        header = list(row)
+        wrapped = False
+        # A header may wrap across two physical rows. Combine only the same
+        # column, and only cells without digits; the source cells stay intact.
+        for above, cell in zip(previous, row):
+            if (isinstance(above, str) and isinstance(cell, str) and above.strip() and cell.strip()
+                    and not _is_id_label_cell(above)
+                    and not _is_id_label_cell(cell)
+                    and not any(c.isdecimal() for c in above + cell)
+                    and _is_id_label_cell(above + " " + cell)):
+                wrapped = True
+                break
+        if wrapped:
+            # A companion heading can also wrap, for example DOB followed
+            # by a format hint. The merged header is for ownership only.
+            header = [_table_header_cell(above, cell) for above, cell in zip_longest(previous, row)]
+            labels = sorted(set(labels) | {column for column, cell in enumerate(header) if _is_id_label_cell(cell)})
+        neighbours = (_table_identifier_neighbours(row, previous, below)
+                      if can_shift else below)
+        # Lost/extra table cells move a dependents field. For complete bare
+        # values widen only on a ragged row; shaped combs can also shift in a
+        # rectangular table. Both reaches expire at the first nonblank row.
+        displaced = neighbours if can_shift and _table_row_shift(row, previous) else below
+        if dependent_columns and _table_row_shift(row, dependent_header):
+            displaced = displaced | _table_identifier_neighbours(row, dependent_header, dependent_columns)
+        # Empty credit boxes can hide a real dependents shift from populated
+        # width. Keep the previous mask in adjacent name/relationship fields,
+        # which cannot legitimately hold a nine-digit financial value.
+        if dependent_columns and any(abs(change) == 1 for change in _table_cell_changes(row, dependent_header)):
+            displaced |= {c for c in _table_identifier_neighbours(row, dependent_header, dependent_columns)
+                          if 0 <= c < len(dependent_header)
+                          and isinstance(dependent_header[c], str)
+                          and re.search(r"(?i)\bname\b|\brelationship\b", dependent_header[c])}
+        cell_governed = governed | displaced | {column + 1 for column in labels}
+        flag_columns = {column for column, cell in enumerate(row) if isinstance(cell, str)
+                        and _in_either_reading(identifier_text(cell), (_ID_FLAG_RE,))}
+        # Shaped fields can shift even in a rectangular export. Move date
+        # ownership along every direction the identifier's header can reach,
+        # retaining the aligned reading as well.
+        row_dates = set(dates)
+        if can_shift and shift_dates:
+            additional = neighbours - below
+            for direction in (-1, 1):
+                if any(c + direction in additional for c in below):
+                    row_dates.update(c + direction for c in dates)
+        if flag_columns:
+            row_dates.update(range(len(row)))
+        headings = previous if can_shift else dependent_header
+        separate = {c for c, heading in enumerate(headings) if _table_other_field(heading)}
+        kept = {c for c in separate if _NINE_DIGIT_FIELD.search(identifier_text(headings[c]).text)}
+        positioned, reached = _mask_row_combs(row, runs, cell_governed, tick,
+                                               below=neighbours, dates=row_dates, separate=separate,
+                                               aligned=below if can_shift else (), finance=finance,
+                                               kept=kept)
         out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None,
                         _governed=column in cell_governed, _variant_governed=column in variant_columns,
                         _reached=reached.get(column, ()), tick=tick)
                for column, (cell, original) in enumerate(zip(positioned, row))]
         # The columns a PREVIOUS row's label governs, before this row's own
         # labels are read: a header governs what is under it, never itself.
-        for column in governed:
+        for column in governed | displaced:
             if column < len(out):
                 out[column] = _mask_id_value(out[column])
         for column in labels:
@@ -1237,9 +1538,48 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
             if column + 1 < len(out):
                 out[column + 1] = _mask_id_value(out[column + 1])
         masked.append(out)
-        below = set(labels)
+        blank = all(cell is None or isinstance(cell, str) and not cell.strip() for cell in row)
+        if not blank:
+            below = set(labels)
+            previous = header
+            can_shift = bool(labels) and not any(c.isdecimal() for cell in header
+                if isinstance(cell, (str, int, float)) for c in re.sub(r"^\s*\([0-9]+\)\s*", "", str(cell)))
+        if labels:
+            if can_shift and any(isinstance(cell, str) and "relationship" in cell.lower() for cell in header):
+                dependent_columns, dependent_header = set(labels), header
+            elif not set(labels) <= dependent_columns:
+                # "No SSN" or "ITIN pending" in the identifier column is that
+                # dependent's value, not a new header ending the table.
+                dependent_columns = set()
+        header_dates = {c for c, cell in enumerate(header) if isinstance(cell, str)
+                        and re.search(r"(?i)\bdate\b|\bverified on\b|\bbirth(?:date|day)?\b"
+                                      r"|\bd\.?[^\S\n]*o\.?[^\S\n]*b\b", identifier_text(cell).text)}
+        # An SSN document record with missing values can look like an
+        # identifier header. Preserve the registered columns until a
+        # header names it again or supplies a new layout. A carried date
+        # column does not move with the apparent header on a data row.
+        missing_record = (can_shift and bool(dates or finance) and not wrapped and len(header) > len(labels)
+                          and all(c in labels or cell is None or (isinstance(cell, str)
+                                  and _TABLE_MISSING.fullmatch(identifier_text(cell).text.strip()))
+                                  for c, cell in enumerate(header)))
+        if not blank:
+            shift_dates = can_shift and not missing_record
+        new_header = not blank and shift_dates
+        if new_header or header_dates:
+            dates = header_dates
+            if can_shift:
+                dates.update(c + 1 for c, cell in enumerate(header) if isinstance(cell, str)
+                             and _in_either_reading(identifier_text(cell), (_ID_FLAG_RE,)))
+        header_finance = {c for c, cell in enumerate(header) if isinstance(cell, str)
+                          and _TABLE_FIELD_CAPTION.fullmatch(identifier_text(cell).text.strip())}
+        # Financial columns also occur in registers without an identifier
+        # heading. A row containing values cannot establish this ownership.
+        if new_header or (header_finance and all(cell is None or isinstance(cell, str) and
+                (c in header_finance or not any(ch.isdecimal() for ch in cell)) for c, cell in enumerate(header))):
+            finance = header_finance
         variant_columns.update(column for column, cell in enumerate(row) if isinstance(cell, str)
                                and _in_either_reading(identifier_text(cell), (_ID_LABEL_RE,)))
+        variant_columns.update(labels)
     return masked
 
 
