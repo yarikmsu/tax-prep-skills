@@ -86,7 +86,7 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **1. California filers: ready now** | **AA110** — layouts AA109's review left. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114, AA107 in #116, #117 and #118, AA108 in #120, AA106 in #121, AA109 in #124. | AA110's masked amounts reach any table whose label sits beside space-grouped figures; its printed digits need a shifted or cut identifier beside a named column, or an SSN beginning 1545 after a W-2's OMB caption. Each has to be measured for lost figures and false refusals before a rule widens. The remaining California items wait on a publication (tier 2). |
+| **1. California filers: ready now** | **AA110** — layouts AA109's review left. **AA111** — parse cost AA109 added. AA89 shipped in #76, #77 and #80, AA88 in #81, AA91 in #85, AA92 in #87, AA93 in #88, AA94 in #90, AA95 in #91, AA97 in #93, AA96 in #94, AA99 in #97, AA98 in #96, AA100 in #99, AA101 in #101, AA102 in #107 and #108, AA103 in #110 and #111, AA104 in #113, AA105 in #114, AA107 in #116, #117 and #118, AA108 in #120, AA106 in #121, AA109 in #124. | AA110's masked amounts reach any table whose label sits beside space-grouped figures; its printed digits need a shifted or cut identifier beside a named column, or an SSN beginning 1545 after a W-2's OMB caption. Each has to be measured for lost figures and false refusals before a rule widens. AA111 is cost, not correctness, but a dense page that slows enough fails the parse time budget. The remaining California items wait on a publication (tier 2). |
 | **2. California filers: as FTB and the IRS publish** | **AA83** — review the TY2026 Form 540. **AA84** — review TY2026 CA tax in Roth and scenario planning. **AA80** — review AA74's part-year return for TY2026, with the renter's credit six-month test. **AA48** — add the TY2026 Form 8949 boxes. **Y8** — fetch the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables through `set`. | AA83 decides whether any CA resident can file a TY2026 return here. AA84 has a December 31 deadline, because a 2026 Roth conversion is made this year. AA80 serves fewer filers. AA48 blocks every TY2026 crypto import. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed rather than pricing it, so Y8 is the reminder to fetch it; its NY `table_bases` step serves no current user. The blocked table dates each check. |
 | **3. California filers: larger extensions** | Nothing open. AA44 shipped in #69, #70 and #82. | A tax software's own PDF still needs a first real import's report checked table by table. |
 | **4. Other states** | **AA79** — TY2026 NY and NC payment forecasts, blocked on that year's IT-201/IT-196 and D-401 instructions. AA90 shipped in #84. | No current user files in New York or North Carolina. AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -213,6 +213,19 @@ Trigger and range behavior is documented in
   unmapped, is exempted as OMB metadata and prints eight digits. Closing that refuses
   W-2 pages whose OMB hyphen is unmapped, unless the exemption checks each form's real
   IRS control number, read from the form rather than assumed.
+- **AA111 (P3, M): Parse cost AA109 added.** Found by #124's review; each change needs a
+  reproducible benchmark run before and after it. `mask_table` takes about twice main's
+  time on an ordinary table with no identifier, a register or a dependents list: for
+  every column of every data row the wrapped-header check calls `_is_id_label_cell` on
+  the cell above, the cell and the two joined, recomputing what the previous row found,
+  and the date and financial caption patterns run on every data row. Reusing the previous
+  row's label results, and checking headers only on rows without digits, would avoid it.
+  In PDFs, each separator hypothesis that finds a candidate probes the whole page again
+  (`extract_words`, `_readable_identifier_glyphs`, `_overlaid_digits`), up to the budget
+  plus one passes; a dense page of short rows with mixed unmapped glyphs took about seven
+  times main's time. Probing only the candidates' rows, or every marking in one pass,
+  would avoid it. `_font_resource_chars` also replays the whole content stream for any
+  page with one unmapped glyph, though only the unknown glyphs need the font identity.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03

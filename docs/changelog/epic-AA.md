@@ -4905,4 +4905,5 @@ and #118's backlog edits left to this record.
   20,000 identifier-free tables newly lose only nine-digit values in
   identifier-adjacent or non-routing columns.
 - The source record is in `docs/contributing/parse-boundary.md`. Left by the
-  review, each found on synthetic layouts: AA110.
+  review: AA110, the layouts it found on synthetic tables and PDFs, and AA111,
+  the parse cost the change added.
