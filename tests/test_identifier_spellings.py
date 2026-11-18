@@ -222,7 +222,8 @@ def test_an_unmapped_pdf_glyph_extracts_as_cid_and_masks(tmp_path, variant_font,
     assert MASKED in out and "850.00" in out
 
 
-def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(), items=None, widths=None):
+def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(), items=None, widths=None,
+             horizontal_scales=None, alternate_items=(), alternate_cids=None, in_forms=False):
     """A Type0 Identity-H font: missing mappings have no WinAnsi fallback.
     Every glyph is 600 units wide unless `widths` maps a character to another.
 
@@ -237,10 +238,20 @@ def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(
             "1 begincodespacerange <0000> <FFFF> endcodespacerange\n"
             f"{len(mapped)} beginbfchar\n{mapping}\nendbfchar\nendcmap end end").encode()
     content = b""
+    form_contents = []
     if items is None:
         items = ((36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00"))
-    for x, y, text in items:
-        content += f"BT /F1 9 Tf {x} {y} Td <{text.encode('utf-16be').hex()}> Tj ET\n".encode()
+    for index, (x, y, text) in enumerate(items):
+        scale = (horizontal_scales or {}).get(index, 100)
+        font = "F3" if index in alternate_items else "F1"
+        if index in alternate_items:
+            text = "".join(chr((alternate_cids or {}).get(c, ord(c))) for c in text)
+        segment = f"BT /{font} 9 Tf {scale} Tz {x} {y} Td <{text.encode('utf-16be').hex()}> Tj ET\n".encode()
+        if in_forms:
+            form_contents.append(segment)
+            content += f"/X{index} Do\n".encode()
+        else:
+            content += segment
     content += b"32 670 m 520 670 l 520 715 l 32 715 l h S 32 693 m 520 693 l S 270 670 m 270 715 l S"
     if shared_name:
         content += b" BT /F2 9 Tf 36 740 Td (Readable) Tj ET"
@@ -267,6 +278,19 @@ def _cid_pdf(path, *, mapped, shared_name=False, isolated_marks=False, symbols=(
     if shared_name:
         objects[2] = objects[2].replace(b"/F1 4 0 R", b"/F1 4 0 R /F2 9 0 R")
         objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Test /Encoding /WinAnsiEncoding /FontDescriptor 8 0 R >>")
+    if alternate_items:
+        objects[2] = objects[2].replace(b"/F1 4 0 R", f"/F1 4 0 R /F3 {len(objects) + 1} 0 R".encode())
+        objects.append(objects[3])
+    if in_forms:
+        references = []
+        for index, segment in enumerate(form_contents):
+            references.append(f"/X{index} {len(objects) + 1} 0 R".encode())
+            # Direct font dictionaries are not retained in pdfminer's font
+            # cache; each form owns new resources even with identical names.
+            resources = b"/Resources << /Font << /F1 " + objects[3] + b" /F3 " + objects[3] + b" >> >> "
+            header = b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] " + resources + b"/Length"
+            objects.append(stream(segment).replace(b"<< /Length", header, 1))
+        objects[2] = objects[2].replace(b"/Resources <<", b"/Resources << /XObject << " + b" ".join(references) + b" >>", 1)
     data = b"%PDF-1.4\n"
     offsets = [0]
     for i, obj in enumerate(objects, 1):

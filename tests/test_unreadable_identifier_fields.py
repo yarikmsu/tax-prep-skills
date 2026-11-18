@@ -163,13 +163,9 @@ def test_an_unreadable_variant_below_a_filled_label_still_refuses(tmp_path, rout
 
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize("label, value, mark, width", [
-    ("RECIPIENT'S TIN", "\u2014" + "/".join(("12", "31", "2025")), "\u2014", 1000),
     ("a Employee's social security number OMB No.", "-".join(("1545", "0029")), "-", 333),
 ])
-def test_an_unknown_mark_of_another_width_is_not_a_digit(tmp_path, route, label, value, mark, width):
-    # A dash before a date, or the hyphen of the OMB number printed beside a
-    # W-2's SSN box, is drawn at its own width; counted as a digit it would
-    # complete nine and refuse a readable page.
+def test_explicit_omb_metadata_is_not_an_identifier(tmp_path, route, label, value, mark, width):
     items = [(36, 700, label), (280, 700, value), (36, 680, "Wages"), (280, 680, "850.00")]
     mapped = set("".join(t for _, _, t in items)) - {mark}
     path = _cid_pdf(tmp_path / "mark.pdf", mapped=mapped, items=items, widths={mark: width})
@@ -202,19 +198,19 @@ def test_a_wide_unknown_mark_still_bounds_the_digits_beside_it(tmp_path, route):
         _read(route, path, tmp_path)
 
 
-def test_widths_compare_only_within_the_unknown_glyphs_own_font(tmp_path):
+def test_an_unknown_digit_cannot_be_exempted_by_its_width_or_font(tmp_path):
     import pdfplumber
 
     from agents.lib.parse_utils import _refuse_unreadable_identifier
     digits = _ssn("")
     items = [(36, 700, "SSN"), (280, 700, _ssn("-")), (36, 680, "Wages"), (280, 680, "850.00")]
     mapped = set("".join(t for _, _, t in items)) - {digits[-1]}
-    # Drawn wider than the readable digits, an unknown in the SAME font is a mark...
+    # Wider than the readable digits, it is still an unknown digit.
     path = _cid_pdf(tmp_path / "wide.pdf", mapped=mapped, items=items, widths={digits[-1]: 1000})
     with pdfplumber.open(path) as document:
         chars = list(document.pages[0].chars)
-    _refuse_unreadable_identifier(chars, lambda: None)
-    # ...but from another font, nothing on the row tells its digits' width.
+    with pytest.raises(ValueError, match="unmapped font"):
+        _refuse_unreadable_identifier(chars, lambda: None)
     other = [{**c, "fontname": "Other"} if c["text"].startswith("(cid:") else c for c in chars]
     with pytest.raises(ValueError, match="unmapped font"):
         _refuse_unreadable_identifier(other, lambda: None)

@@ -214,6 +214,9 @@ Trigger and range behavior is documented in
   scaling), the price of reading an unmapped dash before a date, or the OMB hyphen beside
   a W-2's SSN box, as a mark. Measure any widening against identifier-free tables for
   lost figures and against the refusal sweep for false refusals.
+  Implementation is awaiting review on `fix/aa109-identifier-layouts`; keep this
+  item open until merged. The measured preservation and refusal costs are in
+  `docs/contributing/parse-boundary.md`'s AA109 record.
 
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
