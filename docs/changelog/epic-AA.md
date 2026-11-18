@@ -4872,3 +4872,37 @@ and #118's backlog edits left to this record.
   fewer, and every digit decode failure on the 62 sample-return pages refuses
   exactly the pages it refused before.
 - Left by both reviews, each printing on main: AA109.
+
+## AA109 — layouts AA108's and AA106's reviews left (#124)
+
+- A header label reaches a value one cell off its column, from a lost or extra
+  cell, past a blank row, or under a header wrapped over two rows. A Form 1040
+  dependents row one cell off its header masks in workbooks as well as CSV:
+  openpyxl pads every row with None, so a row's cells are counted with and
+  without that padding. A status such as "No SSN" in a dependent's identifier
+  field keeps the dependents table in force for the rows after it.
+- Whole values bound every crossing run, including a run that starts inside
+  one, and what is left on each side reads as its own comb. Routing, account
+  and transit columns keep their nine digits. A comb in any other named
+  column, such as Spouse, Note or Wages, masks when a run reaches it, and still
+  bounds the run so it cannot borrow the next amount's leading digit.
+- A whole date stays whole only in a column the header owns as a date column,
+  Birthdate and DOB included, or under a flag label. Beside any other label a
+  count before a date has the shape of an SSN split inside its first group,
+  and both mask, the safe direction.
+- In PDFs an unknown glyph is a possible digit at any width, since
+  proportional figures and mixed horizontal scaling broke the width rule; each
+  kind is local to its font resource. Separator readings, combinations of
+  kinds included, share a per-page budget charged once per repeated kind set,
+  so a statement repeating unmapped "$", "," and "." on every row stays
+  readable. Only an IRS OMB control number (agency 1545) is metadata.
+- Review of the first head found four leaks it added against main: a second
+  SSN on the row, a spouse's or note's comb, 8 of 9 digits after the W-2's
+  shared OMB heading, and every dependent after a "No SSN" row. It also found
+  that the workbook shift check never fired and that the budget refused a
+  readable 40-row statement. After the fixes, 20,000 synthetic identifier
+  tables newly print no identifier's first five digits against that head, and
+  20,000 identifier-free tables newly lose only nine-digit values in
+  identifier-adjacent or non-routing columns.
+- The source record is in `docs/contributing/parse-boundary.md`. Left by the
+  review, each found on synthetic layouts: AA110.
