@@ -35,6 +35,11 @@ Wash-sale (§1091) detection — share-level proration (v1.5):
   which is OUT OF SCOPE for this skill (it affects FUTURE years' Schedule D when
   those replacement shares are sold). Documented in caveats; not modeled in v1.
 
+  A lot is cleared only against confirmed history (AA127). `transaction_coverage`
+  states which accounts and dates `recent_transactions` covers; a taxable losing
+  lot it does not cover keeps its loss out of the plan and the savings, in
+  `unverified_loss`, because an absent list is not evidence of no purchases.
+
 Never mutates result.json or taxpayer_profile.json. Writes ONLY one
 scenarios/<name>.json via the reused scenario.save_scenario guard. Pure compute +
 markdown renderer + guarded writer + CLI.
@@ -245,6 +250,10 @@ class HoldingLot:
 
     est_value_per_dollar: float  # heuristic for ranking (set later, after rates)
     wash_sale_adjustments: list[dict] = field(default_factory=list)
+    # Why this taxable losing lot is held back from the harvest plan: the
+    # transaction history does not confirm the §1091 window for it (AA127).
+    # None when covered, and for lots with nothing to harvest.
+    history_gap: 'str | None' = None
 
 
 def _required_str(d: dict, key: str, label: str) -> str:
@@ -357,6 +366,71 @@ def parse_holdings(data: dict, *, today: datetime.date
             est_value_per_dollar=0.0,
         ))
     return lots, recent, as_of
+
+
+def parse_transaction_coverage(data: dict) -> 'dict | None':
+    """The holder's statement of what transaction history `recent_transactions` holds.
+
+    AA127: an absent list used to read as "no purchases", so every losing lot
+    was cleared and the savings counted losses a spouse's or an IRA's purchase
+    may already have disallowed, over-stating the figure a filer acts on. The
+    statement names every account §1091 reaches and the dates its history
+    spans. None means the file makes no statement, which holds every taxable
+    losing lot back rather than clearing it. A malformed statement is refused,
+    so a typo neither clears a lot nor turns a refusal into a quiet hold.
+    """
+    raw = data.get("transaction_coverage")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise LossHarvestError("transaction_coverage must be a JSON object with "
+                               "accounts, from and through")
+    accounts = raw.get("accounts")
+    if (not isinstance(accounts, list) or not accounts
+            or any(not isinstance(a, str) or not a.strip() for a in accounts)):
+        raise LossHarvestError("transaction_coverage.accounts must name every account "
+                               "§1091 reaches, each by a non-empty label")
+    start = _parse_txn_date(raw.get("from"), "transaction_coverage.from")
+    end = _parse_txn_date(raw.get("through"), "transaction_coverage.through")
+    if start > end:
+        raise LossHarvestError("transaction_coverage.from is after its through date")
+    return {"accounts": [a.strip() for a in accounts], "from": start, "through": end}
+
+
+def _apply_history_coverage(lots: 'list[HoldingLot]', coverage: 'dict | None',
+                            as_of: datetime.date, today: datetime.date
+                            ) -> 'list[HoldingLot]':
+    """Hold back each taxable losing lot the transaction history does not cover.
+
+    Covered means the statement spans the whole look-back, from 30 days before
+    the sale through the sale (through today for a sale still planned, since
+    history cannot attest the future), and names the lot's own account. Buys
+    the file does list still disallow what they match; only the loss left
+    allowed is held back. Accounts compare as buy accounts do: trimmed,
+    case-insensitive.
+    """
+    needed_from = as_of - datetime.timedelta(days=WASH_SALE_WINDOW_DAYS)
+    needed_through = min(as_of, today)
+    if coverage is None:
+        gap = "holdings.json has no transaction_coverage"
+    elif coverage["from"] > needed_from:
+        gap = (f"transaction history starts {coverage['from'].isoformat()}, "
+               f"after {needed_from.isoformat()}")
+    elif coverage["through"] < needed_through:
+        gap = (f"transaction history ends {coverage['through'].isoformat()}, "
+               f"before {needed_through.isoformat()}")
+    else:
+        gap = None
+    covered = {a.lower() for a in coverage["accounts"]} if coverage else set()
+    held: 'list[HoldingLot]' = []
+    for lot in lots:
+        lot_gap = None
+        if lot.allowed_loss > 0 and not lot.tax_advantaged:
+            lot_gap = gap
+            if lot_gap is None and lot.account.strip().lower() not in covered:
+                lot_gap = f"account {lot.account} is not in transaction_coverage.accounts"
+        held.append(HoldingLot(**{**lot.__dict__, "history_gap": lot_gap}))
+    return held
 
 
 def _apply_wash_sale_prorate(
@@ -1020,6 +1094,11 @@ class HarvestReport:
     # AA23: Schedule A re-priced at the harvested AGI, and what that still held.
     schedule_a_repriced: bool = False
     schedule_a_held: "list[str]" = field(default_factory=list)
+    # AA127: allowed loss on taxable lots whose transaction history is not
+    # confirmed — held out of the plan and the savings, never read as clear —
+    # and the coverage statement as the file made it (None when absent).
+    unverified_loss: float = 0.0
+    transaction_coverage: "dict | None" = None
 
 
 _STATE_RATE_FLOOR_NOTE = (
@@ -1190,7 +1269,9 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
 
     # Per-lot inventory; wash-sale state populated by the prorate matcher below.
     lots, txns, as_of = parse_holdings(holdings, today=today)
-    lots = _apply_wash_sale_prorate(lots, txns, as_of)
+    coverage = parse_transaction_coverage(holdings)
+    lots = _apply_history_coverage(_apply_wash_sale_prorate(lots, txns, as_of),
+                                   coverage, as_of, today)
 
     # Rates needed for est_value_per_dollar (ranking) — based on baseline state
     base_out = compute_scenario(base_inputs, {}, **rate_kwargs)
@@ -1256,10 +1337,12 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     # when allowed_loss > 0: a loss inside those accounts is not deductible
     # under §165 and so does not flow to Schedule D, so recommending the sell
     # would be a phantom-savings recommendation. They're routed to
-    # `tax_advantaged_loss` for visibility instead. Sort: value_per_dollar ×
-    # allowed_loss desc — partial lots rank by their allowable portion only.
+    # `tax_advantaged_loss` for visibility instead. A lot whose transaction
+    # history is not confirmed is excluded too and lands in `unverified_loss`
+    # (AA127). Sort: value_per_dollar × allowed_loss desc — partial lots rank
+    # by their allowable portion only.
     eligible = [l for l in enriched
-                if l.allowed_loss > 0 and not l.tax_advantaged]
+                if l.allowed_loss > 0 and not l.tax_advantaged and l.history_gap is None]
     eligible.sort(key=lambda l: l.est_value_per_dollar * l.allowed_loss, reverse=True)
     others = [l for l in enriched if l not in eligible]
     sorted_lots = eligible + others
@@ -1277,9 +1360,11 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     blocked_loss = round(sum(l.disallowed_loss for l in enriched), 2)
     # Total unrealized loss locked in tax-advantaged accounts (not deductible).
     # Reconciliation invariant the renderer relies on:
-    #   total_loss + blocked_loss + tax_advantaged_loss == Σ unrealized_loss over all lots
+    #   total_loss + blocked_loss + tax_advantaged_loss + unverified_loss
+    #     == Σ unrealized_loss over all lots
     tax_advantaged_loss = round(sum(l.unrealized_loss for l in enriched
                                     if l.tax_advantaged), 2)
+    unverified_loss = round(sum(l.allowed_loss for l in enriched if l.history_gap), 2)
 
     # Baseline Schedule D
     base_st, base_lt = _baseline_capital_gains(result)
@@ -1404,6 +1489,10 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         medical_floor_may_move=(not repriced and medical_floor_may_move(
             result, base_out["agi"], [harvested_agi])),
         schedule_a_repriced=repriced, schedule_a_held=held_notes,
+        unverified_loss=unverified_loss,
+        transaction_coverage=(None if coverage is None else {
+            "accounts": coverage["accounts"], "from": coverage["from"].isoformat(),
+            "through": coverage["through"].isoformat()}),
     )
 
 
@@ -1453,6 +1542,8 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "medical_floor_may_move": r.medical_floor_may_move,
         "schedule_a_repriced": r.schedule_a_repriced,
         "schedule_a_held": r.schedule_a_held,
+        "unverified_loss": r.unverified_loss,
+        "transaction_coverage": r.transaction_coverage,
     }
 
 
@@ -1472,6 +1563,14 @@ def render_markdown(r: HarvestReport) -> str:
               f"`result.json` line 24 ({_money(r.baseline_fed_tax)}); only the "
               "marginal effect of harvesting is computed.", ""]
 
+    if r.unverified_loss > 0:
+        lines += [f"> **⚠ Wash-sale history not confirmed — {_money(r.unverified_loss)} "
+                  "of losses held back.** A purchase of the same security in the 30 days "
+                  "before or after a sale, in your accounts, your spouse's or an IRA, can "
+                  "disallow the loss (§1091), and this file does not confirm that history "
+                  "for the lots under \"Held back\" below. They are not in the harvest "
+                  "plan or the savings. Add `transaction_coverage` to `holdings.json` "
+                  "and re-run.", ""]
     if r.nonresident_income_warning:
         lines += [f"> **⚠ Nonresident income exposure:** "
                   f"{r.nonresident_income_warning}", ""]
@@ -1522,12 +1621,15 @@ def render_markdown(r: HarvestReport) -> str:
     #   row in the bottom-line table makes this visible to the user so they
     #   can trace every dollar from holdings to a category.
     total_unrealized = round(r.total_loss_harvested + r.wash_sale_blocked_loss
-                             + r.tax_advantaged_loss, 2)
+                             + r.tax_advantaged_loss + r.unverified_loss, 2)
+    held_row = ([f"| Held back: wash-sale history not confirmed | "
+                 f"{_money(r.unverified_loss)} |"] if r.unverified_loss > 0 else [])
     lines += ["## Bottom line", "",
               "| Item | Amount |", "|---|---:|",
               f"| Total unrealized losses (all lots) | "
               f"{_money(total_unrealized)} |",
               f"| Wash-sale disallowed (§1091) | {_money(r.wash_sale_blocked_loss)} |",
+              *held_row,
               f"| Tax-advantaged accounts (not deductible) | "
               f"{_money(r.tax_advantaged_loss)} |",
               f"| **Eligible to harvest this year** | "
@@ -1575,7 +1677,10 @@ def render_markdown(r: HarvestReport) -> str:
     # harvestable; only fully-blocked lots go to the wash-sale section.
     lines += ["## Harvest plan (eligible lots, ranked)", ""]
     eligible = [l for l in r.lots if l.id in r.eligible_lot_ids]
-    if not eligible:
+    if not eligible and r.unverified_loss > 0:
+        lines.append("- No lot is cleared to harvest until its wash-sale history is "
+                     "confirmed; see \"Held back\" below.")
+    elif not eligible:
         lines.append("- No eligible losing lots — nothing to harvest.")
     else:
         lines += ["| Lot | Ticker | Account | Held | Allowed loss | "
@@ -1600,6 +1705,17 @@ def render_markdown(r: HarvestReport) -> str:
                       "portion may shift to taxable replacement basis; an IRA/Roth replacement "
                       "loses it permanently. See the replacement basis plan._"]
     lines.append("")
+
+    held = [l for l in r.lots if l.history_gap]
+    if held:
+        lines += ["## Held back: wash-sale history not confirmed", "",
+                  "| Lot | Ticker | Account | Held | Loss held back | Why |",
+                  "|---|---|---|---|---:|---|"]
+        for l in held:
+            lines.append(f"| {l.id} | {l.ticker} | {l.account} | "
+                         f"{l.holding_period.upper()} | {_money(l.allowed_loss)} | "
+                         f"{l.history_gap} |")
+        lines.append("")
 
     adjustments = [(lot, a) for lot in r.lots for a in lot.wash_sale_adjustments]
     if adjustments:
@@ -1742,6 +1858,10 @@ def render_markdown(r: HarvestReport) -> str:
               "- **Accounts are pooled across the holdings file.** The user controls which "
               "accounts to include — to model §1091's spouse/IRA reach, include those "
               "accounts' transactions.",
+              "- **A lot is cleared only against confirmed history.** `transaction_coverage` "
+              "must name every account §1091 reaches (yours, your spouse's, your IRAs) and "
+              "span 30 days before the sale through the sale, or through today for a sale "
+              "still planned. Without it every taxable loss is held back, not read as clear.",
               "- **Federal only on the anchored side.** State savings is a simplified "
               "estimate (state ordinary marginal rate × federal taxable-income reduction); "
               "states with preferential capital-gains treatment or non-conformity may "
