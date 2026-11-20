@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from agents.lib import receipt  # noqa: E402
+from agents.lib import material_evidence, receipt  # noqa: E402
 from agents.lib.receipt import ReceiptError, verify  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -316,6 +316,15 @@ class TestTheInvalidationSetIsTheInputSetAndNothingWider:
         _passing(_workspace(tmp_path))
         (tmp_path / "answers.md").write_text("## Resolved\n- asked and answered\n")
         assert verify(tmp_path).valid
+
+    def test_recorded_material_items_cannot_be_dropped_by_rerunning_the_tie_out(self, tmp_path):
+        _workspace(tmp_path)
+        material_evidence.record(tmp_path, "source-field", "W-2 Box 12", "open", [])
+        _passing(tmp_path)
+        (tmp_path / material_evidence.FILENAME).unlink()
+        assert any("material_evidence.json is gone" in reason for reason in verify(tmp_path).reasons)
+        with pytest.raises(ReceiptError, match="Restore material_evidence.json"):
+            receipt.record(tmp_path, "tie_out", receipt.PASS)
 
     def test_a_new_summary_or_review_file_leaves_the_receipt_valid(self, tmp_path):
         _passing(_workspace(tmp_path))

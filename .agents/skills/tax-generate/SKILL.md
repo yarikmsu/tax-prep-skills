@@ -209,8 +209,9 @@ draft. Read it to the user before they file.
 **It REFUSES (exit 2) when the validation receipt is stale** — when
 /tax-compute's Step 0.7, Step 12.6 and Step 12.7 gates did not run, did not
 pass, or passed against inputs that have since changed. Re-run `/tax-compute` rather than working
-around it. `--draft` renders anyway and stamps **NOT VALIDATED** in the page-1
-box with the reason; never file from a draft.
+around it. Open or stale material outcomes also prevent final export. `--draft`
+renders anyway and stamps **NOT VALIDATED** in the page-1 box with each reason,
+including the name of every open item. Never file from a draft.
 
 **A workspace that has run an older version of this skill still has a
 `generate_tax_pdf.py` at its root.** It is no longer used. Leave it alone or
@@ -253,7 +254,8 @@ package has four parts:
    pass, or passed against inputs that have since changed (a document that
    arrived after the tie-out, a derived line edited after the check, a re-fetched
    cache). It names each one. Re-run
-   `/tax-compute` rather than working around it: the gates rewrite the receipt.
+   `/tax-compute` to refresh the receipt after resolving the listed items.
+   Open or stale material outcomes also prevent final export.
    `--draft` assembles anyway and marks the package **NOT VALIDATED** at the top;
    carry that banner onto page 1 of the PDF beside the Scope & Limitations box,
    and never file from a draft.

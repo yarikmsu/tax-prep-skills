@@ -154,6 +154,7 @@ SKILL_MODULES = (
     ("agents.lib.filing_package", "/tax-generate's filing-package assembly", "assembly_order"),
     ("agents.lib.irs_dates", "the §7503 next-business-day deadline arithmetic", "next_business_day"),
     ("agents.lib.loss_harvest", "/tax-harvest's wash-sale scanner", "derive_holding_period"),
+    ("agents.lib.material_evidence", "the material filing outcomes bound to the receipt", "read"),
     ("agents.lib.parse_utils", "/tax-parse's document extraction", "extract_pdf_text"),
     ("agents.lib.pdf_render", "/tax-generate's summary-PDF renderer", "render"),
     ("agents.lib.projection", "/tax-project's mid-year projection", "_main"),

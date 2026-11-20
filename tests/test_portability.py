@@ -1288,7 +1288,7 @@ class TestRuntimeWorkspaceIgnored:
     # rather than as the two entries that were missing, because the installer's
     # own comment records this list drifting from the tracked .gitignore once
     # already.
-    SENSITIVE_FILES = ["generate_tax_pdf.py", ".planning/HANDOFF.json",
+    SENSITIVE_FILES = ["generate_tax_pdf.py", ".planning/HANDOFF.json", "material_evidence.json",
                        "taxpayer_profile.json", "result.json",
                        "parse_ledger.json", "holdings.json",
                        # The rest of AGENTS.md §6's runtime file list, added
