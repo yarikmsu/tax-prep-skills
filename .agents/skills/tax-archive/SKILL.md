@@ -6,7 +6,7 @@ license: Apache-2.0
 
 # /tax-archive
 
-Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md`, `parse_ledger.json`, `tax_law_{year}.json`, `summaries/`, `documents/`, `reviews/`) into `archive/{year}/` so the workspace can be initialized for a new tax year.
+Move current-year tax files (`result.json`, `taxpayer_profile.json`, `answers.md`, `parse_ledger.json`, `material_evidence.json`, `validation_receipt.json`, `tax_law_{year}.json`, `summaries/`, `documents/`, `reviews/`) into `archive/{year}/` so the workspace can be initialized for a new tax year.
 
 ## Usage
 ```

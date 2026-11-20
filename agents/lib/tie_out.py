@@ -71,7 +71,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib import receipt  # noqa: E402
+from agents.lib import material_evidence, receipt  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -3644,7 +3644,10 @@ def _main(argv: list) -> int:
         # bound to. Hashing after the verdict would bind a PASS to a document
         # that arrived while the report was being written — a gate certifying a
         # file it never saw, which is what the receipt exists to catch (V8).
-        gate_inputs = receipt.gate_inputs(workspace, "tie_out")
+        evidence_raw, _ = material_evidence.read(workspace)
+        gate_inputs = receipt.gate_inputs(workspace, "tie_out", contents={
+            material_evidence.FILENAME: evidence_raw,
+        })
         ledger = load_ledger(_read_json(ledger_path, "parse_ledger.json"))
         result = _read_json(result_path, "result.json")
         crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
@@ -3740,7 +3743,8 @@ def _main(argv: list) -> int:
                           crypto_source=crypto_source,
                           profile=prof, tax_law=ca_law)
         markdown = render_markdown(report)
-    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError,
+            material_evidence.MaterialEvidenceError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 

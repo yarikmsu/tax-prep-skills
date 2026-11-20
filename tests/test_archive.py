@@ -68,14 +68,17 @@ def test_reviews_and_parse_ledger_archived(workspace):
     (workspace / "reviews" / "2024-review.md").write_text("# Review")
     (workspace / "parse_ledger.json").write_text(json.dumps({"records": []}))
     (workspace / "validation_receipt.json").write_text(json.dumps({"gates": {}}))
+    (workspace / "material_evidence.json").write_text(json.dumps({"version": 1, "items": {}}))
     archive_year(2024, root=workspace)
     archive = workspace / "archive" / "2024"
     assert (archive / "reviews" / "2024-review.md").exists()
     assert (archive / "parse_ledger.json").exists()
     assert (archive / "validation_receipt.json").exists()
+    assert (archive / "material_evidence.json").exists()
     assert not (workspace / "reviews").exists()
     assert not (workspace / "parse_ledger.json").exists()
     assert not (workspace / "validation_receipt.json").exists()
+    assert not (workspace / "material_evidence.json").exists()
 
 
 def test_refuses_if_archive_exists(workspace):
