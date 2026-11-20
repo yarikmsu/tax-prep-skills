@@ -196,8 +196,9 @@ def harvest_case(gain=500000, loss=10000, *, short_loss=0, taxable=True):
     # is WA pricing, not AA127's hold for unconfirmed history.
     h = dict(as_of='2025-12-15', lots=[dict(id='LT', ticker='ABC', account='Taxable',
         acquired='2023-01-01', quantity=100, cost_basis=loss+100, current_value=100)],
-        transaction_coverage=dict(accounts=['Taxable', 'Other'], **{'from': '2024-12-01'},
-                                  through='2025-12-15'),
+        recent_transactions=[],
+        transaction_coverage={'accounts': ['Taxable', 'Other'], 'from': '2024-12-01',
+                              'through': '2025-12-15'},
         wa_harvest=dict(deductions_unchanged=True, taxable_lots=dict(LT=taxable)))
     if short_loss:
         h['lots'].append(dict(id='ST', ticker='DEF', account='Taxable', acquired='2025-06-01',
