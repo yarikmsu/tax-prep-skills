@@ -2,13 +2,13 @@
 
 **A tax return is a good test of whether an AI agent can be trusted with work that must not be wrong.** Every figure is checkable, the rules change annually, being confidently wrong costs real money and IRS attention, and the input is a folder of documents nobody wants leaving their laptop.
 
-This is a reusable, taxpayer-agnostic toolkit of `tax-*` skills that walk an agent through the full US federal + state pipeline — parsing source documents, computing every form line, producing a filing package, and reviewing the result from both an enrolled agent's and an IRS officer's perspective. It runs entirely on your machine.
+The `tax-*` skills guide an AI coding agent through U.S. individual tax preparation. The toolkit parses supported documents, computes supported federal and state forms, builds a filing package, and guides a review. Some return positions require manual worksheets or separate preparation.
 
 The tax math is the easy half. The interesting half is the machinery that stops a *plausible* answer from passing as a correct one:
 
-- **No tax law is hardcoded.** Every rate, bracket and threshold is fetched from IRS.gov at runtime and cached per year. If your agent's web access is cached rather than live, the skills stop and ask you — they never fall back to last year's figure. A stale bracket produces a return that is wrong and looks perfect, and no test, gate or review step downstream can detect it.
-- **Every document must reach the return.** `tax-parse` records each source file it read; `tax-compute` hard-fails if a recorded document's amounts never appear in the result. That is the dropped-1099 CP2000 scenario, and it cannot pass silently.
-- **The engine refuses to guess.** Situations it cannot compute — rental Schedule E, part-year residency, the premium tax credit, kiddie tax — block with the form named instead of producing a number, and stay blocked until you acknowledge the limitation explicitly. [Who this fits](docs/WHO-IT-FITS.md) measures how often that happens in the places this toolkit is built for.
+- **Indexed tax figures are fetched for the covered year.** The agent obtains rates and limits from the IRS and state tax agencies. The skills require live sources and stop for covered-year figures when only cached search is available.
+- **Recorded source amounts are reconciled.** `tax-parse` records the source documents it reads. `tax-compute` ties supported ledger categories to the result and reports mismatches and categories it cannot verify.
+- **Unsupported situations raise named limitations.** Examples include premium tax credit reconciliation, kiddie tax, and rentals outside the reviewed Schedule E scope. Acknowledging a limitation leaves any required calculation or form to be completed separately. TY2025 Schedule E supports certain directly owned long-term residential rentals for full-year California filers and covered no-income-tax regimes. [Rental scope and required worksheets](docs/contributing/rental-income.md).
 - **Bias direction decides severity.** When data is missing or ambiguous, a fallback that *overstates* the number you act on is a hard error; one that understates it degrades with a loud banner. Never a silent guess in the expensive direction.
 - **A skill without its engine refuses to run.** The gates above are scripts in `agents/lib/`, which does not travel when a skill is copied elsewhere. Copied alone, a skill still reads as a complete procedure while every gate silently does nothing — so each one now opens with a preflight, and failing to *run* that check is itself the block.
 
@@ -18,9 +18,17 @@ Those five rules are the actual subject of this repository. The [test suite](doc
 
 Runs on **OpenAI Codex, Cursor, Kimi Code, GitHub Copilot and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)**. The first four discover the skills in `.agents/skills/` automatically with no install step; Claude Code works out of the box too, and `agents/install.sh` adds a global install. Each agent has sharp edges worth knowing before your first run — cached web search silently yielding last year's tax brackets, cloud agent modes that retain your documents — all documented in [per-agent compatibility notes](docs/contributing/agents-compat.md).
 
-Works for any filing status and any tax year. **State support:** California's Form 540 combines engine functions with manual worksheets and named capability gates. New York's Form IT-201 is computed for the supported cases (the State tax, the New York City resident tax, the Yonkers taxes and the MCTMT). North Carolina's Form D-400 is also computed for a full-year resident under the source-verified TY2025 instructions, with other form years refused until verified. CA Form540, NC and IT-201 require full-year residency. CA also has a separately declared TY2025 part-year Form540NR with reviewed source allocations, worldwide/source deduction and AMT worksheets, and an input-bound final review; [its contract](docs/contributing/state-module-ca-part-year.md) names the household and worksheet limits. Its ordinary projections and withholding forecasts stay manual. NY's TY2025 IT-203 variant additionally supports part-year/nonresident returns and NYC IT-360.1 with explicit residence dates and reviewed source allocations; its declared filing plan selects NY law independently of mailing address. It clears move/source blocks only when every other resident/source state has no income tax and requires no return. Other taxable-state returns and their credit worksheets still need separate preparation, and statutory second residency/foreign moves retain their gates. MFS, differing spouse residence periods, special IT-230 ratios and IT-203 Yonkers tax refuse. Its NY withholding forecasts and ordinary projections remain manual. IT-201's full-year City/Yonkers rules remain as documented in the playbook. Alaska, Florida, Nevada, South Dakota, Texas, Wyoming and Tennessee (from 2021) are treated as having no income tax, and income sourced to one of them does not stop a return; Washington’s separate LT capital-gains excise is computed for TY2025 from confirmed classifications and eligibility worksheets; separate spouses/RDPs, special federal gains and midyear domicile changes refuse. WA has no individual wage income tax, no required quarterly estimates, and files separately through My DOR. Every remaining state gets a bracket-based estimate only. The skills are state-parameterized, so adding another state is a well-scoped contribution — see the [state-module playbook](docs/contributing/state-module-playbook.md) for the pattern (fetched-law block, result section, compute functions, registrations, tests). PRs welcome.
+### Filing coverage
 
-> **This toolkit handles sensitive financial data.** All taxpayer information stays local on your machine. Full SSNs are never stored — only the last 4 digits. Pre-commit hooks block accidental commits of sensitive files. See [Security & Privacy](#security--privacy) for details.
+Coverage depends on the form year, filing status, residency, and facts of the return. Check the form-specific scope before adding source documents.
+
+- **California.** The TY2025 Form 540 combines computation and manual worksheets for supported full-year residents. The separately declared TY2025 Form 540NR path covers supported part-year residents with reviewed source allocations and worksheets. Part-year projections and withholding forecasts require separate work. [Form 540](docs/contributing/state-module-ca.md) · [Form 540NR](docs/contributing/state-module-ca-part-year.md).
+- **New York.** Form IT-201 covers supported full-year residents, including certain NYC, Yonkers, and MCTMT calculations. TY2025 Form IT-203 covers supported part-year and nonresident returns and NYC Form IT-360.1 with reviewed source allocations and a declared filing plan. The supported IT-203 path requires any other resident or source state to be a covered no-income-tax state with no return due. IT-203 withholding forecasts and ordinary NY projections remain manual. [New York coverage and limits](docs/contributing/state-module-ny.md).
+- **North Carolina.** The TY2025 Form D-400 is computed for supported full-year residents. Scope limits apply to some deductions, credits, and payment worksheets. [North Carolina coverage and limits](docs/contributing/state-module-nc.md).
+- **Washington.** The toolkit computes the separate TY2025 long-term capital-gains excise for supported households with full-year Washington domicile and confirmed classifications and eligibility worksheets. Washington has no individual wage income tax. [Washington coverage and limits](docs/contributing/state-module-wa.md).
+- **Other states.** Alaska, Florida, Nevada, South Dakota, Texas, Wyoming and Tennessee (from 2021) are treated as having no individual income tax. For other states with income tax, the toolkit can provide bracket-based estimates only. [State regimes](docs/contributing/state-module-playbook.md).
+
+> **Privacy before intake.** The toolkit writes taxpayer files locally and its code does not upload them. Your AI agent can send prompts and tool output, including parsed tax data, to its model provider. Use a local agent session for real returns and review the provider’s data handling and retention terms before sharing data with it. [Security policy](SECURITY.md).
 
 ## Prerequisites
 
@@ -73,11 +81,11 @@ Equivalent per invocation: `codex --search`. For the other agents see the
 live web search at all, the skills stop and ask you to paste the current figures
 with their source URL — let them.
 
-**5. Start your agent in this directory.** Put your source documents in
-`documents/`, then invoke the setup skill.
+**5. Start your agent in this directory.** Check the filing coverage and privacy
+notes above, then invoke the setup skill.
 
-Then ask your agent to run the setup skill. **How you invoke a skill differs by
-agent** — only Claude Code and Cursor use a bare slash command:
+**How you invoke a skill differs by agent.** Only Claude Code and Cursor use a
+bare slash command:
 
 | Agent | Invoke it with | List available skills |
 |---|---|---|
@@ -101,7 +109,8 @@ entries beginning with `tax-`. Two further skills, `codex-loop` and
 `state-module`, are for working on the toolkit itself and play no part in
 preparing a return — ignore them here.
 
-This starts the taxpayer interview and creates your workspace.
+This starts the taxpayer interview and creates your workspace. After setup,
+place your source documents in `documents/` before running `tax-parse`.
 
 > **The clone is your workspace, not just the tool.** `documents/`,
 > `taxpayer_profile.json`, `result.json`, `summaries/` and the generated PDFs are
@@ -224,7 +233,9 @@ Gather these documents before starting `tax-parse`:
 
 ## Security & Privacy
 
-This toolkit is designed to handle sensitive tax data safely.
+The toolkit keeps its files on disk and does not upload them. A connected AI
+agent may transmit prompts and tool output to its provider. See the
+[security policy](SECURITY.md) for both boundaries.
 
 ### What's Protected
 
