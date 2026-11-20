@@ -4907,3 +4907,30 @@ and #118's backlog edits left to this record.
 - The source record is in `docs/contributing/parse-boundary.md`. Left by the
   review: AA110, the layouts it found on synthetic tables and PDFs, and AA111,
   the parse cost the change added.
+
+## AA127 — harvest losses held back without confirmed history, first step (#128)
+
+- `/tax-harvest` read a missing `recent_transactions` list as no purchases,
+  cleared every losing lot of §1091 and counted the whole loss as savings. On
+  the harvest fixture with its history removed, savings rose from $1,886.25 to
+  $2,097 with nothing saying the history was missing.
+- `holdings.json` takes a `transaction_coverage` statement, and
+  `_coverage_gap` answers once for the whole file, because §1091 reaches every
+  account at once. A list must be present; the window runs from 30 days before
+  the sale to the earlier of 30 days after it and today; every account the
+  file names must be in the statement; and a lot bought inside the window
+  needs its buy. Until then every taxable losing lot's allowed loss lands in
+  `unverified_loss`, out of the plan and the savings, with the reason in the
+  banner. A non-list `recent_transactions` is refused.
+- Review of the first head (four `/simplify` angles and the bias-direction
+  reviewer) found it still over-stated. Coverage was checked per lot, so a
+  statement naming only the brokerage account cleared every lot while the
+  file's own buys showed a spouse's account. Four more paths cleared lots the
+  statement did not support: a missing or misspelled list, a non-list value,
+  a lot bought in the window without its buy, and the elapsed days after a
+  past sale. Fourteen mutations, one per rule, each turn a test red.
+- Skipped, with reasons in the PR: the WA pricer's classification of held
+  lots, moot under an all-or-nothing hold; the testing-only `--today` flag;
+  and the pre-existing quadratic `others` list.
+- Left open in AA127: substantially identical securities, the post-sale
+  window and the effects breakout.
