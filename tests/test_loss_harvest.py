@@ -23,13 +23,13 @@ def _load(name):
     return json.loads((FIX / name).read_text())
 
 
-def _build(holdings=None, tax_law=None, name="harvest", profile=None):
+def _build(holdings=None, tax_law=None, name="harvest", profile=None, today=TODAY):
     return lh.build_harvest(
         _load("result.json"),
         profile if profile is not None else _load("taxpayer_profile.json"),
         tax_law if tax_law is not None else _load("tax_law_2026.json"),
         holdings if holdings is not None else _load("holdings.json"),
-        2026, name=name, today=TODAY,
+        2026, name=name, today=today,
     )
 
 
@@ -481,10 +481,9 @@ def test_build_harvest_allows_missing_cg_when_no_preferential_income():
         "part_ii_long_term": {"line_15_net_long_term": 0},
         "line_16_combined": 0,
     }
-    h = {"as_of": "2026-12-15",
-         "lots": [{"id": "ST", "ticker": "X", "account": "A",
-                   "acquired": "2026-06-01", "quantity": 10,  # short-term lot
-                   "cost_basis": 1000, "current_value": 500}]}
+    h = _holdings_with([{"id": "ST", "ticker": "X", "account": "A",
+                         "acquired": "2026-06-01", "quantity": 10,  # short-term lot
+                         "cost_basis": 1000, "current_value": 500}])
     law = _load("tax_law_2026.json")
     law["federal"].pop("capital_gains_rates", None)
     # Must succeed — no exception. Returns a real report.
@@ -644,8 +643,14 @@ def test_render_markdown_shows_niit_banner_when_not_modeled():
 # --------------------------------------------------------------------------
 
 def _holdings_with(lots, txns=None):
+    # Proration tests state complete history for every account they name, so
+    # what they measure is the matcher, not AA127's hold for missing history.
+    accounts = sorted({l["account"] for l in lots}
+                      | {t["account"] for t in (txns or []) if t.get("account")})
     return {"as_of": "2026-12-15", "lots": lots,
-            "recent_transactions": (txns or [])}
+            "recent_transactions": (txns or []),
+            "transaction_coverage": {"accounts": accounts, "from": "2026-11-15",
+                                     "through": "2026-12-15"}}
 
 
 def test_proration_1_share_drip_against_100_share_lot():
@@ -1345,12 +1350,9 @@ def test_build_harvest_zero_eligible_when_no_losses():
 
 def test_build_harvest_loss_exceeds_gains_triggers_3k_cap_and_carryforward():
     # No baseline gains — synthesize a result.json fixture with zero Sched D.
-    h = {
-        "as_of": "2026-12-15",
-        "lots": [{"id": "BIG", "ticker": "ZZZ", "account": "A",
-                  "acquired": "2020-01-01", "quantity": 100,
-                  "cost_basis": 60000, "current_value": 50000}],  # LT loss 10000
-    }
+    h = _holdings_with([{"id": "BIG", "ticker": "ZZZ", "account": "A",
+                         "acquired": "2020-01-01", "quantity": 100,
+                         "cost_basis": 60000, "current_value": 50000}])  # LT loss 10000
     res = _load("result.json")
     res["form_1040"]["line_7_capital_gain"] = 0
     res["schedule_d"] = {
@@ -1367,12 +1369,9 @@ def test_build_harvest_loss_exceeds_gains_triggers_3k_cap_and_carryforward():
 
 
 def test_build_harvest_mfs_uses_1500_loss_cap():
-    h = {
-        "as_of": "2026-12-15",
-        "lots": [{"id": "BIG", "ticker": "ZZZ", "account": "A",
-                  "acquired": "2020-01-01", "quantity": 100,
-                  "cost_basis": 60000, "current_value": 50000}],
-    }
+    h = _holdings_with([{"id": "BIG", "ticker": "ZZZ", "account": "A",
+                         "acquired": "2020-01-01", "quantity": 100,
+                         "cost_basis": 60000, "current_value": 50000}])
     res = _load("result.json")
     res["meta"]["filing_status"] = "MFS"
     res["form_1040"]["line_7_capital_gain"] = 0
@@ -2145,3 +2144,213 @@ def test_an_itemizer_with_recorded_inputs_is_repriced_at_the_harvested_agi():
     assert lh._report_to_dict(priced)["schedule_a_repriced"] is True
     # The state estimate stays on the held federal taxable-income change.
     assert priced.state_savings == held.state_savings
+
+
+# --------------------------------------------------------------------------
+# AA127: no lot reads as clear without confirmed transaction history
+# --------------------------------------------------------------------------
+#
+# Fixture losses, by hand: L1 VTSAX $1,500 (LT), L2 AAPL $2,500 (ST), L4 TSLA
+# $3,000 (LT; the spouse's 5-share buy disallows 5/20 of it, $750), L5 META
+# $1,500 inside an IRA (never deductible). $8,500 unrealized in all.
+_TAXABLE_LOSERS = {"L1", "L2", "L4"}
+
+def _without_coverage():
+    h = _load("holdings.json")
+    h.pop("transaction_coverage", None)
+    return h
+
+
+def test_missing_history_holds_every_taxable_loss_back():
+    # The reproduced finding: with no history the scanner read every lot as
+    # clear, printed "Wash-sale disallowed | $0" and counted the whole loss.
+    h = _without_coverage()
+    h.pop("recent_transactions")
+    r = _build(holdings=h)
+    assert r.eligible_lot_ids == []
+    assert r.total_loss_harvested == 0
+    assert r.total_savings == 0
+    assert r.unverified_loss == 7000.0          # 1,500 + 2,500 + 3,000
+    assert {l.id for l in r.lots if l.history_gap} == _TAXABLE_LOSERS
+    # The reason names the fix: the missing statement, not a missing account.
+    assert all("no transaction_coverage" in l.history_gap
+               for l in r.lots if l.history_gap)
+
+
+def test_listed_buys_still_disallow_while_the_rest_is_held_back():
+    r = _build(holdings=_without_coverage())
+    tsla = next(l for l in r.lots if l.id == "L4")
+    assert tsla.disallowed_loss == 750.0
+    assert r.wash_sale_blocked_loss == 750.0
+    assert r.unverified_loss == 6250.0          # 1,500 + 2,500 + (3,000 - 750)
+    assert r.total_savings == 0
+    # Every loss lands in exactly one bucket.
+    assert round(r.total_loss_harvested + r.wash_sale_blocked_loss
+                 + r.tax_advantaged_loss + r.unverified_loss, 2) == 8500.0
+
+
+def test_confirmed_history_restores_the_plan():
+    r = _build()
+    assert set(r.eligible_lot_ids) == _TAXABLE_LOSERS
+    assert r.unverified_loss == 0
+    assert all(l.history_gap is None for l in r.lots)
+
+
+def test_confirmed_empty_history_clears_lots():
+    # An explicit "no buys in the window" is a decision; an absent list is not.
+    h = _load("holdings.json")
+    h["recent_transactions"] = []
+    r = _build(holdings=h)
+    assert set(r.eligible_lot_ids) == _TAXABLE_LOSERS
+    assert r.wash_sale_blocked_loss == 0
+    assert r.unverified_loss == 0
+
+
+@pytest.mark.parametrize("field,value,gap", [
+    ("from", "2026-11-16", "starts 2026-11-16"),    # one day short of as_of - 30
+    ("through", "2026-12-14", "ends 2026-12-14"),   # stops before the sale date
+])
+def test_history_that_misses_the_window_holds_lots_back(field, value, gap):
+    h = _load("holdings.json")
+    h["transaction_coverage"][field] = value
+    r = _build(holdings=h)
+    assert r.eligible_lot_ids == []
+    assert all(gap in l.history_gap for l in r.lots if l.id in _TAXABLE_LOSERS)
+
+
+def test_history_through_today_covers_a_planned_sale():
+    # A sale planned for 12-15 and checked on 12-01 cannot attest the future:
+    # history through today is the most it can hold.
+    h = _load("holdings.json")
+    h["transaction_coverage"]["through"] = "2026-12-01"
+    r = _build(holdings=h, today=datetime.date(2026, 12, 1))
+    assert set(r.eligible_lot_ids) == _TAXABLE_LOSERS
+
+
+def test_a_lot_in_an_account_the_history_omits_is_held_back():
+    h = _load("holdings.json")
+    h["transaction_coverage"]["accounts"] = ["Spouse Schwab", "Fidelity IRA"]
+    r = _build(holdings=h)
+    assert r.eligible_lot_ids == []
+    assert "Schwab Brokerage" in next(l for l in r.lots if l.id == "L1").history_gap
+
+
+def test_coverage_accounts_match_like_transaction_accounts():
+    h = _load("holdings.json")
+    h["transaction_coverage"]["accounts"] = ["  schwab BROKERAGE ", "spouse schwab",
+                                             "FIDELITY IRA"]
+    assert set(_build(holdings=h).eligible_lot_ids) == _TAXABLE_LOSERS
+
+
+@pytest.mark.parametrize("coverage,match", [
+    ("all accounts", "transaction_coverage must be a JSON object"),
+    ({"from": "2026-11-15", "through": "2026-12-15"}, "transaction_coverage.accounts"),
+    ({"accounts": [], "from": "2026-11-15", "through": "2026-12-15"},
+     "transaction_coverage.accounts"),
+    ({"accounts": ["A", " "], "from": "2026-11-15", "through": "2026-12-15"},
+     "transaction_coverage.accounts"),
+    ({"accounts": ["A"], "from": "2026-11-15"}, "transaction_coverage.through"),
+    ({"accounts": ["A"], "from": "11/15/2026", "through": "2026-12-15"},
+     "transaction_coverage.from"),
+    ({"accounts": ["A"], "from": "2026-12-20", "through": "2026-12-15"},
+     "transaction_coverage.from is after"),
+])
+def test_malformed_coverage_is_refused(coverage, match):
+    h = _load("holdings.json")
+    h["transaction_coverage"] = coverage
+    with pytest.raises(lh.LossHarvestError, match=match):
+        _build(holdings=h)
+
+
+def test_report_says_the_history_is_missing():
+    md = lh.render_markdown(_build(holdings=_without_coverage()))
+    assert "Wash-sale history not confirmed" in md
+    assert "| Held back: wash-sale history not confirmed | $6,250 |" in md
+    assert "| Total unrealized losses (all lots) | $8,500 |" in md
+    assert "nothing to harvest" not in md
+
+
+def test_json_carries_the_held_back_loss_and_the_coverage():
+    data = lh._report_to_dict(_build(holdings=_without_coverage()))
+    assert data["unverified_loss"] == 6250.0
+    assert data["transaction_coverage"] is None
+    assert lh._report_to_dict(_build())["transaction_coverage"] == {
+        "accounts": ["Schwab Brokerage", "Spouse Schwab", "Fidelity IRA"],
+        "from": "2026-11-15", "through": "2026-12-15"}
+
+
+def test_history_that_omits_an_account_the_file_names_holds_every_lot_back():
+    # §1091 reaches every account at once: naming the lots' own account is not
+    # enough when the file's own buys and lots show accounts the statement omits
+    # (the spouse's brokerage, the IRA).
+    h = _load("holdings.json")
+    h["transaction_coverage"]["accounts"] = ["Schwab Brokerage"]
+    r = _build(holdings=h)
+    assert r.eligible_lot_ids == []
+    assert r.total_savings == 0
+    gap = next(l for l in r.lots if l.id == "L1").history_gap
+    assert "Spouse Schwab" in gap and "Fidelity IRA" in gap
+
+
+def test_a_statement_without_a_transaction_list_holds_lots_back():
+    # A misspelled or missing list beside a coverage statement is not "no
+    # purchases": the spouse's TSLA buy would silently vanish.
+    h = _load("holdings.json")
+    h["transactions"] = h.pop("recent_transactions")
+    r = _build(holdings=h)
+    assert r.eligible_lot_ids == []
+    assert "recent_transactions" in next(l for l in r.lots if l.id == "L1").history_gap
+
+
+@pytest.mark.parametrize("value", [{}, False, "", 0])
+def test_a_transaction_list_that_is_not_a_list_is_refused(value):
+    h = _load("holdings.json")
+    h["recent_transactions"] = value
+    with pytest.raises(lh.LossHarvestError, match="'recent_transactions' must be a list"):
+        _build(holdings=h)
+
+
+def _with_lot_bought_in_window(listed):
+    # L6: 10 VTSAX bought 2026-12-01 in the window, at a gain. It is a
+    # replacement purchase for L1's loss whether or not its buy is listed.
+    h = _load("holdings.json")
+    h["lots"].append({"id": "L6", "ticker": "VTSAX", "account": "Schwab Brokerage",
+                      "acquired": "2026-12-01", "quantity": 10,
+                      "cost_basis": 1000, "current_value": 1100})
+    if listed:
+        h["recent_transactions"].append({"ticker": "VTSAX", "account": "Schwab Brokerage",
+                                         "date": "2026-12-01", "kind": "buy", "quantity": 10})
+    return h
+
+
+def test_a_lot_bought_in_the_window_without_its_buy_holds_lots_back():
+    r = _build(holdings=_with_lot_bought_in_window(listed=False))
+    assert r.eligible_lot_ids == []
+    assert "L6" in next(l for l in r.lots if l.id == "L1").history_gap
+
+
+def test_a_lot_bought_in_the_window_with_its_buy_listed_is_matched():
+    r = _build(holdings=_with_lot_bought_in_window(listed=True))
+    l1 = next(l for l in r.lots if l.id == "L1")
+    assert l1.history_gap is None
+    assert l1.disallowed_loss == 150.0          # 10 of 100 shares × 1,500
+
+
+@pytest.mark.parametrize("through,cleared", [("2026-12-01", False), ("2026-12-20", True)])
+def test_a_past_sale_needs_history_through_what_is_knowable(through, cleared):
+    # Sale on 12-01, checked on 12-20: purchases 12-02..12-20 have happened and
+    # fall inside the 30 days after the sale, so the history must reach today.
+    h = _load("holdings.json")
+    h["as_of"] = "2026-12-01"
+    h["transaction_coverage"].update({"from": "2026-11-01", "through": through})
+    r = _build(holdings=h, today=datetime.date(2026, 12, 20))
+    assert bool(r.eligible_lot_ids) is cleared
+
+
+def test_the_banner_names_what_is_wrong_with_a_stated_history():
+    h = _load("holdings.json")
+    h["transaction_coverage"]["accounts"] = ["Schwab Brokerage", "Fidelity IRA"]
+    md = lh.render_markdown(_build(holdings=h))
+    banner = next(line for line in md.splitlines() if "history not confirmed —" in line)
+    assert "Spouse Schwab is not in transaction_coverage.accounts" in banner
+    assert "Add `transaction_coverage`" not in banner

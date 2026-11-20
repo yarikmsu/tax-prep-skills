@@ -68,6 +68,11 @@ permissions through the same guarded writer `/tax-scenario` uses.
 ```json
 {
   "as_of": "2026-12-15",
+  "transaction_coverage": {
+    "accounts": ["Schwab Brokerage", "Spouse Schwab", "Fidelity IRA"],
+    "from": "2026-11-15",
+    "through": "2026-12-15"
+  },
   "lots": [
     {
       "id": "L1",
@@ -155,6 +160,17 @@ permissions through the same guarded writer `/tax-scenario` uses.
   rules — and the scanner correctly catches it). Account comparison is case-insensitive
   and whitespace-trimmed. Brokerage CSVs always include account info; paste the full
   transaction list and the scanner does the right thing.
+- **`transaction_coverage`**: the user's statement that `recent_transactions` is the
+  whole history. `accounts` names every account `recent_transactions` must include
+  (above), by the labels the lots and buys use, and must include every account the
+  file itself mentions. `from` and `through` are the trade dates the history spans:
+  from 30 days before `as_of` through the earlier of 30 days after it and today. With
+  the statement, `recent_transactions` must be present, an empty list means "no
+  purchases in the window", and every lot acquired inside the window needs its buy
+  listed. **Until the statement covers the whole file, the scanner holds back every
+  taxable losing lot** — out of the plan and the savings, under "Held back", with the
+  reason in the report's banner — rather than reading a lot as clear. A malformed
+  statement, or a `recent_transactions` that is not a list, is refused.
 
 ## Steps
 
@@ -193,9 +209,15 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
 2. **Sanity-check the holdings.**
    - Per-lot: `current_value < cost_basis` → at a loss; `acquired` is not in the future;
      `quantity > 0`. The library rejects malformed inputs.
-   - Pool all accounts subject to §1091 reach (spouse + IRAs). If the user has accounts
-     OUTSIDE the file (e.g. spouse's brokerage they forgot to include), warn — wash-sale
-     blocking can only check what's in the file.
+   - Pool all accounts subject to §1091 reach. **Ask the user** which accounts those
+     are, and whether each one's purchases across the window are in
+     `recent_transactions`: dividend reinvestments, automatic investments, RSU vests and
+     ESPP purchases of the same stock included. Purchases scheduled for the 30 days
+     after the sale are planned buys to list, or to stop. Record the answer as
+     `transaction_coverage` (schema above). Never write the statement on the user's
+     behalf from what the file already holds: an account missing from the file is
+     exactly what it exists to catch. If they cannot confirm an account, leave it out;
+     the scanner holds the losses back and says why.
 
 3. **Compute.** Run:
    ```bash
@@ -213,6 +235,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    - **Harvest plan** — ranked eligible lots with per-lot value-per-dollar (ST losses
      rank above LT losses when there is ordinary income to offset).
    - **Wash-sale blocked lots** — what's locked out, by which transaction, until when.
+   - **Held back** — losses held back because the transaction history is not
+     confirmed; the banner names the reason. They are not savings yet: say what would
+     confirm them, then re-run.
 
 5. **Action plan.** Recommend the user:
    - **Trade by the final trading day of the tax year** (December 31, or the prior
@@ -264,7 +289,9 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   tracking the same index are NOT flagged (the very strategy users want), but the IRS
   has no bright-line rule on this — consult guidance for your situation.
 - **Accounts are pooled across the file.** The user controls which accounts to include.
-  Omitting a spouse account or an IRA hides §1091 reach.
+  Omitting a spouse account or an IRA hides §1091 reach, which is why a lot is cleared
+  only against a `transaction_coverage` statement that covers every account the file
+  names.
 - **QSBS §1202 (not modeled — do not assert the old rule).** OBBBA revised §1202 for
   qualified small-business stock ACQUIRED after 2025-07-04: a tiered exclusion of
   50% / 75% / 100% at 3 / 4 / 5-year holding (vs the old flat 5-year / 100%-only), with

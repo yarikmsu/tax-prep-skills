@@ -1,5 +1,10 @@
 {
   "as_of": "2026-12-15",
+  "transaction_coverage": {
+    "accounts": ["Schwab Brokerage", "Spouse Schwab", "Fidelity IRA"],
+    "from": "2026-11-15",
+    "through": "2026-12-15"
+  },
   "lots": [
     {
       "id": "L1",
