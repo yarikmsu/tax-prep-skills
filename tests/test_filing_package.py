@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from agents.lib import filing_package as FP  # noqa: E402
+from agents.lib import capabilities, filing_package as FP, material_evidence, receipt  # noqa: E402
 
 
 def _result(**sections):
@@ -301,6 +301,86 @@ def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
     assert "NOT VALIDATED" not in out.stdout
+
+
+def _material_cli(tmp_path, *args):
+    return subprocess.run(
+        [sys.executable, "-m", "agents.lib.material_evidence", "--workspace", str(tmp_path), *args],
+        capture_output=True, text=True, cwd=FIX_REPO)
+
+
+@pytest.mark.parametrize("outcome", ["computed", "reviewed", "not_applicable"])
+def test_material_outcome_controls_export_and_reopens_on_source_change(tmp_path, outcome):
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    source = tmp_path / "reviewed-worksheet.json"
+    source.write_text("{}")
+    args = ("--id", "estimated-payments", "--label", "Form 1040 estimated payments")
+    recorded = _material_cli(tmp_path, *args, "--outcome", "open")
+    assert recorded.returncode == 0, recorded.stderr
+    material_evidence.record(tmp_path, "source-field", "W-2 Box 12", "open", [])
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
+
+    final = _package(tmp_path)
+    assert final.returncode == 2 and final.stdout == ""
+    assert "Open material item: Form 1040 estimated payments" in final.stderr
+    draft = _package(tmp_path, "--draft")
+    assert draft.returncode == 0, draft.stderr
+    assert "NOT VALIDATED" in draft.stdout
+    assert "Open material item: Form 1040 estimated payments" in draft.stdout
+    assert "Open material item: W-2 Box 12" in draft.stdout
+
+    recorded = _material_cli(tmp_path, *args, "--outcome", outcome, "--input", source.name)
+    assert recorded.returncode == 0, recorded.stderr
+    material_evidence.record(tmp_path, "source-field", "W-2 Box 12", "reviewed", [source.name])
+    assert "material_evidence.json changed" in _package(tmp_path).stderr
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    assert _package(tmp_path).returncode == 0
+
+    source.write_text('{"revised": true}')
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    stale = _package(tmp_path)
+    assert stale.returncode == 2
+    assert "Form 1040 estimated payments. A source changed or is missing." in stale.stderr
+
+
+def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(tmp_path):
+    flags = dict.fromkeys(capabilities._REQUIRED_GATE_FLAGS, False)
+    flags.update(has_marketplace_insurance=True, may_qualify_for_eic=True)
+    profile = {"tax_year": 2025, "address": {"state": "FL"}, "filing_status": "MFJ", "flags": flags,
+               "acknowledged_limitations": ["marketplace_insurance"]}
+    profile_path = tmp_path / "taxpayer_profile.json"
+    profile_path.write_text(json.dumps(profile))
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+
+    def run_gates():
+        gate = subprocess.run([sys.executable, "-m", "agents.lib.capabilities",
+                               "--workspace", str(tmp_path)], capture_output=True, text=True,
+                              cwd=FIX_REPO)
+        assert gate.returncode == 0, gate.stderr
+        assert "MANUAL WORKSHEET" in gate.stdout
+        for name in ("return_builder", "tie_out"):
+            receipt.record(tmp_path, name, receipt.PASS)
+
+    run_gates()
+    evidence = tmp_path / material_evidence.FILENAME
+    assert json.loads(evidence.read_text())["items"]["form.marketplace_insurance"]["outcome"] == "open"
+    assert "Open material item: Form 8962" in _package(tmp_path).stderr
+    draft = _package(tmp_path, "--draft", "--json")
+    assert draft.returncode == 0, draft.stderr
+    details = json.loads(draft.stdout)
+    assert not details["validated"]
+    assert any("Open material item: Form 8962" in reason for reason in details["receipt"]["reasons"])
+    failed_record = _material_cli(tmp_path, "--id", "form.marketplace_insurance",
+                                  "--label", "Form 8962", "--outcome", "reviewed",
+                                  "--input", "result.json")
+    assert failed_record.returncode == 1
+    assert "required forms must be completed through their filing workflow" in failed_record.stderr
+
+    profile["flags"]["has_marketplace_insurance"] = False
+    profile_path.write_text(json.dumps(profile))
+    run_gates()
+    assert _package(tmp_path).returncode == 0
 
 
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):

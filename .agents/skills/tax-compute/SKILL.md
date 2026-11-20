@@ -262,6 +262,29 @@ rewrites the file and certifies nothing, and a derived line edited afterwards
 invalidates the receipt rather than riding into the package. A workspace that
 last ran an older engine is refused with this gate named — re-run this step.
 
+### Step 12.65: Record material filing outcomes
+
+Record each material filing outcome under a stable id and a short form or line
+label. Use generic labels without taxpayer data. Start unresolved items as `open`.
+
+```bash
+sh agents/lib/run.sh -m agents.lib.material_evidence --id estimated-payments \
+  --label 'Form 1040 estimated payments' --outcome open
+```
+
+After completing the work, use `computed`, `reviewed`, or `not_applicable`
+for the same id and label. Supply `--input` once for each workspace-relative
+source or workpaper the outcome depends on. Keep workpapers in `reviews/` so
+they archive with the return. Include the affected result and input files when
+they determined the outcome. An input change or removal
+reopens the item. Record a new outcome only after reviewing the changed inputs.
+The writer secures `material_evidence.json`. The tie-out records its digest.
+
+The capability gate registers Form 8962 for a Marketplace case. An
+acknowledgment permits continuing the computation for a draft. Final export
+requires a completed filing route for the form, which is unavailable here.
+Manual-worksheet findings continue to carry their existing instructions.
+
 ### Step 12.7: Parse-to-return tie-out (HARD GATE)
 
 Prove every parsed document landed on the return — the CP2000 killer:
@@ -303,3 +326,5 @@ Prove every parsed document landed on the return — the CP2000 killer:
 3. This gate exists because `/tax-review` audits the already-aggregated
    result.json and structurally cannot see a document that dropped during
    aggregation — only the ledger-to-result comparison can.
+4. Run `sh agents/lib/run.sh -m agents.lib.receipt verify --json`. If it
+   lists open material items, name each one and describe the return as a draft.

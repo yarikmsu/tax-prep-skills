@@ -21,6 +21,7 @@ parse_ledger.json
 # The gates' validation receipt: hashes, but the PATHS it names are the
 # taxpayer's own documents, and a listing is a disclosure (AGENTS.md §1).
 validation_receipt.json
+material_evidence.json
 # The V3 eval run record. It carries digests, timings and a scored
 # comparison whose values compare.py already suppresses — but it sits in a
 # workspace holding a return, and "structurally not sensitive" is a claim

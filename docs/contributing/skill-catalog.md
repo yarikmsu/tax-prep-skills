@@ -157,6 +157,22 @@ auto-flagged.
 
 Life-event flags read False when absent, so a legacy profile still passes.
 
+### Material filing outcomes
+
+`agents.lib.material_evidence` records `open`, `computed`, `reviewed` and
+`not_applicable` outcomes in a secured `material_evidence.json`. The CLI accepts
+a stable item id, generic label and repeatable workspace-relative `--input`
+arguments. Every completed outcome needs its evidence files. Their digests
+reopen the item if any source changes or disappears. The tie-out records the
+digest of the evidence file itself, and receipt verification lists all open
+items in draft output and refuses final export. A workspace with no tracked
+items can continue without an evidence file.
+
+The capability gate registers the Marketplace Form 8962 item. The generic
+writer reserves required-form ids for their filing workflows. Completing Form
+8962 will require its checked return entries and attachment under AA120.
+Existing manual-worksheet advice remains part of the limitations manifest.
+
 ## Pipeline and optional branches
 
 **Optional parsing branch (off `/tax-parse`, feeds `/tax-compute`):**

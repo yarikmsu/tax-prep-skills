@@ -54,7 +54,7 @@ class ArchiveReport:
 # year could never be packaged again (its gates would read as never having run)
 # and the next year's gates would overwrite the evidence for the old one.
 EXPECTED_TOP_LEVEL_FILES = ("result.json", "taxpayer_profile.json", "answers.md",
-                            "parse_ledger.json", "validation_receipt.json")
+                            "parse_ledger.json", "validation_receipt.json", "material_evidence.json")
 EXPECTED_TOP_LEVEL_DIRS = ("summaries", "documents", "reviews")
 
 

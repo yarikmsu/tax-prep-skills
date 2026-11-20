@@ -213,6 +213,7 @@ LOCKED_CLIS = (
     "rollover",
     "prior_return",  # publishes a two-file archive seed plus its review audit
     "parse_records",
+    "material_evidence",
     "return_builder",
     "tie_out",
     "receipt",
