@@ -1064,7 +1064,7 @@ def _mask_id_value(cell):
 
 
 def _mask_row_combs(row, runs, governed: set, tick, below=(), dates=(), separate=(), aligned=(),
-                    finance=(), kept=()) -> tuple[list, dict]:
+                    finance=(), amounts=(), kept=()) -> tuple[list, dict]:
     """`mask_row_runs` over a table row, before any cell is rewritten: a
     ruled table can cut a labelled comb into fragments no cell recognizes,
     even where the page's positional reader established no run. Returns the
@@ -1080,7 +1080,9 @@ def _mask_row_combs(row, runs, governed: set, tick, below=(), dates=(), separate
     # label's column on the next row. Complete cell values go to the cell
     # pass; only a crossing candidate needs the across-cell mask.
     introduced = bool(below) or bool(_in_either_reading(view, (_ID_LABEL_RE,)))
-    combs, extended_groups = _row_candidates(view, ends, dates=dates) if introduced else ([], set())
+    combs, extended_groups = (_row_candidates(view, ends, dates=dates, amounts=amounts,
+                                              below=below, aligned=aligned)
+                              if introduced else ([], set()))
     labelled = bool(combs)
     if not labelled and (runs is None or not runs.spelling):
         return list(row), {}
@@ -1125,7 +1127,8 @@ def _mask_row_combs(row, runs, governed: set, tick, below=(), dates=(), separate
             for cell, text, new in zip(row, texts, masked)], reached
 
 
-def _row_candidates(view: _IdentifierText, ends: list, *, dates=()) -> tuple[list, set]:
+def _row_candidates(view: _IdentifierText, ends: list, *, dates=(), amounts=(), below=(),
+                    aligned=()) -> tuple[list, set]:
     """Row candidates and the ones that rely on new cross-cell grouping."""
     def matches(patterns):
         spans = set(_in_either_reading(view, patterns))
@@ -1149,7 +1152,8 @@ def _row_candidates(view: _IdentifierText, ends: list, *, dates=()) -> tuple[lis
             continue
         if _in_either_reading(identifier_text(view.raw[offset:a]), (_ID_LABEL_RE,)):
             grouped.append((a, b))
-        elif _grouped_inside_cell(view, ends, a, b):
+        elif _grouped_inside_cell(view, ends, a, b,
+                                  () if aligned and column in below and column not in aligned else amounts):
             grouped.append((a, b))
             extended_groups.add((a, b))
     # A complete crossing field bounds a later loose grouping. Otherwise its
@@ -1169,7 +1173,11 @@ def _row_candidates(view: _IdentifierText, ends: list, *, dates=()) -> tuple[lis
     return sorted(set(fixed + accepted)), extended_groups.difference(fixed)
 
 
-def _grouped_inside_cell(view: _IdentifierText, ends: list, start: int, end: int) -> bool:
+_GROUPED_AMOUNT = re.compile(r"[0-9]{2}[^\S\n]+[0-9]{3}")
+
+
+def _grouped_inside_cell(view: _IdentifierText, ends: list, start: int, end: int,
+                         amounts=()) -> bool:
     """Printed grouping or a digit comb must survive removal of cell boundaries.
 
     Amount, cents and year in separate cells supply only the inserted spaces.
@@ -1179,16 +1187,25 @@ def _grouped_inside_cell(view: _IdentifierText, ends: list, start: int, end: int
     """
     # Its invisible reading adds candidates, not grouping evidence. Apply
     # the same financial-field boundary in both soft-hyphen readings.
+    first, last = bisect_right(ends, start), bisect_left(ends, end)
+    left = ends[first - 1] if first else 0
+    whole_amount = (last == first + 2 and first + 1 in amounts
+                    and not identifier_text(view.raw[left:start]).text.strip()
+                    and not identifier_text(view.raw[end:ends[last] - 1]).text.strip())
     for soft in (False, True) if "\u00ad" in view.raw[start:end] else (False,):
         cells = []
         printed = False
         digits = 0
-        for column in range(bisect_right(ends, start), bisect_left(ends, end) + 1):
+        for column in range(first, last + 1):
             left = ends[column - 1] if column else 0
             cell = view.raw[max(start, left):min(end, ends[column] - 1)]
             text = identifier_text(cell, _soft_hyphen=soft).text.strip()
             cells.append(text)
-            printed |= bool(re.search(r"[0-9][^\S\n]+[0-9]", text))
+            # A complete interior amount can print the 2/3 split even when
+            # adjacent counts manufacture the other digit groups.
+            amount = whole_amount and column == first + 1
+            printed |= bool(re.search(r"[0-9][^\S\n]+[0-9]", text)
+                            and not (amount and _GROUPED_AMOUNT.fullmatch(text)))
             digits += sum(c in "0123456789" for c in text)
             if digits in (3, 5):
                 cells.append(" ")
@@ -1264,6 +1281,11 @@ _TABLE_FIELD_CAPTION = re.compile(
     r"routing(?: (?:number|no\.?))?|account(?: (?:number|no\.?))?|"
     r"(?:federal|state|local) (?:income tax |tax )?withheld|gross (?:income|pay)|"
     r"date(?: of birth)?|birth(?:date|day)|d\.?\s*o\.?\s*b\.?)\s*[:#]?", re.I)
+_TABLE_AMOUNT_CAPTION = re.compile(
+    rf"(?:amount|wages|gross (?:income|pay)|annual (?:earnings|wages)|"
+    rf"(?:federal|state|local) taxable wages|(?:form )?w{_ID_DASH}2 box [12]|"
+    r"(?:federal|state|local) (?:income tax |tax )?withheld)\s*[:#]?", re.I)
+_TABLE_COUNT_CAPTION = re.compile(r"(?:count|copies|items|page|flag)\s*[:#]?", re.I)
 
 
 def _crosses(ends: list, start: int, end: int) -> bool:
@@ -1458,6 +1480,7 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
     previous: list = []
     dates: set = set()
     finance: set = set()
+    amounts: set = set()
     shift_dates = False
     can_shift = False
     dependent_columns: set = set()
@@ -1523,6 +1546,7 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
         positioned, reached = _mask_row_combs(row, runs, cell_governed, tick,
                                                below=neighbours, dates=row_dates, separate=separate,
                                                aligned=below if can_shift else (), finance=finance,
+                                               amounts=amounts,
                                                kept=kept)
         out = [mask_ssn(cell, runs, _original=original if isinstance(original, str) else None,
                         _governed=column in cell_governed, _variant_governed=column in variant_columns,
@@ -1570,13 +1594,21 @@ def mask_table(rows, runs=None, *, tick=lambda: None):
             if can_shift:
                 dates.update(c + 1 for c, cell in enumerate(header) if isinstance(cell, str)
                              and _in_either_reading(identifier_text(cell), (_ID_FLAG_RE,)))
-        header_finance = {c for c, cell in enumerate(header) if isinstance(cell, str)
-                          and _TABLE_FIELD_CAPTION.fullmatch(identifier_text(cell).text.strip())}
+        header_captions = {c: identifier_text(cell).text.strip()
+                           for c, cell in enumerate(header) if isinstance(cell, str)}
+        header_finance = {c for c, caption in header_captions.items()
+                          if _TABLE_FIELD_CAPTION.fullmatch(caption)}
+        header_amounts = {c for c, caption in header_captions.items()
+                          if _TABLE_AMOUNT_CAPTION.fullmatch(caption)
+                          and all(_TABLE_COUNT_CAPTION.fullmatch(header_captions.get(neighbour, ""))
+                                  for neighbour in (c - 1, c + 1))}
         # Financial columns also occur in registers without an identifier
         # heading. A row containing values cannot establish this ownership.
-        if new_header or (header_finance and all(cell is None or isinstance(cell, str) and
-                (c in header_finance or not any(ch.isdecimal() for ch in cell)) for c, cell in enumerate(header))):
+        financial_columns = header_finance | header_amounts
+        if new_header or (financial_columns and all(cell is None or isinstance(cell, str) and
+                (c in financial_columns or not any(ch.isdecimal() for ch in cell)) for c, cell in enumerate(header))):
             finance = header_finance
+            amounts = header_amounts
         variant_columns.update(column for column, cell in enumerate(row) if isinstance(cell, str)
                                and _in_either_reading(identifier_text(cell), (_ID_LABEL_RE,)))
         variant_columns.update(labels)

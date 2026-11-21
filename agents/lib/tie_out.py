@@ -67,11 +67,11 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib import receipt  # noqa: E402
+from agents.lib import material_evidence, receipt  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -576,6 +576,10 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
 
 
 _ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL | set(_BLOCKING_CATEGORIES)
+_W2_BOXES = {
+    "1": ("wages", "wages"),
+    "2": ("federal_withholding_w2", "federal income tax withheld"),
+}
 
 
 @dataclass(frozen=True)
@@ -608,6 +612,8 @@ class LedgerRecord:
     misc_income: "dict | None" = None
     w2g_income: "dict | None" = None
     rental_source: "dict | None" = None
+    w2_box_status: "dict[str, str] | None" = None
+    source_sha256: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -634,6 +640,7 @@ class TieOutReport:
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
     advisories: "tuple[str, ...]"  # loud manual-verify notes (never a failure)
     failed: bool
+    changed_sources: "tuple[str, ...]" = ()
 
 
 def _num(value, where: str) -> float:
@@ -698,6 +705,29 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
                                   'keys of a state code and the form\'s locality name, as in "OH:COLUMBUS"')
 
 
+def _w2_code(form_type: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", form_type).upper().removeprefix("FORM")
+
+
+def _is_w2(form_type: str, boxes: dict) -> bool:
+    return (_w2_code(form_type) in {"W2", "W2C"}
+            or any(category in boxes for category, _ in _W2_BOXES.values()))
+
+
+def _w2_box_status(status: object, boxes: dict, is_w2: bool, where: str) -> dict[str, str]:
+    if status is None:
+        return {}
+    if not is_w2 or not isinstance(status, dict):
+        raise TieOutError(f"{where}.w2_box_status requires a non-skipped W-2 record and an object")
+    for box, value in status.items():
+        if box not in _W2_BOXES or value not in ("blank", "unread"):
+            raise TieOutError(f"{where}.w2_box_status accepts blank or unread for box 1 or 2")
+        category, _ = _W2_BOXES[box]
+        if category in boxes:
+            raise TieOutError(f"{where}: W-2 box {box} has both an amount and a blank or unread status")
+    return status
+
+
 def load_ledger(raw: dict) -> "list[LedgerRecord]":
     """Validate the parse_ledger.json payload strictly — a malformed ledger
     must never look like a passing tie-out."""
@@ -723,6 +753,10 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 "amounts while still passing coverage."
             )
         seen_files.add(file)
+        source_sha256 = rec.get("source_sha256")
+        if source_sha256 is not None and (not isinstance(source_sha256, str)
+                                          or not re.fullmatch("[0-9a-f]{64}", source_sha256)):
+            raise TieOutError(f"{where}.source_sha256 must be a lowercase SHA-256 digest")
         skipped = rec.get("skipped")
         if skipped is not None and (not isinstance(skipped, str) or not skipped.strip()):
             raise TieOutError(f"{where}.skipped must be null or a non-empty reason")
@@ -731,7 +765,12 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             boxes = {}
         if not isinstance(boxes, dict):
             raise TieOutError(f"{where}.key_boxes must be an object")
-        if skipped is None and not boxes:
+        form_type = _require_str(rec.get("form_type"), f"{where}.form_type")
+        w2_status = _w2_box_status(rec.get("w2_box_status"), boxes,
+                                   skipped is None and _is_w2(form_type, boxes), where)
+        if _w2_code(form_type) == "W2C" and "blank" in w2_status.values():
+            raise TieOutError(f"{where}: reconcile Form W-2c blanks with the original W-2")
+        if skipped is None and not boxes and not w2_status:
             raise TieOutError(
                 f"{where} ({redact(doc_id)}): a non-skipped record must carry "
                 "key_boxes — "
@@ -757,6 +796,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 raise TieOutError(
                     f"{where}.key_boxes[{cat}] cannot be negative ({v})")
             validated.append((cat, v))
+        validated.extend((_W2_BOXES[box][0], 0.0) for box, value in w2_status.items()
+                         if value == "blank")
         person = rec.get("person") or "joint"
         if person not in ("primary", "spouse", "joint"):
             raise TieOutError(f"{where}.person must be primary/spouse/joint")
@@ -824,14 +865,14 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 raise TieOutError(f"{where}: {exc}") from None
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
-            form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
+            form_type=form_type,
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
             other_state_withholding_by_state=other_states,
             other_local_withholding_by_locality=other_localities, ca_investments=ca_investments,
             government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
-            rental_source=rental_source))
+            rental_source=rental_source, w2_box_status=w2_status, source_sha256=source_sha256))
     return records
 
 
@@ -3491,6 +3532,10 @@ def render_markdown(report: TieOutReport) -> str:
         lines += ["## ⛔ Ledger records pointing at missing files", ""]
         lines += [f"- {f}" for f in report.phantom_files]
         lines.append("")
+    if report.changed_sources:
+        lines += ["## ⛔ Source documents changed since intake", ""]
+        lines += [f"- {item}" for item in report.changed_sources]
+        lines += ["", "Re-parse these documents and rebuild the ledger before computing again.", ""]
     if report.pending_skips:
         lines += ["## ⛔ Documents skipped PENDING another skill", ""]
         lines += [f"- {s}" for s in report.pending_skips]
@@ -3618,13 +3663,62 @@ def write_report(workspace: Path, markdown: str) -> Path:
     return target
 
 
-def _read_json(path: Path, what: str) -> dict:
+def _read_json_snapshot(path: Path, what: str) -> tuple[bytes, dict]:
     if not path.exists():
         raise TieOutError(f"{what} not found at {redact(path)}")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+        return raw, json.loads(raw)
     except json.JSONDecodeError as e:
         raise TieOutError(f"{what} is malformed: {redact(e)}")
+
+
+def _read_json(path: Path, what: str) -> dict:
+    return _read_json_snapshot(path, what)[1]
+
+
+def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
+    records = (record for record in ledger if record.skipped is None
+               and _is_w2(record.form_type, dict(record.key_boxes)))
+    items = {}
+    for number, record in enumerate(records, 1):
+        boxes = dict(record.key_boxes)
+        status = record.w2_box_status or {}
+        for box, (category, meaning) in _W2_BOXES.items():
+            if status.get(box) == "blank":
+                outcome = "not_applicable"
+            elif category in boxes:
+                outcome = "reviewed"
+            else:
+                outcome = "open"
+            item_id = f"{material_evidence.W2_PREFIX}{receipt._entry_key(record.doc_id)}.{box}"
+            items[item_id] = {
+                "label": f"W-2 #{number} Box {box} ({meaning})",
+                "outcome": outcome,
+                "inputs": {"parse_ledger.json": ledger_digest} if outcome != "open" else {},
+            }
+    return items
+
+
+def _source_outcomes(ledger: list[LedgerRecord], gate_inputs: dict) -> tuple[dict, tuple[str, ...]]:
+    items = {}
+    changed = []
+    for number, record in enumerate(ledger, 1):
+        key = receipt._entry_key(str(Path(record.file)))
+        current = gate_inputs.get(key, {}).get("digest")
+        if current is None:
+            continue  # Coverage reports a missing or ineligible file.
+        if record.source_sha256 is None:
+            detail = "re-parse required to bind source bytes"
+        elif current != record.source_sha256:
+            detail = "changed since intake"
+            changed.append(f"Document #{number} in the parse ledger")
+        else:
+            continue
+        items[f"{material_evidence.SOURCE_PREFIX}{key}"] = {
+            "label": f"Document #{number} in the parse ledger ({detail})", "outcome": "open", "inputs": {},
+        }
+    return items, tuple(changed)
 
 
 def _main(argv: list) -> int:
@@ -3640,12 +3734,24 @@ def _main(argv: list) -> int:
         hold_workspace(workspace, "tie_out")
         ledger_path = _validate_subpath((workspace / "parse_ledger.json").resolve(), workspace)
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
+        ledger_raw, ledger_data = _read_json_snapshot(ledger_path, "parse_ledger.json")
+        ledger = load_ledger(ledger_data)
         # BEFORE anything is read: the digests this gate's verdict will be
         # bound to. Hashing after the verdict would bind a PASS to a document
         # that arrived while the report was being written — a gate certifying a
         # file it never saw, which is what the receipt exists to catch (V8).
-        gate_inputs = receipt.gate_inputs(workspace, "tie_out")
-        ledger = load_ledger(_read_json(ledger_path, "parse_ledger.json"))
+        gate_inputs = receipt.gate_inputs(workspace, "tie_out", contents={
+            material_evidence.FILENAME: None,
+            "parse_ledger.json": ledger_raw,
+        })
+        source_items, changed_sources = _source_outcomes(ledger, gate_inputs)
+        material_evidence.sync_group(workspace, material_evidence.SOURCE_PREFIX, source_items)
+        material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
+                                     _w2_outcomes(ledger, receipt._sha256(ledger_raw)))
+        evidence_raw, _ = material_evidence.read(workspace)
+        if evidence_raw is not None:
+            name = material_evidence.FILENAME
+            gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}
         result = _read_json(result_path, "result.json")
         crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
         crypto_source = _read_json(crypto_path, 'crypto_transactions.json') if crypto_path.exists() else None
@@ -3739,8 +3845,11 @@ def _main(argv: list) -> int:
                           specific_identification_answer=specific_identification_answer,
                           crypto_source=crypto_source,
                           profile=prof, tax_law=ca_law)
+        if changed_sources:
+            report = replace(report, failed=True, changed_sources=changed_sources)
         markdown = render_markdown(report)
-    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError,
+            material_evidence.MaterialEvidenceError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -3760,6 +3869,7 @@ def _main(argv: list) -> int:
             "skipped": report.skipped,
             "missing_records": list(report.missing_records),
             "phantom_files": list(report.phantom_files),
+            "changed_sources": list(report.changed_sources),
             "pending_skips": list(report.pending_skips),
             "sum_checks": [vars(c) for c in report.sum_checks],
             "missing_result_targets": list(report.missing_result_targets),

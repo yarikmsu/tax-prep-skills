@@ -2,12 +2,14 @@
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from agents.lib import filing_package as FP  # noqa: E402
+from agents.lib import capabilities, filing_package as FP, material_evidence, receipt  # noqa: E402
+from agents.lib import parse_records, return_builder, tie_out  # noqa: E402
 
 
 def _result(**sections):
@@ -301,6 +303,213 @@ def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
     assert "NOT VALIDATED" not in out.stdout
+
+
+def _material_cli(tmp_path, *args):
+    return subprocess.run(
+        [sys.executable, "-m", "agents.lib.material_evidence", "--workspace", str(tmp_path), *args],
+        capture_output=True, text=True, cwd=FIX_REPO)
+
+
+@pytest.mark.parametrize("outcome", ["computed", "reviewed", "not_applicable"])
+def test_material_outcome_controls_export_and_reopens_on_source_change(tmp_path, outcome):
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    source = tmp_path / "reviewed-worksheet.json"
+    source.write_text("{}")
+    args = ("--id", "estimated-payments", "--label", "Form 1040 estimated payments")
+    recorded = _material_cli(tmp_path, *args, "--outcome", "open")
+    assert recorded.returncode == 0, recorded.stderr
+    material_evidence.record(tmp_path, "source-field", "W-2 Box 12", "open", [])
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
+
+    final = _package(tmp_path)
+    assert final.returncode == 2 and final.stdout == ""
+    assert "Open material item: Form 1040 estimated payments" in final.stderr
+    draft = _package(tmp_path, "--draft")
+    assert draft.returncode == 0, draft.stderr
+    assert "NOT VALIDATED" in draft.stdout
+    assert "Open material item: Form 1040 estimated payments" in draft.stdout
+    assert "Open material item: W-2 Box 12" in draft.stdout
+
+    recorded = _material_cli(tmp_path, *args, "--outcome", outcome, "--input", source.name)
+    assert recorded.returncode == 0, recorded.stderr
+    material_evidence.record(tmp_path, "source-field", "W-2 Box 12", "reviewed", [source.name])
+    assert "material_evidence.json changed" in _package(tmp_path).stderr
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    assert _package(tmp_path).returncode == 0
+
+    source.write_text('{"revised": true}')
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    stale = _package(tmp_path)
+    assert stale.returncode == 2
+    assert "Form 1040 estimated payments. A source changed or is missing." in stale.stderr
+
+
+def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(tmp_path):
+    flags = dict.fromkeys(capabilities._REQUIRED_GATE_FLAGS, False)
+    flags.update(has_marketplace_insurance=True, may_qualify_for_eic=True)
+    profile = {"tax_year": 2025, "address": {"state": "FL"}, "filing_status": "MFJ", "flags": flags,
+               "acknowledged_limitations": ["marketplace_insurance"]}
+    profile_path = tmp_path / "taxpayer_profile.json"
+    profile_path.write_text(json.dumps(profile))
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+
+    def run_gates():
+        gate = subprocess.run([sys.executable, "-m", "agents.lib.capabilities",
+                               "--workspace", str(tmp_path)], capture_output=True, text=True,
+                              cwd=FIX_REPO)
+        assert gate.returncode == 0, gate.stderr
+        assert "MANUAL WORKSHEET" in gate.stdout
+        for name in ("return_builder", "tie_out"):
+            receipt.record(tmp_path, name, receipt.PASS)
+
+    run_gates()
+    evidence = tmp_path / material_evidence.FILENAME
+    assert json.loads(evidence.read_text())["items"]["form.marketplace_insurance"]["outcome"] == "open"
+    assert "Open material item: Form 8962" in _package(tmp_path).stderr
+    draft = _package(tmp_path, "--draft", "--json")
+    assert draft.returncode == 0, draft.stderr
+    details = json.loads(draft.stdout)
+    assert not details["validated"]
+    assert any("Open material item: Form 8962" in reason for reason in details["receipt"]["reasons"])
+    failed_record = _material_cli(tmp_path, "--id", "form.marketplace_insurance",
+                                  "--label", "Form 8962", "--outcome", "reviewed",
+                                  "--input", "result.json")
+    assert failed_record.returncode == 1
+    assert "required forms must be completed through their filing workflow" in failed_record.stderr
+
+    profile["flags"]["has_marketplace_insurance"] = False
+    profile_path.write_text(json.dumps(profile))
+    run_gates()
+    assert _package(tmp_path).returncode == 0
+
+
+@pytest.mark.parametrize("wage, box1_status", [(None, None), (None, "unread"), (0, None), (38000, None)])
+def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
+    documents = tmp_path / "documents"
+    documents.mkdir()
+    wage_doc = documents / "w2.pdf"
+    interest_doc = documents / "interest.pdf"
+    wage_doc.write_bytes(b"%PDF-1.4 synthetic W-2")
+    interest_doc.write_bytes(b"%PDF-1.4 synthetic 1099-INT")
+    withholding = 500 if wage is None else 0
+    source = {"doc_id": "w2-sample", "file": "documents/w2.pdf", "form_type": "Form W-2",
+              "payer": "Example employer", "person": "spouse",
+              "source_sha256": sha256(wage_doc.read_bytes()).hexdigest(),
+              "key_boxes": {"federal_withholding_w2": withholding}}
+    if wage is not None:
+        source["key_boxes"]["wages"] = wage
+    if box1_status:
+        source["w2_box_status"] = {"1": box1_status}
+    parse_records.write_record(tmp_path, {"doc_id": "interest", "file": "documents/interest.pdf",
+                                         "form_type": "1099-INT", "payer": "Example bank",
+                                         "source_sha256": sha256(interest_doc.read_bytes()).hexdigest(),
+                                         "key_boxes": {"taxable_interest": 200}})
+
+    def run(module, *args):
+        return subprocess.run([sys.executable, "-m", f"agents.lib.{module}", "--workspace",
+                               str(tmp_path), *args], capture_output=True, text=True, cwd=FIX_REPO)
+
+    def build_and_check():
+        parse_records.write_record(tmp_path, source)
+        ledger_path = parse_records.write_ledger(tmp_path)
+        ledger = tie_out.load_ledger(json.loads(ledger_path.read_text()))
+        assert next(record for record in ledger if record.doc_id == "w2-sample").person == "spouse"
+        lines = return_builder.ledger_income(ledger)
+        data = _result(form_1040={"line_1a_wages": lines["line_1a_wages"],
+                                  "line_2b_taxable_interest": lines["line_2b_taxable_interest"],
+                                  "line_25a_w2_withholding": withholding})
+        (tmp_path / "result.json").write_text(json.dumps(data))
+        for gate in ("capabilities", "return_builder"):
+            receipt.record(tmp_path, gate, receipt.PASS)
+        tying = run("tie_out", "--json")
+        assert tying.returncode == 0, tying.stderr
+        assert receipt.verify(tmp_path, required=(return_builder.GATE,)).valid
+        return lines["line_1a_wages"]
+
+    assert build_and_check() == (wage or 0)
+    final = run("filing_package", "--result", "result.json")
+    if wage is None:
+        assert final.returncode == 2 and "Open material item: W-2 #1 Box 1" in final.stderr
+        draft = run("filing_package", "--result", "result.json", "--draft")
+        assert draft.returncode == 0 and "Open material item: W-2 #1 Box 1" in draft.stdout
+    else:
+        assert final.returncode == 0, final.stderr
+    if box1_status == "unread":
+        # Local review confirms an amount from the original for the same owner.
+        source["key_boxes"]["wages"] = 38000
+        del source["w2_box_status"]
+        assert build_and_check() == 38000
+        repaired = run("filing_package", "--result", "result.json")
+        assert repaired.returncode == 0, repaired.stderr
+
+
+def test_w2_blank_and_verified_zero_are_distinct_and_cannot_conflict():
+    raw = {"doc_id": "w2", "file": "documents/w2.pdf", "form_type": "W-2", "payer": "Example employer",
+           "key_boxes": {"wages": 0}, "w2_box_status": {"2": "blank"}}
+    ledger = tie_out.load_ledger({"records": [raw]})
+    assert dict(ledger[0].key_boxes) == {"wages": 0, "federal_withholding_w2": 0}
+    items = tie_out._w2_outcomes(ledger, "a" * 64)
+    assert [item["outcome"] for item in items.values()] == ["reviewed", "not_applicable"]
+    with pytest.raises(tie_out.TieOutError, match="reconcile Form W-2c blanks"):
+        tie_out.load_ledger({"records": [dict(raw, form_type="Form W-2c")]})
+    raw["key_boxes"]["federal_withholding_w2"] = 0
+    with pytest.raises(tie_out.TieOutError, match="box 2 has both"):
+        tie_out.load_ledger({"records": [raw]})
+
+
+def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_path):
+    source_file = tmp_path / "documents" / "interest.csv"
+    source_file.parent.mkdir()
+    source_file.write_text("Taxable interest\n200\n")
+    source = {"doc_id": "interest", "file": "documents/interest.csv",
+              "form_type": "1099-INT", "payer": "Example bank",
+              "key_boxes": {"taxable_interest": 200}}
+
+    def run(module, *args):
+        return subprocess.run([sys.executable, "-m", f"agents.lib.{module}", "--workspace",
+                               str(tmp_path), *args], capture_output=True, text=True, cwd=FIX_REPO)
+
+    def publish_and_check():
+        parse_records.write_record(tmp_path, source)
+        ledger = parse_records.write_ledger(tmp_path)
+        amount = source["key_boxes"]["taxable_interest"]
+        (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": amount})))
+        for gate in ("capabilities", "return_builder"):
+            receipt.record(tmp_path, gate, receipt.PASS)
+        checked = run("tie_out", "--json")
+        assert checked.returncode == 0, checked.stderr
+        return json.loads(ledger.read_text())["records"][0]
+
+    def reparse():
+        extracted = subprocess.run(
+            [sys.executable, "-m", "agents.lib.parse_utils", "--workspace", str(tmp_path),
+             "csv", source["file"], "--with-source-digest"], capture_output=True, text=True, cwd=FIX_REPO)
+        assert extracted.returncode == 0, extracted.stderr
+        data = json.loads(extracted.stdout)
+        source["source_sha256"] = data["source_sha256"]
+        source["key_boxes"]["taxable_interest"] = int(data["data"][1][0])
+        return publish_and_check()
+
+    publish_and_check()
+    legacy = run("filing_package", "--result", "result.json")
+    assert legacy.returncode == 2 and "re-parse required to bind source bytes" in legacy.stderr
+    legacy_draft = run("filing_package", "--result", "result.json", "--draft")
+    assert legacy_draft.returncode == 0 and "re-parse required to bind source bytes" in legacy_draft.stdout
+
+    bound = reparse()
+    assert bound["source_sha256"] == source["source_sha256"]
+    assert publish_and_check() == bound  # The carried-over record keeps its original digest.
+    assert run("filing_package", "--result", "result.json").returncode == 0
+
+    source_file.write_text("Taxable interest\n275\n")
+    assert run("filing_package", "--result", "result.json").returncode == 2
+    retied = run("tie_out", "--json")
+    assert retied.returncode == 2 and json.loads(retied.stdout)["changed_sources"]
+    assert run("filing_package", "--result", "result.json").returncode == 2
+    assert reparse()["key_boxes"]["taxable_interest"] == 275
+    assert run("filing_package", "--result", "result.json").returncode == 0
 
 
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):

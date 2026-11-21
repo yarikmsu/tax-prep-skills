@@ -186,6 +186,10 @@ between digits inside a cell. Both 3/2/4 group breaks must then be printed or
 fall at cell boundaries; a cut inside a group adds no printed gap. Cell-edge
 padding and thousands grouping are not grouping evidence. In particular, a
 space-grouped financial amount cannot borrow a neighbouring year or amount.
+When separate count columns flank a named earnings, wages or withholding
+column, an intact two-plus-three-digit amount in the middle supplies no
+cross-cell grouping evidence. A label printed with the candidate, an existing
+comb or an independent positional match retains its identifier protection.
 New cross-cell grouping cannot borrow digits from independently named columns
 beside an identifier heading, including when its row shifts by one cell. An
 explicit financial column in a register also keeps its values separate when
