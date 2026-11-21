@@ -358,6 +358,14 @@ Rules:
   [W-2 amount and blank rules](references/form-extraction.md#w-2-extraction).
   An unread box stays open and prevents final export, even when all amounts
   that reached the ledger tie out.
+- When another filing-relevant amount is masked or unreadable, name the form,
+  field and owner in the local summary. In the main session, register an open
+  material outcome as described in [tax-compute Step 12.65](../tax-compute/SKILL.md#step-1265-record-material-filing-outcomes).
+  Review the original locally, confirm the field and owner, and transcribe the
+  verified amount into its existing source record. Rebuild the ledger and retain
+  the open outcome until the corrected amount has been reconciled to the return.
+  Use a generic form-and-box label in the draft and keep full identifiers out of
+  the record.
 - For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - Withholding breakdowns, legacy-record migration and source instructions: [withholding reference](references/withholding.md).
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
