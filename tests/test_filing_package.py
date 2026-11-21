@@ -599,6 +599,33 @@ def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_
     assert run("filing_package", "--result", "result.json").returncode == 0
 
 
+def test_validated_package_shows_reviewed_source_dispositions(tmp_path):
+    documents = tmp_path / "documents"
+    documents.mkdir()
+    content = b"%PDF-1.4 synthetic duplicate source"
+    for name in ("retained.pdf", "copy.pdf"):
+        (documents / name).write_bytes(content)
+    source = {"doc_id": "kept", "file": "documents/retained.pdf", "form_type": "1099-INT",
+              "payer": "Example bank", "person": "primary", "source_sha256": sha256(content).hexdigest(),
+              "key_boxes": {"taxable_interest": 100}}
+    parse_records.write_record(tmp_path, source)
+    parse_records.write_record(tmp_path, dict(source, doc_id="copy", file="documents/copy.pdf", key_boxes={},
+                                              skipped="exact copy", source_form={"duplicate_of": "kept"}))
+    parse_records.write_ledger(tmp_path)
+    (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": 100})))
+    for gate in ("capabilities", "return_builder"):
+        receipt.record(tmp_path, gate, receipt.PASS)
+    command = [sys.executable, "-m"]
+    tying = subprocess.run([*command, "agents.lib.tie_out", "--workspace", str(tmp_path)], cwd=FIX_REPO,
+                            capture_output=True, text=True)
+    assert tying.returncode == 0, tying.stderr
+    package = subprocess.run([*command, "agents.lib.filing_package", "--workspace", str(tmp_path),
+                              "--result", "result.json"], cwd=FIX_REPO, capture_output=True, text=True)
+    assert package.returncode == 0, package.stderr
+    assert "Document #1 was an exact copy of retained document #2." in package.stdout
+    assert "NOT FULLY VERIFIED" not in package.stdout
+
+
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):
     """Step 12.6 is a REQUIRED gate. Before it was receipted an agent could
     skip it — or pass it and then edit line 24 — and nothing downstream could

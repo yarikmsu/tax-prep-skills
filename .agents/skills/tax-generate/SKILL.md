@@ -267,6 +267,7 @@ package has four parts:
    CA 540/NY IT-201/FBAR conditionals) verbatim into the PDF. Spot-check the
    sequence numbers against the filing year's official forms (they are
    printed in each form's top-right corner and can change).
+   Carry its source form reconciliation disclosures into the package when present.
 2. **Line-numbered form pages** — for each section in the assembly order,
    print the section's fields labeled with the OFFICIAL line numbers (the
    result.json field names encode them: `line_9_total_income` → "Line 9").
