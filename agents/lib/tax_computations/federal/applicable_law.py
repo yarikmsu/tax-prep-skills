@@ -41,8 +41,8 @@ def _state_figures(result: dict, profile: dict, law: dict, year: int, status: st
             fields.add("state.dependent_exemption.amount")
         if (result.get("schedule_ca_itemized") or {}).get("use_itemized") is True:
             fields.add(f"state.itemized_phaseout.{key}")
-        if any(_positive((result.get(name) or {}).get(line)) for name, line in
-               (("california_540", "line_113"), ("california_540nr", "line_123"))):
+        if any(_positive(cache._get_path(result, f"{entry.section}.line_{123 if entry.variant == '540NR' else 113}"))
+               for entry in STATE_SECTIONS if entry.code == "CA"):
             fields.add("state.underpayment_rates")
         fields.update({"state.tax_table.max_taxable_income", "state.tax_table.rows"})
     elif code == "NY":
@@ -136,7 +136,7 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
         fields.add("federal.charitable_non_itemizer.joint_amount" if status == "mfj" else "federal.charitable_non_itemizer.amount")
     if _section_present(result, "schedule_e_rentals"):
         fields.add("federal.rental")
-        if any(_section_present(result, key) for key in ("california_540", "california_540nr")):
+        if any(_section_present(result, entry.section) for entry in STATE_SECTIONS if entry.code == "CA"):
             fields.add("state.rental")
     rates = (result.get("meta") or {}).get("exchange_rates") or {}
     declared = profile.get("foreign_currencies") or []
