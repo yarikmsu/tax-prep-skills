@@ -332,12 +332,20 @@ DCB Part III, nonrefundable limit).
 
 ### Step 8: Compute Other Taxes (Form 1040 Line 23)
 
-Line 23 is yours. **Run
+Calculate applicable Schedule 2 Part II taxes. **Run
 `sh agents/lib/run.sh -m agents.lib.return_builder` when this step
 is done** — the second pass settles lines 17, 18, 21, 22 and 24.
 
 **Self-Employment Tax:**
-Use `compute_se_tax()` — only if Schedule C shows profit > $400.
+When Schedule C applies, enter the checked total of every other Schedule 2
+Part II tax in `schedule_se.inputs.remaining_other_taxes` and set
+`other_taxes_exclude_se_tax: true`. Record a deliberate zero when applicable.
+The builder calculates Schedule SE separately for each owner, from the
+covered-year Social Security wage base and SE law cache. It applies the
+Schedule SE line 4c threshold after the net-earnings factor, carries the tax to
+Schedule 2 line 4, and derives Form 1040 line 23. Complete this review before
+running the final gates. For a return without Schedule C, use the applicable
+Schedule SE worksheet when preparing other self-employment tax by hand.
 
 **Additional Medicare Tax (Form 8959):**
 Use `compute_additional_medicare()` — always compute if Medicare wages > $200K.

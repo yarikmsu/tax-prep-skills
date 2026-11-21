@@ -384,13 +384,13 @@ class TestComputeSeTax:
         assert result["se_tax"] == 0
         assert "below" in result["note"].lower()
 
-    def test_exactly_at_threshold(self):
-        """$400 profit (exactly at threshold) → SE IS computed."""
-        result = compute_se_tax(400, ss_wage_base=self.SS_WAGE_BASE_2025)
-        # SE earnings: 400 * 0.9235 = 369.40
-        expected_tax = round(369.40 * 0.124 + 369.40 * 0.029, 2)
-        assert result["se_earnings"] == 369.40
-        assert result["se_tax"] == expected_tax
+    def test_threshold_is_applied_to_schedule_se_line_4c(self):
+        """$400 Schedule C profit yields $369.40 net earnings after the line 4a factor."""
+        assert compute_se_tax(400, ss_wage_base=self.SS_WAGE_BASE_2025)["se_tax"] == 0
+        assert compute_se_tax(433.12, ss_wage_base=self.SS_WAGE_BASE_2025)["se_tax"] == 0
+        at_threshold = compute_se_tax(433.13, ss_wage_base=self.SS_WAGE_BASE_2025)
+        assert at_threshold["se_earnings"] == 400
+        assert at_threshold["se_tax"] == 61.20
 
     def test_legacy_flat_rate_no_wage_base(self):
         """No ss_wage_base → legacy flat rate (ss_rate + medicare_rate) on SE earnings."""

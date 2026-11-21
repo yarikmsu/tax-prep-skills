@@ -227,7 +227,7 @@ def test_federal_scope_waiver_cannot_waive_the_benefit_check(tmp_path,monkeypatc
     assert B._main(['--workspace',str(ws)])==0
     def waiver(*args,**kwargs):
         raise B.OutOfScope('synthetic federal PFIC waiver')
-    monkeypatch.setattr(B,'build',waiver)
+    monkeypatch.setattr(B,'_build_with_payment_workpaper',waiver)
     assert B._main(['--workspace',str(ws),'--check'])==0
     result=json.loads((ws/'result.json').read_text())
     result['form_1040']['line_8_schedule1_other']-=500

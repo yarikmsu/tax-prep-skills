@@ -133,10 +133,10 @@
   },
 
   "schedule_1_other_income": {
-    "_include_if": "nonbusiness 1099-MISC income, reviewed W-2G sources or an explicitly adopted Schedule1 workpaper",
+    "_include_if": "Schedule C, nonbusiness 1099-MISC income, reviewed W-2G sources or an adopted Schedule 1 workpaper",
     "remaining_income": null,
     "remaining_income_confirmed": false,
-    "schedule_c_net_included": null,
+    "schedule_c_excluded_from_remaining": false,
     "miscellaneous_other_income": 0,
     "gambling_winnings": 0,
     "gambling_income": 0,
@@ -151,7 +151,6 @@
     "_include_if": "government benefits sources or an explicitly adopted benefits workpaper",
     "other_income": null,
     "other_income_confirmed": false,
-    "schedule_c_net_included": null,
     "computed_tax_year": null,
     "unemployment_gross": 0,
     "family_leave_gross": 0,
@@ -294,9 +293,18 @@
     "line_28_total_expenses": 0,
     "line_29_tentative_profit": 0,
     "line_30_home_office": 0,
-    "line_31_net": 0,
-    "_note_line_31": "Positive = profit, negative = loss. Single field replaces dual profit/loss fields.",
+    "line_31_net": null,
+    "activities": [],
+    "_note_line_31": "Sum of signed line 31 amounts from the reviewed Schedule C activities, each with person and SE treatment. The builder carries this total to Schedule 1 line 3.",
     "se_tax": 0
+  },
+
+  "schedule_se": {
+    "_include_if": "Schedule C has reviewed owner and net income records",
+    "inputs": {"tax_year": null, "by_owner": {}, "remaining_adjustments": null,
+               "adjustments_exclude_se_deduction": false, "remaining_other_taxes": null,
+               "other_taxes_exclude_se_tax": false},
+    "_note": "For each owner record confirmed, ss_wages from Schedule SE line 8d, and other_net_profit apart from Schedule C. The builder derives Schedule SE by owner and ties its totals to Schedule 1 line 15 and Schedule 2 line 4."
   },
 
   "schedule_d": {

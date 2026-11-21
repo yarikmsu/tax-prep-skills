@@ -167,6 +167,7 @@ from agents.lib.tax_computations import (  # noqa: E402
     qdcg_worksheet_applies,
 )
 from agents.lib.tax_computations.federal import payments as federal_payments  # noqa: E402
+from agents.lib.tax_computations.federal import schedule_c  # noqa: E402
 from agents.lib.tax_law_fetcher import load_tax_law  # noqa: E402
 from agents.lib.tie_out import (  # noqa: E402
     derive_ca_schedule_ca,
@@ -472,6 +473,9 @@ RULES.update({field: f"the parse ledger's {category} total"
 RULES[AMT_FIELD] = "Schedule 2 Part I = the Form 6251 AMT"
 RULES[federal_payments.LINE_26] = "the reviewed federal estimates and applied overpayment"
 RULES[federal_payments.LINE_38] = "the reviewed Form 2210 calculation or IRS assessment"
+RULES["line_8_schedule1_other"] = "Schedule 1 income including reviewed Schedule C line 31"
+RULES["line_10_adjustments"] = "remaining Schedule 1 adjustments plus the Schedule SE deduction"
+RULES["line_23_other_taxes"] = "remaining Schedule 2 Part II taxes plus Schedule SE tax"
 
 
 # The only two COMPONENTS that may carry a NEGATIVE figure: a capital LOSS on
@@ -1014,8 +1018,23 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     return _build_with_payment_workpaper(result, tax_law, ledger, filing_status, profile)[0]
 
 
+def _business_tax_workpaper(result, profile, ledger, tax_law, *, checking):
+    try:
+        return schedule_c.schedule_se_workpaper(result, profile, ledger, tax_law,
+                                               require_other_taxes=checking)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise Blocked(f"Schedule C and Schedule SE: {redact(exc)}") from None
+
+
+def _business_1040_lines(workpaper: dict | None) -> dict[str, float]:
+    if workpaper is None:
+        return {}
+    return {key: workpaper[key] for key in ("line_10_adjustments", "line_23_other_taxes")
+            if workpaper[key] is not None}
+
+
 def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_status: str,
-                                  profile: "dict | None") -> tuple[dict[str, float], dict | None]:
+                                  profile: "dict | None", *, business_tax=None) -> tuple[dict[str, float], dict | None]:
     """Every derived line of Form 1040 lines 1-38, from the components.
 
     Returns the field -> value map; it does not mutate `result`. The INJECTED
@@ -1028,6 +1047,11 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
     # Validate before branching into optional income workpapers too.
     _full_status_key(filing_status, "return builder")
+    if business_tax is None:
+        business_tax = _business_tax_workpaper(result, profile or {}, ledger, tax_law, checking=False)
+    business_lines = _business_1040_lines(business_tax)
+    if business_lines:
+        result = {**result, "form_1040": {**result["form_1040"], **business_lines}}
     rental = rental_workpaper(result, ledger, profile or {}, tax_law)
     if rental is not None:
         result = {**result, "schedule_e_rentals": rental}
@@ -1073,7 +1097,9 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
         g("line_33_total_payments") - g("line_24_total_tax")
         - g("line_38_estimated_tax_penalty"),
         g("line_36_applied_to_next_year"))
-    derived = {field: working[field] for field in DERIVED_ORDER}
+    derived = {field: working[field] for field in DERIVED_ORDER} | business_lines
+    if business_tax is not None:
+        derived["line_8_schedule1_other"] = working["line_8_schedule1_other"]
     if workpaper is not None:
         derived[federal_payments.LINE_38] = working[federal_payments.LINE_38]
     return derived, workpaper
@@ -1939,7 +1965,8 @@ def california_differences(result: dict, derived: dict) -> list[str]:
 
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
-          government=None, other_income=None, other_withholding=None, rental=None, federal_2210=None) -> bool:
+          government=None, other_income=None, other_withholding=None, rental=None, federal_2210=None,
+          business_tax=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -1971,11 +1998,16 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
         raise Blocked("publish the other-form withholding workpaper with its checked line25c")
     withholding_changes = other_forms_changes(result, other_withholding)
     payment_changes = federal_2210 is not None and federal_2210 != result.get("form_2210")
-    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes and not payment_changes:
+    business_changes = business_tax is not None and (business_tax != result.get("schedule_se") or
+        business_tax["schedule_2_line_4_se_tax"] != (result.get("schedule_c") or {}).get("se_tax"))
+    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes and not payment_changes and not business_changes:
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
     if federal_2210 is not None:
         updated["form_2210"] = federal_2210
+    if business_tax is not None:
+        updated["schedule_se"] = business_tax
+        updated["schedule_c"] = {**result["schedule_c"], "se_tax": business_tax["schedule_2_line_4_se_tax"]}
     if rental is not None:
         updated["schedule_e_rentals"] = rental
         updated["form_1040"]["line_8_schedule1_other"] = rental["total_schedule1"]
@@ -2123,6 +2155,7 @@ def _main(argv: list) -> int:
             print(json.dumps(review, indent=2))
             return 0
         result, profile, ledger, tax_law, contents = load(workspace)
+        original_result = result
         if args.check:
             # The digests this verdict will be bound to, taken from THE BYTES
             # `load` parsed rather than from a second read of the same paths.
@@ -2135,12 +2168,18 @@ def _main(argv: list) -> int:
             if payment_changes:
                 print("BLOCKED: " + ", ".join(payment_changes), file=sys.stderr)
                 return _record_the_check(workspace, inputs, "FAILED", 2)
+        business_tax = _business_tax_workpaper(result, profile, ledger, tax_law, checking=args.check)
+        business_changes = schedule_c.flow_differences(result, business_tax) if args.check else []
+        if business_changes:
+            print("BLOCKED: Schedule C and Schedule SE disagree: " + ", ".join(business_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
+        if business_tax is not None and not args.check:
+            result = {**result, "form_1040": {**result["form_1040"], **_business_1040_lines(business_tax)}}
         rental = rental_workpaper(result, ledger, profile, tax_law)
         rental_changes = rental_workpaper_differences(result, rental, require_review=args.check)
         if args.check and rental_changes:
             print("BLOCKED: residential rentals disagree: " + ", ".join(rental_changes), file=sys.stderr)
             return _record_the_check(workspace, inputs, "FAILED", 2)
-        original_result = result
         if rental is not None:
             result = {**result, "schedule_e_rentals": rental}
         other_withholding = other_forms_workpaper(result, ledger, profile)
@@ -2170,8 +2209,8 @@ def _main(argv: list) -> int:
             print(f"Form {form} derived lines, Schedule P, FTB5805 and final settlement agree.")
             print(california[f"line_{123 if form == '540NR' else 113}_note"])
         derived, federal_2210 = _build_with_payment_workpaper(
-            result, tax_law, ledger, _filing_status(profile, result), profile)
-        changes = differences(result, derived)
+            result, tax_law, ledger, _filing_status(profile, result), profile, business_tax=business_tax)
+        changes = differences(original_result, derived)
         if args.check:
             if changes:
                 print(f"BLOCKED: {len(changes)} derived line(s) on Form 1040 "
@@ -2190,7 +2229,7 @@ def _main(argv: list) -> int:
                                       tax_law, ledger, profile)
         if write(workspace, original_result, derived, california=california, government=government,
                  other_income=other_income, other_withholding=other_withholding, rental=rental,
-                 federal_2210=federal_2210):
+                 federal_2210=federal_2210, business_tax=business_tax):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "

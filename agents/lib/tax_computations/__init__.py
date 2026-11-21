@@ -302,8 +302,8 @@ def compute_se_tax(
     minus W-2 SS wages) and Medicare (2.9%, uncapped).
 
     When net_profit is zero or negative, returns $0 SE tax (net loss).
-    When net_profit is positive but below SE_TAX_THRESHOLD ($400), also returns
-    $0 SE tax (IRS minimum filing threshold). The returned 'note' field
+    When Schedule SE line 4c net earnings are below the filing threshold, also
+    returns $0 SE tax. The returned 'note' field
     distinguishes these two cases. Input validation runs unconditionally
     before either early return to catch data errors regardless of profit.
 
@@ -359,16 +359,16 @@ def compute_se_tax(
             "note": "No SE tax — net loss",
         }
 
-    if net_profit < SE_TAX_THRESHOLD:
+    # Schedule SE line 4c tests net earnings after the line 4a factor.
+    se_earnings = net_profit * deductible_factor
+    if round(se_earnings, 2) < SE_TAX_THRESHOLD:
         return {
             "net_profit": round(net_profit, 2),
             "se_earnings": 0,
             "se_tax": 0,
             "deductible_half": 0,
-            "note": f"No SE tax — net profit ${net_profit:.2f} below ${SE_TAX_THRESHOLD} threshold",
+            "note": f"No SE tax — net earnings below ${SE_TAX_THRESHOLD} threshold",
         }
-
-    se_earnings = net_profit * deductible_factor
 
     if ss_wage_base is not None:
         # Split into SS (capped) and Medicare (uncapped) components

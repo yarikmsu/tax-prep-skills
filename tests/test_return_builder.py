@@ -1270,7 +1270,8 @@ class TestTheReportAndTheOrder:
             "line_34_overpayment", "line_35a_refund", "line_37_amount_owed")
 
     def test_every_derived_line_has_a_stated_rule(self):
-        assert set(RB.RULES) == set(RB.DERIVED_ORDER) | {"line_38_estimated_tax_penalty"}
+        assert set(RB.RULES) == set(RB.DERIVED_ORDER) | {
+            "line_8_schedule1_other", "line_10_adjustments", "line_23_other_taxes", "line_38_estimated_tax_penalty"}
         assert all(RB.RULES[f].strip() for f in RB.DERIVED_ORDER)
 
     def test_the_report_names_the_rule_not_just_the_figures(self, tmp_path, capsys):
@@ -1576,6 +1577,105 @@ def test_let_irs_calculate_still_reconciles_payments_and_omits_form_2210(tmp_pat
     assert any("leave blank for the IRS" in line for line in checklist)
     assert any("$0.00 of Form 1040 line 37 remains" in line for line in checklist)
     assert not any("1040-V" in line for line in checklist)
+
+
+def _schedule_c_workspace(tmp_path, net=40000, *, exempt=False, other_taxes=250):
+    law = _law()
+    law["federal"].update({"social_security": {"wage_base": 175000, "employee_rate": 0.062},
+                           "se_tax": {"rate": 0.153, "net_earnings_factor": 0.9235}})
+    activity = {"activity_id": "business-a", "person": "primary", "line_31_net": net, "se_treatment": "regular"}
+    if exempt:
+        activity.update(se_treatment="approved_form_4361", approval_confirmed=True)
+    return _workspace(tmp_path, law=law, extra={
+        "meta": {"tax_year": 2026, "filing_status": "MFJ", "limitations": ["Synthetic return"]},
+        "schedule_c": {"line_1_gross_receipts": 50000, "line_31_net": net, "activities": [activity]},
+        "schedule_1_other_income": {"remaining_income": 500, "remaining_income_confirmed": True,
+                                    "schedule_c_excluded_from_remaining": True},
+        "schedule_se": {"inputs": {"tax_year": 2026,
+                                   "by_owner": {"primary": {"confirmed": True, "ss_wages": 0, "other_net_profit": 0}},
+                                   "remaining_adjustments": 200, "adjustments_exclude_se_deduction": True,
+                                   "remaining_other_taxes": other_taxes, "other_taxes_exclude_se_tax": True}},
+    })
+
+
+@pytest.mark.parametrize(("net", "exempt", "tax", "deduction"), [
+    (40000, False, 5651.82, 2825.91),  # line 4a: 40000 x .9235; SS + Medicare: x .153
+    (-4000, False, 0, 0),              # deductible business loss, with no net earnings for SE
+    (40000, True, 0, 0),               # approved Form 4361 for the only business
+])
+def test_schedule_c_settles_income_and_se_separately(tmp_path, net, exempt, tax, deduction):
+    from agents.lib import filing_package
+
+    remainder = 0 if exempt else 250
+    ws = _schedule_c_workspace(tmp_path, net, exempt=exempt, other_taxes=remainder)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    form = result["form_1040"]
+    assert result["schedule_1_other_income"]["schedule_1_line_3_business_income"] == net
+    assert form["line_8_schedule1_other"] == net + 500
+    assert result["schedule_se"]["schedule_1_line_15_deductible_se_tax"] == deduction
+    assert result["schedule_se"]["schedule_2_line_4_se_tax"] == tax
+    assert form["line_10_adjustments"] == 200 + deduction
+    assert form["line_11_agi"] == net + 300 - deduction
+    assert form["line_23_other_taxes"] == tax + remainder
+    schedule_keys = [entry["key"] for entry in filing_package.assembly_order(result)]
+    assert ("schedule_se.by_owner.primary" in schedule_keys) == bool(tax)
+    if exempt:
+        assert "schedule_se" in schedule_keys  # Schedule 2 still reports the approved exception.
+        assert any("Form 4361" in item for item in filing_package.attachment_checklist(result))
+    if tax:
+        assert form["line_24_total_tax"] == 11396.64
+        assert form["line_37_amount_owed"] == 11396.64
+
+
+def test_schedule_c_dropped_or_duplicated_flows_block_export(tmp_path):
+    from agents.lib import filing_package
+
+    ws = _schedule_c_workspace(tmp_path)
+    args = ["--workspace", str(ws)]
+    package_args = [*args, "--result", "result.json"]
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    RC.record(ws, "capabilities", RC.PASS)
+    assert filing_package._main(package_args) == 0
+    path = ws / "result.json"
+    original = path.read_text(encoding="utf-8")
+    for field, amount in (("line_8_schedule1_other", 500), ("line_8_schedule1_other", 80500),
+                          ("line_10_adjustments", 200), ("line_23_other_taxes", 250)):
+        changed = json.loads(original)
+        changed["form_1040"][field] = amount
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        assert RB._main(args + ["--check"]) == T._main(args) == filing_package._main(package_args) == 2
+    path.write_text(original, encoding="utf-8")
+    assert RB._main(args + ["--check"]) == T._main(args) == filing_package._main(package_args) == 0
+
+
+def test_build_before_other_taxes_are_reviewed_does_not_clear_final_gates(tmp_path):
+    ws = _schedule_c_workspace(tmp_path, other_taxes=None)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    assert result["form_1040"]["line_11_agi"] == 37474.09
+    assert RB._main(args + ["--check"]) == T._main(args) == 2
+
+
+def test_schedule_se_prices_each_spouse_against_their_own_wage_cap(tmp_path):
+    ws = _schedule_c_workspace(tmp_path)
+    result, profile, ledger, tax_law, _ = RB.load(ws)
+    business = result["schedule_c"]
+    business["line_31_net"] = 48000
+    business["activities"].append({"activity_id": "business-b", "person": "spouse",
+                                    "line_31_net": 8000, "se_treatment": "regular"})
+    owners = result["schedule_se"]["inputs"]["by_owner"]
+    owners["primary"]["ss_wages"] = 175000
+    owners["spouse"] = {"confirmed": True, "ss_wages": 0, "other_net_profit": 0}
+    derived = RB.build(result, tax_law, ledger, "MFJ", profile)
+    # Primary: only Medicare on 36,940 net earnings. Spouse: both taxes on 7,388.
+    assert derived["line_23_other_taxes"] == 250 + 1071.26 + 1130.36
+    assert derived["line_10_adjustments"] == 200 + 535.63 + 565.18
+    business["activities"][1]["activity_id"] = "business-a"
+    with pytest.raises(RB.Blocked, match="unique local reference"):
+        RB.build(result, tax_law, ledger, "MFJ", profile)
 
 
 class TestTheRolloverFillsTheFieldNothingUsedToWrite:
