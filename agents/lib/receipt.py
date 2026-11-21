@@ -511,7 +511,9 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
     not that what is here was ever whole.
     """
     workspace = Path(workspace).resolve()
-    captured, material_reasons = _material_checks(workspace)
+    # Material outcomes belong to tie-out. A caller verifying only another
+    # gate is asking whether that gate checked its own inputs.
+    captured, material_reasons = _material_checks(workspace) if "tie_out" in required else ({}, [])
     data = _read(workspace)
     if not data:
         return VerifyReport(False, [
