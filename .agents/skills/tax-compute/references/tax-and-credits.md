@@ -464,9 +464,10 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   the overpayment arose from a payment made after that date, use the date
   of that payment. Use the covered-year Form 2210 line 11 instructions for
   the effective date.
-- `balance_due` for a reviewed payment with an early-filed balance-due
+- `balance_due` for a reviewed payment already made with an early-filed balance-due
   return, using the covered-year Table 1 effective date. It affects Form
-  2210 timing only. Extension payments belong on Schedule 3.
+  2210 timing and the remaining remittance in the filing checklist. Extension
+  payments belong on Schedule 3.
 
 For a separate return, include only the taxpayer's own amounts and confirmed
 allocations from joint payments. Record `allocation_confirmed: true` on each
