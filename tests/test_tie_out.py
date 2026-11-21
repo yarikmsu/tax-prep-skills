@@ -345,6 +345,8 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
     files = [nec["file"], k["file"]]
     assert T.evaluate(_ledger(nec, k), result, files).failed
     assert T.evaluate(_ledger(nec, dict(k, skipped="overlap", key_boxes={})), result, files).failed
+    unclassified = T.evaluate(_ledger(nec, dict(k, key_boxes={"federal_withholding_1099": 0})), result, files)
+    assert any("needs the routed gross from Form 1099-K" in issue for issue in unclassified.source_issues)
 
     rows = ([{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec", "k"]}] if overlap else
             [{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec"]},
