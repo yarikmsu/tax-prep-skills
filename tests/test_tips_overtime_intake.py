@@ -10,7 +10,7 @@ from agents.lib.secure_fs import secure_path, write_secure
 from agents.lib.tax_computations import classify_misc_income, compute_schedule_1a
 from tests.skill_text import SKILLS_DIR, skill_text
 from tests.test_misc_income import source as misc_source
-from tests.test_return_builder import _law, _template_1040
+from tests.test_return_builder import _law, _schedule_c_workspace, _template_1040
 
 
 REFERENCE = SKILLS_DIR / 'tax-parse/references/tips-overtime.md'
@@ -48,7 +48,7 @@ def test_canonical_rows_use_2026_fields_and_keep_the_2025_source_separate():
 
 
 @pytest.mark.parametrize('form', ['W-2', '1099-NEC', '1099-MISC'])
-def test_reviewed_source_subamounts_do_not_increase_income_or_withholding(form):
+def test_reviewed_source_subamounts_do_not_increase_income_or_withholding(tmp_path, form):
     # Synthetic reviewed source: gross40k includes tips8k + premium3k;
     # withheld1,234 is separate. Adding the subamounts would falsely make51k.
     fields = source_fields()[form]
@@ -70,7 +70,15 @@ def test_reviewed_source_subamounts_do_not_increase_income_or_withholding(form):
         'line_25a_w2_withholding': 1234 if form == 'W-2' else 0,
         'line_25b_1099_withholding': 0 if form == 'W-2' else 1234},
         'schedule_c': {'line_1_gross_receipts': 0 if form == 'W-2' else 40000}}
-    report = T.evaluate(ledger, result, ['documents/source.pdf'])
+    tax_law = None
+    if form != 'W-2':
+        ws = _schedule_c_workspace(tmp_path, net=40000, other_taxes=0)
+        assert B._main(['--workspace', str(ws)]) == 0
+        computed, _, _, tax_law, _ = B.load(ws)
+        computed['schedule_c']['line_1_gross_receipts'] = 40000
+        computed['form_1040'].update(result['form_1040'])
+        result = computed
+    report = T.evaluate(ledger, result, ['documents/source.pdf'], tax_law=tax_law)
     assert not report.failed
     totals = {check.category: check.ledger_total for check in report.sum_checks}
     assert totals[income] == 40000
