@@ -21,6 +21,7 @@ FTB = "https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html"
 SCHEDULE_X = "https://www.ftb.ca.gov/forms/2025/2025-540-tax-rate-schedules.pdf"
 SCHEDULE_P = "https://www.ftb.ca.gov/forms/2025/2025-540-p-instructions.html"
 FTB_5805 = "https://www.ftb.ca.gov/forms/2025/2025-5805-instructions.html"
+FORM_540_ES = "https://www.ftb.ca.gov/forms/2025/2025-540-es-instructions.html"
 STATUSES = ("single", "mfj", "mfs", "hoh", "qss")
 W2_FIELDS = {
     "Box 1 Wages": "wages",
@@ -68,8 +69,9 @@ def seed_law(workspace: Path) -> None:
             "current_agi_override": dict.fromkeys(STATUSES, 1000000) | {"mfs": 500000},
             "installment_shares": [.3, .4, 0, .3],
             "due_dates": ["2025-04-15", "2025-06-16", "2025-09-15", "2026-01-15"],
-            "penalty_end": "2026-04-15", "early_filing_deadline": "2026-02-02",
-        }, FTB_5805),
+            "penalty_end": "2026-04-15", "early_filing_deadline": "2026-01-31",
+        }, FORM_540_ES),
+        ("state.estimated_tax_safe_harbor.penalty_end", "2026-04-15", FTB_5805),
         ("state.schedule_ca.fund_asset_minimum", .5, "https://www.ftb.ca.gov/forms/2025/2025-540-ca-instructions.html"),
         # These households use Schedule X. The checked CA law also requires a
         # tax-table block. Supply the published first row without claiming
