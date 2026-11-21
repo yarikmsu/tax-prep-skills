@@ -328,3 +328,6 @@ Prove every parsed document landed on the return — the CP2000 killer:
    aggregation — only the ledger-to-result comparison can.
 4. Run `sh agents/lib/run.sh -m agents.lib.receipt verify --json`. If it
    lists open material items, name each one and describe the return as a draft.
+   Re-read any open W-2 box from the source, repair its per-document intake
+   record and rebuild the ledger before recomputing. Verify ownership when
+   transcribing an amount.
