@@ -1525,6 +1525,7 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
     assert form["line_38_estimated_tax_penalty"] == 37.24
     assert form["line_37_amount_owed"] == 2037.24
     assert result["form_2210"]["estimated_payments_total"] == 4000
+    assert result["form_2210"]["balance_due_paid"] == 2000
     assert RB._main(args + ["--check"]) == T._main(args) == 0
     assert RC.verify(ws, required=("return_builder", "tie_out")).valid
     assert RB._main(args) == 0
@@ -1533,6 +1534,8 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
     RC.record(ws, "capabilities", RC.PASS)
     package_args = [*args, "--result", "result.json"]
     assert filing_package._main(package_args) == 0
+    assert any("$37.24 of Form 1040 line 37 remains" in item
+               for item in filing_package.attachment_checklist(result))
 
     # Moving a date without changing totals invalidates the workpaper and
     # makes both final gates refuse until the actual timeline is restored.
@@ -1557,7 +1560,8 @@ def test_let_irs_calculate_still_reconciles_payments_and_omits_form_2210(tmp_pat
                     extra={"meta": {"tax_year": 2026, "filing_status": "MFJ",
                                     "limitations": ["Synthetic return"]}})
     config = {"method": "regular", "schedule_3_refundable_credits": 0, "excluded_current_year_tax": 0}
-    rows = [_federal_row("quarterly-estimate", 1000)]
+    rows = [_federal_row("quarterly-estimate", 1000),
+            _federal_row("early-balance", 3000, kind="balance_due", date="2027-03-01")]
     _set_federal_payments(ws, rows, 1, 1000, config=config)
     args = ["--workspace", str(ws)]
     assert RB._main(args) == 2  # No cached rates and a payment is late.
@@ -1568,7 +1572,10 @@ def test_let_irs_calculate_still_reconciles_payments_and_omits_form_2210(tmp_pat
     assert result["form_1040"]["line_38_estimated_tax_penalty"] == 0
     assert result["form_1040"]["line_37_amount_owed"] == 3000
     assert all(entry["key"] != "form_2210" for entry in filing_package.assembly_order(result))
-    assert any("leave blank for the IRS" in line for line in filing_package.attachment_checklist(result))
+    checklist = filing_package.attachment_checklist(result)
+    assert any("leave blank for the IRS" in line for line in checklist)
+    assert any("$0.00 of Form 1040 line 37 remains" in line for line in checklist)
+    assert not any("1040-V" in line for line in checklist)
 
 
 class TestTheRolloverFillsTheFieldNothingUsedToWrite:

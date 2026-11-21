@@ -162,8 +162,9 @@ def form_2210_workpaper(form: dict, payments: FederalPayments, config: dict, tax
     )
     if mode == "regular" and not (workpaper["penalty_computed"] or workpaper["no_penalty"]):
         raise ValueError("Form 2210 penalty needs the applicable rate quarters or a reviewed decision to let the IRS calculate it")
+    balance_due_paid = round(sum(row["amount"] for row in payments.rows if row["kind"] == "balance_due"), 2)
     return {**workpaper, "computed_tax_year": payments.year, "payment_table": list(payments.rows),
-            "line_26_total": payments.line_26, "method": mode,
+            "line_26_total": payments.line_26, "balance_due_paid": balance_due_paid, "method": mode,
             "line_38": (workpaper["penalty"] or 0) if mode == "regular" else 0}
 
 
