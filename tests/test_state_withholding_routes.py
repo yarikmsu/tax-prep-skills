@@ -78,6 +78,9 @@ def test_ca_nonwage_withholding_ties_without_a_w2(form):
         records[0]["misc_income"] = source(box_3=0,box_3_business=0,box_3_other=0,
             box_4=0,box_5=0,box_6=0,box_7=False)
         result["meta"] = {"tax_year":2025}
+    if form == "1099-K":
+        # A verified personal-item sale at a loss still carries its withholding.
+        records[0]["key_boxes"]["personal_1099k"] = 8000
     assert not report(records, result).failed
     bad = copy.deepcopy(result)
     bad["california_540"] = {"ca_withholding_box17":300}
