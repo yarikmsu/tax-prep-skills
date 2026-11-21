@@ -18,6 +18,64 @@ the reviewed-year guard to make that run match an older golden. Federal CLI
 regressions isolate the federal section; the CA suite tests the TY2025 builder
 and the TY2026 refusal independently.
 
+## TY2025 California filing release test
+
+```bash
+sh agents/lib/run.sh -m pytest tests/test_ca_filing_release.py -q
+```
+
+The release test runs offline with synthetic forms. It extracts the masked
+PDF tables, builds the intake ledger, runs the capability and calculation
+commands, rechecks the return and tie-out, and verifies the receipt against
+the package assembly order and the exported PDF lines. The fixture supplies
+the few classification and election inputs normally entered by the skill.
+It replays a fixed, cited slice of 2025 law through the cache writer. Every
+household uses California Schedule X for taxable income above $100,000.
+
+- **W-2 and brokerage.** $138,000 wages and a $4,500 long-term gain ($10,000
+  proceeds less $5,500 basis) give $142,500 AGI. The $15,750 federal standard
+  deduction leaves $126,750 taxable. Ordinary tax is $17,651 + 24% ×
+  ($122,250 − $103,350) = $22,187. The gain adds $675 at 15%, for $22,862
+  total tax and a $1,138 refund after $24,000 withholding.
+  [2025 Form 1040 instructions](https://www.irs.gov/instructions/i1040gi),
+  [2025 inflation adjustments](https://www.irs.gov/pub/irs-drop/rp-24-40.pdf),
+  [revised standard deduction](https://www.irs.gov/irb/2025-45_IRB)
+- **Form 540 for the same household.** $142,500 of California AGI less the
+  $5,706 standard deduction gives $136,794 taxable. Schedule X gives
+  $3,201.97 + 9.3% × ($136,794 − $72,724) = $9,160.48. Subtract the $153
+  exemption credit to get $9,007.48 tax. Schedule P tentative minimum tax
+  is 7% × ($142,500 − $92,749) = $3,482.57, below regular tax. The $9,800
+  withholding covers the annual tax and produces a $792.52 refund. The
+  assertions use the toolkit's cent-precision transfer figures.
+  [2025 Form 540 booklet](https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html),
+  [Schedule X](https://www.ftb.ca.gov/forms/2025/2025-540-tax-rate-schedules.pdf),
+  [Schedule P](https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf),
+  [FTB 5805](https://www.ftb.ca.gov/forms/2025/2025-5805.pdf)
+- **Two W-2s and a posted estimate.** The split preserves wages and
+  withholding. The $600 reviewed federal estimate increases line 26 to
+  $600, total payments to $24,600 and the federal refund to $1,738. California
+  keeps the same withholding and refund.
+  [Form 2210 instructions](https://www.irs.gov/instructions/i2210)
+- **Sole proprietor.** Forms 1099-NEC and 1099-K report the same $12,000
+  payment. The receipt book counts it once. After $2,000 of expenses, $10,000
+  flows through Schedule 1. Schedule SE earnings are $9,235 (92.35% of net),
+  below the remaining $38,100 Social Security wage base. SE tax is $1,412.96
+  at 15.3%, with a $706.48 federal AGI deduction. The Form 8995 deduction is
+  20% of $9,293.52, or $1,858.70. Federal taxable income is $134,184.82. The
+  $4,500 gain still adds $675 and ordinary tax is $23,971.36, for $26,059.32
+  including SE tax and a $1,440.68 refund after $27,500 withholding. California
+  taxable income is $146,087.52 after its standard deduction. The same Schedule X
+  formula and exemption credit give $9,871.78 tax and a $1,128.22 refund after
+  $11,000 withholding.
+  [2025 Schedule SE](https://www.irs.gov/pub/irs-prior/f1040sse--2025.pdf),
+  [2025 Form 8995](https://www.irs.gov/pub/irs-prior/f8995--2025.pdf)
+
+A same-path correction, an unread W-2 box, an open deduction election, missing
+source provenance, and an interrupted compute each block final assembly and PDF
+export. Each test retries from the relevant intake or validation step and checks
+that the workspace becomes ready again. Refundable credits, Form 1095-A,
+special-rate gains and TY2026 California cases depend on their filing paths.
+
 ## The pieces
 
 | | |
