@@ -54,6 +54,7 @@ class ReceiptError(Exception):
 
 
 RECEIPT_NAME = "validation_receipt.json"
+MATERIAL_EVIDENCE_NAME = "material_evidence.json"
 # The receipt FORMAT. A reader that does not know a version refuses rather than
 # guessing at a shape — an unrecognised receipt is not a valid one.
 RECEIPT_VERSION = 1
@@ -240,12 +241,12 @@ _RETURN_FILES = ("parse_ledger.json", "result.json", "taxpayer_profile.json")
 _INPUTS = {
     "capabilities": _Reads(("taxpayer_profile.json",), False, False),
     "return_builder": _Reads(_RETURN_FILES, True, False),
-    "tie_out": _Reads((*_RETURN_FILES, "crypto_transactions.json"), True, True),
+    "tie_out": _Reads((*_RETURN_FILES, "crypto_transactions.json", MATERIAL_EVIDENCE_NAME), True, True),
 }
 
 
 def gate_inputs(workspace: Path, gate: str, *,
-                contents: "dict[str, bytes] | None" = None) -> dict:
+                contents: "dict[str, bytes | None] | None" = None) -> dict:
     """{key: {name, digest}} for every file `gate` reads.
 
     A file that is absent is simply not in the map, and `verify` re-derives the
@@ -256,7 +257,7 @@ def gate_inputs(workspace: Path, gate: str, *,
     `contents` supplies bytes the caller has ALREADY read, for a gate that
     parses a file and records it afterwards: re-reading there would hash a file
     the gate did not evaluate, and a profile edited in that window produced a
-    PASS receipt for flags the gate never saw.
+    PASS receipt for flags the gate never saw. A value of None binds absence.
     """
     # Against `_INPUTS` and not `_GATES`, which a test holds equal: one lookup
     # rather than a membership check and then a subscript that can still raise a
@@ -276,8 +277,9 @@ def gate_inputs(workspace: Path, gate: str, *,
     found = {}
     for name in names:
         if name in contents:
-            found[_entry_key(name)] = {"name": redact(name),
-                                       "digest": _sha256(contents[name])}
+            raw = contents[name]
+            if raw is not None:
+                found[_entry_key(name)] = {"name": redact(name), "digest": _sha256(raw)}
             continue
         path = workspace / name
         if not path.exists():
@@ -346,13 +348,20 @@ def record(workspace, gate: str, outcome: str, *,
     gates = data.get("gates")
     if not isinstance(gates, dict):
         gates = {}
+    captured = gate_inputs(workspace, gate) if inputs is None else dict(inputs)
+    if gate == "tie_out":
+        previous = gates.get(gate)
+        old_inputs = previous.get("inputs") if isinstance(previous, dict) else None
+        evidence_key = _entry_key(MATERIAL_EVIDENCE_NAME)
+        if isinstance(old_inputs, dict) and evidence_key in old_inputs and evidence_key not in captured:
+            raise ReceiptError(f"Restore {MATERIAL_EVIDENCE_NAME} before re-running the tie-out.")
     data["gates"] = gates
     data["gates"][gate] = {
         "outcome": outcome,
         "at": (now or datetime.now()).replace(microsecond=0).isoformat(),
         "engine": engine_digest(),
         "result_schema": result_schema_digest(),
-        "inputs": gate_inputs(workspace, gate) if inputs is None else dict(inputs),
+        "inputs": captured,
     }
     path = _write(workspace, data)
     # THE RESUMPTION CONDITION, checked rather than assumed. An interruption is
@@ -460,6 +469,36 @@ def _interruption_reason(workspace: Path) -> "str | None":
             "when they pass on what is in the workspace now.")
 
 
+def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str]]:
+    from agents.lib import capabilities, material_evidence
+
+    captured: dict[str, bytes | None] = {MATERIAL_EVIDENCE_NAME: None,
+                                         "taxpayer_profile.json": None}
+    reasons = []
+    profile_name = "taxpayer_profile.json"
+    required_forms = {}
+    try:
+        profile_path = _validate_subpath(workspace / profile_name, workspace)
+        if profile_path.exists() and not profile_path.is_file():
+            raise ValueError("profile must be a regular file")
+        raw = profile_path.read_bytes() if profile_path.is_file() else None
+        captured[profile_name] = raw
+        if raw is not None:
+            profile = json.loads(raw)
+            if not isinstance(profile, dict):
+                raise ValueError("profile must be an object")
+            required_forms = capabilities.required_form_items(profile)
+    except (OSError, ValueError, RolloverError, capabilities.CapabilityError):
+        reasons.append("Could not check required forms in taxpayer_profile.json.")
+
+    items: dict = {}
+    try:
+        captured[MATERIAL_EVIDENCE_NAME], items = material_evidence.read(workspace)
+    except (OSError, RolloverError, material_evidence.MaterialEvidenceError):
+        reasons.append(f"Could not validate {MATERIAL_EVIDENCE_NAME}.")
+    return captured, reasons + material_evidence.open_items(workspace, items, required_forms)
+
+
 def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyReport:
     """Re-read what each gate read and report every way the receipt is stale.
 
@@ -472,17 +511,21 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
     not that what is here was ever whole.
     """
     workspace = Path(workspace).resolve()
+    # Material outcomes belong to tie-out. A caller verifying only another
+    # gate is asking whether that gate checked its own inputs.
+    captured, material_reasons = _material_checks(workspace) if "tie_out" in required else ({}, [])
     data = _read(workspace)
     if not data:
         return VerifyReport(False, [
             f"no {RECEIPT_NAME} in this workspace — the capability gate "
             "(/tax-compute Step 0.7), the derived-lines gate (Step 12.6) and "
             "the tie-out gate (Step 12.7) write it, so a workspace without one "
-            "has not run them"])
+            "has not run them", *material_reasons])
     if data.get("receipt_version") != RECEIPT_VERSION:
         return VerifyReport(False, [
             f"{RECEIPT_NAME} declares version {data.get('receipt_version')!r}, "
-            f"and this engine writes version {RECEIPT_VERSION} — re-run the gates"])
+            f"and this engine writes version {RECEIPT_VERSION} — re-run the gates",
+            *material_reasons])
     reasons: "list[str]" = []
     notes: "list[str]" = []
     gates = data.get("gates")
@@ -515,7 +558,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
         if not isinstance(recorded, dict):
             reasons.append(f"the {gate} gate's entry records no inputs")
             continue
-        current = gate_inputs(workspace, gate)
+        current = gate_inputs(workspace, gate, contents=captured)
 
         def _name(key):
             """The display name either side holds for a key. Already redacted
@@ -540,6 +583,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
         # reason all of them may be wrong, and a reader working down a list
         # acts on what they read first.
         reasons.insert(0, interrupted)
+    reasons.extend(material_reasons)
     return VerifyReport(not reasons, reasons, notes)
 
 
@@ -621,12 +665,10 @@ def _main(argv: list) -> int:
             for note in report.notes:
                 print(f"  NOTE: {note}")
         else:
-            print("STALE RECEIPT — a filing package would not describe this "
-                  "workspace:")
+            print("STALE RECEIPT OR OPEN ITEMS — the return is not ready for final filing:")
             for reason in report.reasons:
                 print(f"  - {reason}")
-            print("\nRe-run /tax-compute (its Step 0.7, 12.6 and 12.7 gates "
-                  "rewrite the receipt) before assembling the package.")
+            print("\nResolve open items and re-run /tax-compute before assembling the package.")
         return 0 if report.valid else 2
     except (WorkspaceError, ReceiptError, RolloverError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
