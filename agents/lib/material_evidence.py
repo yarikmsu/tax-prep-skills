@@ -22,6 +22,7 @@ from agents.lib.workspace import (
 FILENAME = receipt.MATERIAL_EVIDENCE_NAME
 OUTCOMES = ("open", "computed", "reviewed", "not_applicable")
 _FORM_PREFIX = "form."
+W2_PREFIX = "w2."
 _EXCLUDED_INPUTS = {FILENAME, receipt.RECEIPT_NAME, "answers.md"}
 _ID = re.compile(r"[a-z][a-z0-9_.-]{0,95}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -103,10 +104,16 @@ def _write(workspace: Path, items: dict) -> None:
 
 def sync_required_forms(workspace: Path, required: dict[str, str]) -> None:
     """Register open forms from the capability gate without changing other items."""
+    sync_group(workspace, _FORM_PREFIX,
+               {key: {"label": label, "outcome": "open", "inputs": {}}
+                for key, label in required.items()})
+
+
+def sync_group(workspace: Path, prefix: str, replacements: dict) -> None:
+    """Replace the records derived from one gate, preserving the other items."""
     _, items = read(workspace)
-    updated = {key: item for key, item in items.items() if not key.startswith(_FORM_PREFIX)}
-    updated.update({key: {"label": label, "outcome": "open", "inputs": {}}
-                    for key, label in required.items()})
+    updated = {key: item for key, item in items.items() if not key.startswith(prefix)}
+    updated.update(replacements)
     if updated != items:
         _write(workspace, updated)
 
@@ -140,6 +147,8 @@ def record(workspace: Path, item_id: str, label: str, outcome: str,
         raise MaterialEvidenceError("use a stable item id and a short label without taxpayer details")
     if item_id.startswith(_FORM_PREFIX):
         raise MaterialEvidenceError("required forms must be completed through their filing workflow")
+    if item_id.startswith(W2_PREFIX):
+        raise MaterialEvidenceError("W-2 box outcomes come from the parse ledger")
     if outcome not in OUTCOMES or (outcome == "open") != (not inputs):
         raise MaterialEvidenceError("record a closed outcome with its source files, or mark it open")
     _, items = read(workspace)

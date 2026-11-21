@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import capabilities, filing_package as FP, material_evidence, receipt  # noqa: E402
+from agents.lib import parse_records, return_builder, tie_out  # noqa: E402
 
 
 def _result(**sections):
@@ -381,6 +382,66 @@ def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(
     profile_path.write_text(json.dumps(profile))
     run_gates()
     assert _package(tmp_path).returncode == 0
+
+
+@pytest.mark.parametrize("wage, box1_status", [(None, None), (None, "unread"), (0, None), (38000, None)])
+def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
+    documents = tmp_path / "documents"
+    documents.mkdir()
+    (documents / "w2.pdf").write_bytes(b"%PDF-1.4 synthetic W-2")
+    (documents / "interest.pdf").write_bytes(b"%PDF-1.4 synthetic 1099-INT")
+    withholding = 500 if wage is None else 0
+    source = {"doc_id": "w2-sample", "file": "documents/w2.pdf", "form_type": "Form W-2",
+              "payer": "Example employer", "person": "spouse",
+              "key_boxes": {"federal_withholding_w2": withholding}}
+    if wage is not None:
+        source["key_boxes"]["wages"] = wage
+    if box1_status:
+        source["w2_box_status"] = {"1": box1_status}
+    parse_records.write_record(tmp_path, source)
+    parse_records.write_record(tmp_path, {"doc_id": "interest", "file": "documents/interest.pdf",
+                                         "form_type": "1099-INT", "payer": "Example bank",
+                                         "key_boxes": {"taxable_interest": 200}})
+    ledger_path = parse_records.write_ledger(tmp_path)
+    ledger = tie_out.load_ledger(json.loads(ledger_path.read_text()))
+    assert next(record for record in ledger if record.doc_id == "w2-sample").person == "spouse"
+    lines = return_builder.ledger_income(ledger)
+    wages_line = lines["line_1a_wages"]
+    assert wages_line == (wage or 0)
+    data = _result(form_1040={"line_1a_wages": wages_line,
+                              "line_2b_taxable_interest": lines["line_2b_taxable_interest"],
+                              "line_25a_w2_withholding": withholding})
+    (tmp_path / "result.json").write_text(json.dumps(data))
+    for gate in ("capabilities", "return_builder"):
+        receipt.record(tmp_path, gate, receipt.PASS)
+
+    def run(module, *args):
+        return subprocess.run([sys.executable, "-m", f"agents.lib.{module}", "--workspace",
+                               str(tmp_path), *args], capture_output=True, text=True, cwd=FIX_REPO)
+
+    tying = run("tie_out", "--json")
+    assert tying.returncode == 0, tying.stderr
+    final = run("filing_package", "--result", "result.json")
+    if wage is None:
+        assert final.returncode == 2 and "Open material item: W-2 #1 Box 1" in final.stderr
+        draft = run("filing_package", "--result", "result.json", "--draft")
+        assert draft.returncode == 0 and "Open material item: W-2 #1 Box 1" in draft.stdout
+    else:
+        assert final.returncode == 0, final.stderr
+
+
+def test_w2_blank_and_verified_zero_are_distinct_and_cannot_conflict():
+    raw = {"doc_id": "w2", "file": "documents/w2.pdf", "form_type": "W-2", "payer": "Example employer",
+           "key_boxes": {"wages": 0}, "w2_box_status": {"2": "blank"}}
+    ledger = tie_out.load_ledger({"records": [raw]})
+    assert dict(ledger[0].key_boxes) == {"wages": 0, "federal_withholding_w2": 0}
+    items = tie_out._w2_outcomes(ledger, "a" * 64)
+    assert [item["outcome"] for item in items.values()] == ["reviewed", "not_applicable"]
+    with pytest.raises(tie_out.TieOutError, match="reconcile Form W-2c blanks"):
+        tie_out.load_ledger({"records": [dict(raw, form_type="Form W-2c")]})
+    raw["key_boxes"]["federal_withholding_w2"] = 0
+    with pytest.raises(tie_out.TieOutError, match="box 2 has both"):
+        tie_out.load_ledger({"records": [raw]})
 
 
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):

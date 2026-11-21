@@ -354,6 +354,10 @@ Rules:
 - **Every file in `documents/` gets exactly one record** — parsed with
   `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
   informational-only). No file may be silently absent; the builder refuses it.
+- Resolve federal wages and withholding on each W-2 using the
+  [W-2 amount and blank rules](references/form-extraction.md#w-2-extraction).
+  An unread box stays open and prevents final export, even when all amounts
+  that reached the ledger tie out.
 - For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - Withholding breakdowns, legacy-record migration and source instructions: [withholding reference](references/withholding.md).
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
