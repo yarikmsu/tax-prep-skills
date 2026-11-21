@@ -73,6 +73,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import material_evidence, receipt  # noqa: E402
 from agents.lib.tax_computations.federal import payments as federal_payments  # noqa: E402
+from agents.lib.tax_computations.federal import schedule_c  # noqa: E402
 from agents.lib.tax_computations.federal import source_reconciliation  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
@@ -95,7 +96,7 @@ from agents.lib.tax_computations import (  # noqa: E402
 )
 from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_input  # noqa: E402
 from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402
-    BENEFIT_CATEGORIES, _money, compute_government_benefits, validate_government_benefits,
+    BENEFIT_CATEGORIES, compute_government_benefits, validate_government_benefits,
 )
 from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
     MISC_OTHER, compute_schedule1_other, validate_misc_income,
@@ -2216,22 +2217,6 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
-def _schedule_c_net_stated(sheet: dict, result: dict, where: str) -> "float | None":
-    """A typed Schedule 1 remainder becomes a derived line 8, so it must say how
-    much Schedule C net it holds; dropping that net otherwise leaves AGI short
-    with --check green."""
-    c = result.get("schedule_c")
-    net = _money(c.get("line_31_net", 0), "schedule_c.line_31_net", signed=True) if isinstance(c, dict) else 0.0
-    stated = sheet.get("schedule_c_net_included")
-    if stated is None and not net:
-        return None
-    if stated is None:
-        raise ValueError(f"{where}: state schedule_c_net_included, the Schedule C net it includes")
-    if abs(_money(stated, f"{where}.schedule_c_net_included", signed=True) - net) > .005:
-        raise ValueError(f"{where} must include Schedule C line 31 net profit or loss exactly once")
-    return net
-
-
 def _w2g_sources(ledger: "list[LedgerRecord]", profile: dict) -> tuple[list, list]:
     records, years = [], []
     for rec in ledger:
@@ -2423,23 +2408,27 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
         or r["w2g_income"]["schedule_c_gross"] or r["w2g_income"]["income_method"] == "reviewed_worksheet"
         for r in w2g_records)
     rentals = rental_is_active(ledger, result, profile)
-    inactive = not positive and not rentals and (sheet is None or scaffold)
+    business_net = schedule_c.schedule_c_net(result, profile)
+    inactive = not positive and not rentals and business_net is None and (sheet is None or scaffold)
     if not source_years and inactive:
         return None
     year = _covered_source_year(result, profile, source_years, "Schedule1")
     if inactive:
         return None
     if not isinstance(sheet, dict) or scaffold:
-        raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC, casual W-2G and government benefits, including zero")
-    stated = _schedule_c_net_stated(sheet, result, "schedule_1_other_income.remaining_income")
+        raise ValueError("confirm remaining Schedule1 income, excluding separately computed business income, rentals, MISC, W-2G and benefits")
+    if business_net is not None and sheet.get("schedule_c_excluded_from_remaining") is not True:
+        raise ValueError("confirm remaining Schedule1 income excluding Schedule C line 31, including zero")
     if rentals and sheet.get("rentals_excluded_from_remaining") is not True:
         raise ValueError("reconfirm remaining Schedule1 income EXCLUDING computed rentals; do not retain an old manual rental net")
     built = compute_schedule1_other(tax_year=year, records=records,
         remaining_income=sheet.get("remaining_income"),
         remaining_income_confirmed=sheet.get("remaining_income_confirmed"),
         w2g_records=w2g_records, w2g_excluded_from_remaining=sheet.get("w2g_excluded_from_remaining", False))
-    if stated is not None:  # the rebuilt sheet keeps its own statement
-        built["schedule_c_net_included"] = stated
+    if business_net is not None:
+        built["schedule_c_excluded_from_remaining"] = True
+        built["schedule_1_line_3_business_income"] = business_net
+        built["total"] = round(built["total"] + business_net, 2)
     if rentals:
         built["rentals_excluded_from_remaining"] = True
         if include_rentals:
@@ -2525,7 +2514,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # restore: keep following line 8 rather than reverting a later edit.
     unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
     other_sheet = derive_schedule1_other_workpaper(ledger, result, profile, include_rentals=include_rentals)
-    stated = None
     if other_sheet is not None:
         other, confirmed = other_sheet["total"], True
     elif sheet is None or scaffold or (not positive and unconfirmed):
@@ -2534,7 +2522,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
         other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
         confirmed = False
     elif isinstance(sheet, dict):
-        stated = _schedule_c_net_stated(sheet, result, "schedule_1_government_benefits.other_income")
         other, confirmed = sheet.get("other_income"), sheet.get("other_income_confirmed")
     else:
         raise ValueError("schedule_1_government_benefits must be an object or absent")
@@ -2552,8 +2539,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # to a governmental UI program; an itemizer takes them on Schedule A.
     if built["unemployment_contribution_reduction"] and (result.get("schedule_a") or {}).get("use_itemized") is True:
         raise ValueError("an itemizer deducts UI program contributions on Schedule A, not on Schedule 1 line 7")
-    if stated is not None:  # the rebuilt sheet keeps its own statement
-        built["schedule_c_net_included"] = stated
     built["computed_tax_year"] = year
     return built
 
@@ -2942,6 +2927,12 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
+    try:
+        business_tax = schedule_c.schedule_se_workpaper(result, profile or {}, ledger, tax_law or {},
+                                                       require_other_taxes=True)
+        missing_targets.extend(schedule_c.flow_differences(result, business_tax))
+    except (ValueError, TypeError, OverflowError) as exc:
+        missing_targets.append(f"Schedule C and Schedule SE: {redact(exc)}")
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
     missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))

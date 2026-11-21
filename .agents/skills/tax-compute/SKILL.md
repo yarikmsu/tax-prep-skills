@@ -182,7 +182,9 @@ Every 1040 line that is ARITHMETIC over other lines — 1z, 9, 11, 14, 15, 16, 1
 sum of the parse records (1a, 2a, 2b, 3a, 3b, 6a and the two withholding lines
 25a and 25b) is computed by that command and written to `result.json`. The
 builder also derives line 26 from reviewed estimates and applied overpayments
-and updates line 38 when the Form 2210 review is present. **Do not
+and updates line 38 when the Form 2210 review is present. For Schedule C it
+reconciles line 31 to line 8 and Schedule SE to adjustments and other taxes.
+**Do not
 write one of them by hand.** Everything else on the form is a COMPONENT you
 still decide: what is taxable, whether to itemize, and what the credits allow.
 
