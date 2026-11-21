@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+from agents.lib import material_evidence
 from agents.lib.tax_law_fetcher import _figure_digests, create_empty_tax_law, create_state_template, source_pins
 
 
@@ -50,3 +51,32 @@ def write_synthetic_filing_law(workspace) -> dict:
     pin_synthetic_law(law)
     law_path.write_text(json.dumps(law), encoding="utf-8")
     return law
+
+
+def write_synthetic_filing_inputs(workspace) -> None:
+    result_path = workspace / "result.json"
+    profile_path = workspace / "taxpayer_profile.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    law_name = material_evidence._law_name(result, profile)
+    law = json.loads((workspace / law_name).read_text(encoding="utf-8"))
+    status = (result["meta"].get("filing_status") or profile["filing_status"]).lower()
+    base = law["federal"]["filing_statuses"][status]["standard_deduction"]
+    form = result["form_1040"]
+    if "line_12_standard_deduction" not in form:
+        form["line_12_standard_deduction"] = base
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+    worksheet = workspace / "synthetic-filing-workpaper.json"
+    worksheet.write_text('{"review": "Synthetic worksheet fixtures"}', encoding="utf-8")
+    sources = ["result.json", "taxpayer_profile.json", law_name]
+    for item_id in material_evidence._required_filing_inputs(result, profile):
+        method = None
+        if item_id == material_evidence.DEDUCTION_ITEM:
+            if (result.get("schedule_a") or {}).get("use_itemized") is True:
+                method = "itemized"
+            elif form["line_12_standard_deduction"] == base:
+                method = "standard"
+            else:
+                method = "standard_worksheet"
+        material_evidence.record(workspace, item_id, "Synthetic review", "reviewed",
+                                 sources + [worksheet.name], deduction_method=method)

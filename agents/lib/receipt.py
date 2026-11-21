@@ -573,7 +573,10 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
     captured, material_reasons = (_material_checks(workspace)
                                   if material and "tie_out" in required else ({}, []))
     if for_filing:
+        from agents.lib.material_evidence import filing_input_issues
         material_reasons += _applicable_law_checks(workspace, captured, result_bytes)
+        material_reasons += filing_input_issues(captured)
+        material_reasons = list(dict.fromkeys(material_reasons))
     data = _read(workspace)
     if not data:
         return VerifyReport(False, [

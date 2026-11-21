@@ -267,21 +267,39 @@ last ran an older engine is refused with this gate named — re-run this step.
 
 ### Step 12.65: Record material filing outcomes
 
-Record each material filing outcome under a stable id and a short form or line
-label. Use generic labels without taxpayer data. Start unresolved items as `open`.
+Record the deduction election on every return. For the basic standard
+deduction, verify that Form 1040 line 12 equals the covered-year cached amount
+for the filing status. Run the following after the final build, substituting
+the covered year in the cache filename.
 
 ```bash
-sh agents/lib/run.sh -m agents.lib.material_evidence --id estimated-payments \
-  --label 'Form 1040 estimated payments' --outcome open
+sh agents/lib/run.sh -m agents.lib.material_evidence --id input.deduction_election \
+  --label 'Form 1040 line 12 deduction election' --outcome computed \
+  --deduction-method standard --input result.json --input taxpayer_profile.json \
+  --input tax_law_{year}.json
 ```
 
-After completing the work, use `computed`, `reviewed`, or `not_applicable`
-for the same id and label. Supply `--input` once for each workspace-relative
-source or workpaper the outcome depends on. Keep workpapers in `reviews/` so
-they archive with the return. Include the affected result and input files when
-they determined the outcome. An input change or removal
-reopens the item. Record a new outcome only after reviewing the changed inputs.
-The writer secures `material_evidence.json`. The tie-out records its digest.
+For an itemized election, use `--deduction-method itemized` and attach the
+reviewed Schedule A worksheet. For a dependent's limit, the age or blindness
+addition, or special standard-deduction treatment, use
+`--deduction-method standard_worksheet` and attach the reviewed worksheet.
+The election can be zero when the covered-year worksheet supports that result.
+
+Record these outcomes when the corresponding worksheets apply:
+
+- `input.nonrefundable_credits` for Form 1040 lines 19 and 20.
+- `input.amt` for the Form 6251 review.
+- `input.other_taxes` for remaining Schedule 2 Part II taxes.
+- `input.payments` for Schedule 3 payments and manual Form 2210 work.
+
+Use `computed`, `reviewed`, or `not_applicable` after completing the work.
+Keep an unresolved outcome `open`. Record a worked zero with the same inputs
+as a positive amount. Give each outcome the result, profile and covered-year
+law cache as inputs. Add `--input` for each supporting worksheet or source.
+Keep taxpayer workpapers owner-only in `reviews/`, using `secure_fs` when
+creating them. Use generic labels without taxpayer data. A changed or missing
+dependency reopens the item until it has been reviewed again. The tie-out
+records the digest of `material_evidence.json` before final export.
 
 The capability gate registers Form 8962 for a Marketplace case. An
 acknowledgment permits continuing the computation for a draft. Final export
