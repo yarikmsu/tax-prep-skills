@@ -421,6 +421,7 @@ def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
 
     tying = run("tie_out", "--json")
     assert tying.returncode == 0, tying.stderr
+    assert receipt.verify(tmp_path, required=(return_builder.GATE,)).valid
     final = run("filing_package", "--result", "result.json")
     if wage is None:
         assert final.returncode == 2 and "Open material item: W-2 #1 Box 1" in final.stderr
