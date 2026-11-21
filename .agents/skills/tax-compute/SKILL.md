@@ -320,6 +320,8 @@ Prove every parsed document landed on the return — the CP2000 killer:
      A source changed since intake requires `/tax-parse` on that version of
      the file, or `/tax-parse-crypto` for an exchange export. Rebuild the ledger
      and recompute from the new amounts before re-running tie-out.
+     For source reconciliation failures, review the expected forms, retained
+     versions or business receipts using the source reconciliation reference in `/tax-parse`.
      Otherwise fix the aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
      proceed to `/tax-generate` past a failed tie-out, and never "fix" a
      mismatch by editing the ledger to match the return without re-checking

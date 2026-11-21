@@ -313,6 +313,7 @@ def _read(workspace: Path) -> dict:
 
 def record(workspace, gate: str, outcome: str, *,
            inputs: "dict[str, str] | None" = None,
+           disclosures: tuple[str, ...] = (),
            now: "datetime | None" = None) -> Path:
     """Write `gate`'s outcome and the digests of what it read. Returns the path.
 
@@ -363,6 +364,8 @@ def record(workspace, gate: str, outcome: str, *,
         "result_schema": result_schema_digest(),
         "inputs": captured,
     }
+    if disclosures:
+        data["gates"][gate]["disclosures"] = list(disclosures)
     path = _write(workspace, data)
     # THE RESUMPTION CONDITION, checked rather than assumed. An interruption is
     # forgotten only once every required gate verifies clean against the files
@@ -381,7 +384,7 @@ def record(workspace, gate: str, outcome: str, *,
 
 
 def record_after_verdict(workspace, gate: str, outcome: str, exit_code: int, *,
-                         inputs: "dict | None" = None) -> int:
+                         inputs: "dict | None" = None, disclosures: tuple[str, ...] = ()) -> int:
     """Record `outcome`, and return the code the gate's CLI should exit with.
 
     Every gate ends this way and each had hand-rolled it. The invariant is one
@@ -398,7 +401,7 @@ def record_after_verdict(workspace, gate: str, outcome: str, exit_code: int, *,
     gate captured before it evaluated — see `record`.
     """
     try:
-        record(workspace, gate, outcome, inputs=inputs)
+        record(workspace, gate, outcome, inputs=inputs, disclosures=disclosures)
     except (WorkspaceError, ReceiptError, RolloverError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return max(exit_code, 1)
@@ -441,14 +444,17 @@ class VerifyReport:
     """
 
     def __init__(self, valid: bool, reasons: "list[str]",
-                 notes: "list[str] | None" = None):
+                 notes: "list[str] | None" = None, disclosures: list[str] | None = None):
         self.valid = valid
         self.reasons = reasons
         self.notes = list(notes or ())
+        self.disclosures = list(disclosures or ())
 
     def to_dict(self) -> dict:
-        return {"valid": self.valid, "reasons": self.reasons,
-                "notes": self.notes}
+        data = {"valid": self.valid, "reasons": self.reasons, "notes": self.notes}
+        if self.disclosures:
+            data["disclosures"] = self.disclosures
+        return data
 
 
 def _interruption_reason(workspace: Path) -> "str | None":
@@ -528,6 +534,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
             *material_reasons])
     reasons: "list[str]" = []
     notes: "list[str]" = []
+    disclosures: list[str] = []
     gates = data.get("gates")
     if not isinstance(gates, dict):
         gates = {}
@@ -546,6 +553,12 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
                 f"the {gate} gate recorded {outcome!r}: it ran, and this return "
                 "is one it does not govern, so what it checks was checked by "
                 "nothing. Verify those figures by hand before filing.")
+        elif gate == "tie_out":
+            findings = entry.get("disclosures", [])
+            if isinstance(findings, list) and all(isinstance(item, str) for item in findings):
+                disclosures.extend(findings)
+            else:
+                reasons.append("The tie-out's source reconciliation disclosures are malformed.")
         if entry.get("engine") != engine:
             reasons.append(
                 f"the {gate} gate ran on a different engine than this one — "
@@ -584,7 +597,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
         # acts on what they read first.
         reasons.insert(0, interrupted)
     reasons.extend(material_reasons)
-    return VerifyReport(not reasons, reasons, notes)
+    return VerifyReport(not reasons, reasons, notes, disclosures)
 
 
 def covers_result(workspace, result_path, *, contents: "bytes | None" = None) -> str:

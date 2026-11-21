@@ -478,10 +478,9 @@ missing = missing_expected_payers(ledger, profile.get('expected_sources') or {})
 print('\n'.join(missing) or '(all expected payers accounted for)')"
 ```
 
-Every payer printed must already have an answers.md resolution from step
-2.5 ("account closed at Chase in March", "1099 not yet issued — will amend").
-If one doesn't, STOP and resolve it now — do not hand an unexplained missing
-payer to `/tax-compute`.
+Resolve missing form types, copies, corrections and overlap with the
+[source reconciliation rules](references/source-reconciliation.md).
+Tie-out checks these dispositions again before final export.
 
 ### 7. Summary
 

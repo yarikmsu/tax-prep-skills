@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import material_evidence, receipt  # noqa: E402
+from agents.lib.tax_computations.federal import source_reconciliation  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -151,6 +152,7 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   # no return at all.
                   "other_local_withholding"}
 _INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
+_INFORMATIONAL.add(source_reconciliation.BOOK_GROSS)
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -614,6 +616,8 @@ class LedgerRecord:
     rental_source: "dict | None" = None
     w2_box_status: "dict[str, str] | None" = None
     source_sha256: "str | None" = None
+    source_form: "dict | None" = None
+    business_receipts: "list[dict] | None" = None
 
 
 @dataclass(frozen=True)
@@ -641,6 +645,8 @@ class TieOutReport:
     advisories: "tuple[str, ...]"  # loud manual-verify notes (never a failure)
     failed: bool
     changed_sources: "tuple[str, ...]" = ()
+    source_issues: "tuple[str, ...]" = ()
+    source_disclosures: "tuple[str, ...]" = ()
 
 
 def _num(value, where: str) -> float:
@@ -706,7 +712,7 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
 
 
 def _w2_code(form_type: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]", "", form_type).upper().removeprefix("FORM")
+    return source_reconciliation.form_code(form_type)
 
 
 def _is_w2(form_type: str, boxes: dict) -> bool:
@@ -801,6 +807,12 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         person = rec.get("person") or "joint"
         if person not in ("primary", "spouse", "joint"):
             raise TieOutError(f"{where}.person must be primary/spouse/joint")
+        try:
+            source_form = source_reconciliation.validate_form(rec.get("source_form"), skipped is not None)
+            business_receipts = source_reconciliation.validate_book(
+                rec.get("business_receipts"), boxes, person, skipped is not None)
+        except ValueError as exc:
+            raise TieOutError(f"{where}: {exc}") from None
         foreign = rec.get("foreign", False)
         if not isinstance(foreign, bool):
             raise TieOutError(
@@ -872,7 +884,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             other_state_withholding_by_state=other_states,
             other_local_withholding_by_locality=other_localities, ca_investments=ca_investments,
             government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
-            rental_source=rental_source, w2_box_status=w2_status, source_sha256=source_sha256))
+            rental_source=rental_source, w2_box_status=w2_status, source_sha256=source_sha256,
+            source_form=source_form, business_receipts=business_receipts))
     return records
 
 
@@ -905,8 +918,31 @@ def _payer_tokens(name: str) -> frozenset:
         if t)
 
 
-def missing_expected_payers(ledger: "list[LedgerRecord]",
-                            expected_sources: dict) -> "list[str]":
+_EXPECTED_FORM_LABELS = {
+    "w2_employers": "Form W-2", "interest_payers": "interest reporting",
+    "dividend_payers": "dividend reporting", "brokerages": "brokerage reporting",
+    "foreign_accounts": "foreign account statement",
+}
+
+
+def _has_expected_kind(record: LedgerRecord, kind: str) -> bool:
+    boxes = dict(record.key_boxes)
+    code = source_reconciliation.form_code(record.form_type)
+    if kind == "w2_employers":
+        return _is_w2(record.form_type, boxes)
+    if kind == "interest_payers":
+        return ("taxable_interest" in boxes or ("tax_exempt_interest" in boxes
+                and ("exempt_interest_dividends" not in boxes or
+                     boxes["tax_exempt_interest"] > boxes["exempt_interest_dividends"])))
+    if kind == "dividend_payers":
+        return bool(boxes.keys() & {"ordinary_dividends", "qualified_dividends", "capital_gain_distributions",
+                                    "exempt_interest_dividends", "qbi_dividends"})
+    if kind == "brokerages":
+        return ("capital_proceeds" in boxes or "1099B" in code or "CONSOLIDATED" in code or "BROKERAGE" in code)
+    return record.foreign
+
+
+def missing_expected_forms(ledger: list[LedgerRecord], expected_sources: dict) -> list[tuple[str, str]]:
     """A4: expected payers (rolled over from the prior year by /tax-rollover)
     with no matching ledger payer — each is a document that existed last year
     and is absent this year (the CP2000 intake gap /tax-parse step 2.5 must
@@ -918,27 +954,47 @@ def missing_expected_payers(ledger: "list[LedgerRecord]",
     (safe direction: one extra question) rather than false-matching."""
     if not isinstance(expected_sources, dict):
         raise TieOutError("expected_sources must be an object")
-    expected = []
+    missing = []
     for key, values in expected_sources.items():
         if key.startswith("_"):
             continue
         if not isinstance(values, list):
             raise TieOutError(f"expected_sources.{key} must be a list")
+        if key not in _EXPECTED_FORM_LABELS:
+            raise TieOutError("expected_sources contains an unrecognized source kind")
         for v in values:
             # /tax-rollover writes OBJECT entries — {"name", "ein"} for
             # employers, {"name", "country_code"} for payers,
             # {"institution", "country_code", "account_last4"} for foreign
             # accounts. Plain strings are accepted for hand-maintained lists.
-            expected.append(_expected_payer_name(v, f"expected_sources.{key}"))
-    ledger_tokens = [t for t in (_payer_tokens(r.payer) for r in ledger) if t]
-    missing = []
-    for name in expected:
-        toks = _payer_tokens(name)
-        if not toks:
-            continue
-        if not any(toks <= lt or lt <= toks for lt in ledger_tokens):
-            missing.append(name)
-    return sorted(set(missing))
+            name = _expected_payer_name(v, f"expected_sources.{key}")
+            detail = v if isinstance(v, dict) else {}
+            if detail.get("resolution") == "issuer_confirmed_no_form":
+                continue
+            if "resolution" in detail:
+                raise TieOutError("expected-source resolution must be issuer_confirmed_no_form or absent")
+            tokens = _payer_tokens(name)
+            person = detail.get("person")
+            last4 = detail.get("account_last4")
+            if person is not None and person not in ("primary", "spouse", "joint"):
+                raise TieOutError("expected-source person must be primary, spouse or joint")
+            if last4 is not None and (not isinstance(last4, str) or not re.fullmatch(r"[0-9]{4}", last4)):
+                raise TieOutError("expected-source account_last4 must contain four account digits")
+            for record in ledger:
+                payer = _payer_tokens(record.payer)
+                if (record.skipped is None and tokens and payer and (tokens <= payer or payer <= tokens)
+                        and (person is None or record.person == person)
+                        and (last4 is None or last4 == (record.source_form or {}).get("account_last4"))
+                        and _has_expected_kind(record, key)):
+                    break
+            else:
+                missing.append((_EXPECTED_FORM_LABELS[key], name))
+    return missing
+
+
+def missing_expected_payers(ledger: list[LedgerRecord], expected_sources: dict) -> list[str]:
+    """Compatibility view for the intake prompt."""
+    return sorted({name for _, name in missing_expected_forms(ledger, expected_sources)})
 
 
 def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
@@ -2857,6 +2913,16 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         if r.skipped is not None and r.skipped.strip().lower().startswith("pending")))
 
     sums = category_sums(ledger)
+    meta = result.get("meta")
+    year = (meta.get("tax_year") if isinstance(meta, dict) else None) or (profile or {}).get("tax_year")
+    source_review = source_reconciliation.review(ledger, year)
+    expected = (profile or {}).get("expected_sources")
+    missing_forms = missing_expected_forms(ledger, expected) if expected is not None else []
+    source_issues = source_review.problems + tuple(
+        f"Expected {label} item #{number} is missing from the reported intake."
+        for number, (label, _) in enumerate(missing_forms, 1))
+    if source_review.business_gross is not None:
+        sums[source_reconciliation.BUSINESS_GROSS] = source_review.business_gross
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
@@ -2981,8 +3047,10 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         delta = round(sums[cat] - result_total, 2)
         # at-least categories: only ledger > result (the under-report
         # direction) fails; a return reporting MORE than the 1099s is legal.
-        ok = (delta <= tolerance if cat in _AT_LEAST_CATEGORIES
-              else abs(delta) <= tolerance)
+        if cat == source_reconciliation.BUSINESS_GROSS and source_review.business_gross is not None:
+            ok = delta == 0
+        else:
+            ok = delta <= tolerance if cat in _AT_LEAST_CATEGORIES else abs(delta) <= tolerance
         sum_checks.append(SumCheck(
             category=cat, ledger_total=round(sums[cat], 2),
             result_total=round(result_total, 2), delta=delta,
@@ -3504,7 +3572,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         result, profile_flags, tolerance)
     failed = bool(missing_records or phantom_files or pending_skips
                   or missing_targets or pfic_incomplete
-                  or ny_city_and_yonkers
+                  or ny_city_and_yonkers or source_issues
                   or any(not c.ok and not c.advisory for c in sum_checks))
     return TieOutReport(
         records=len(ledger), skipped=sum(1 for r in ledger if r.skipped is not None),
@@ -3516,7 +3584,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         ny_city_and_yonkers=ny_city_and_yonkers,
         unverifiable=tuple(unverifiable),
         advisories=tuple(advisories),
-        failed=failed)
+        failed=failed, source_issues=source_issues, source_disclosures=source_review.disclosures)
 
 
 def render_markdown(report: TieOutReport) -> str:
@@ -3536,6 +3604,10 @@ def render_markdown(report: TieOutReport) -> str:
         lines += ["## ⛔ Source documents changed since intake", ""]
         lines += [f"- {item}" for item in report.changed_sources]
         lines += ["", "Re-parse these documents and rebuild the ledger before computing again.", ""]
+    if report.source_issues:
+        lines += ["## ⛔ Unresolved source forms", "", *[f"- {item}" for item in report.source_issues], ""]
+    if report.source_disclosures:
+        lines += ["## Source form reconciliation", "", *[f"- {item}" for item in report.source_disclosures], ""]
     if report.pending_skips:
         lines += ["## ⛔ Documents skipped PENDING another skill", ""]
         lines += [f"- {s}" for s in report.pending_skips]
@@ -3870,6 +3942,8 @@ def _main(argv: list) -> int:
             "missing_records": list(report.missing_records),
             "phantom_files": list(report.phantom_files),
             "changed_sources": list(report.changed_sources),
+            "source_issues": list(report.source_issues),
+            "source_disclosures": list(report.source_disclosures),
             "pending_skips": list(report.pending_skips),
             "sum_checks": [vars(c) for c in report.sum_checks],
             "missing_result_targets": list(report.missing_result_targets),
@@ -3901,7 +3975,7 @@ def _main(argv: list) -> int:
     # both refuse a filing package (V8).
     return receipt.record_after_verdict(
         workspace, "tie_out", receipt.PASS if not report.failed else "FAILED",
-        exit_code, inputs=gate_inputs)
+        exit_code, inputs=gate_inputs, disclosures=report.source_disclosures)
 
 
 if __name__ == "__main__":

@@ -555,7 +555,7 @@ def attachment_checklist(result: dict) -> list:
     return lines
 
 
-def render_markdown(result: dict) -> str:
+def render_markdown(result: dict, *, disclosures=()) -> str:
     order = assembly_order(result)
     lines = ["# Filing package — assembly order", "",
              "**NOT an e-file artifact.** No MeF submission, no Form 8879. "
@@ -570,6 +570,8 @@ def render_markdown(result: dict) -> str:
     lines += ["", "## Attachment checklist", ""]
     for item in attachment_checklist(result):
         lines.append(f"- [ ] {item}")
+    if disclosures:
+        lines += ["", "## Source form reconciliation", "", *[f"- {item}" for item in disclosures]]
     return "\n".join(lines) + "\n"
 
 
@@ -642,7 +644,7 @@ def _main(argv: list) -> int:
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:
             checked = receipt.VerifyReport(False, checked.reasons + [packaged],
-                                           checked.notes)
+                                           checked.notes, checked.disclosures)
         if not checked.valid and not args.draft:
             print("REFUSED: the return is not ready for final filing.", file=sys.stderr)
             for reason in checked.reasons:
@@ -659,7 +661,7 @@ def _main(argv: list) -> int:
                 "receipt": checked.to_dict(),
             }, indent=2))
         else:
-            print(_draft_banner(checked) + render_markdown(result))
+            print(_draft_banner(checked) + render_markdown(result, disclosures=checked.disclosures))
     except (WorkspaceError, FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
