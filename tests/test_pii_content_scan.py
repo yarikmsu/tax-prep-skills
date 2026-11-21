@@ -1455,7 +1455,7 @@ def test_a_ten_digit_number_still_does_not_false_positive(tmp_path):
 # it was built on top of had none.
 @pytest.mark.parametrize("name", [
     "taxpayer_profile.json", "result.json", "answers.md", "parse_ledger.json",
-    "holdings.json", "projection_inputs.json", "crypto_transactions.json",
+    "holdings.json", "projection_inputs.json", "crypto_transactions.json", "material_evidence.json",
     # The one entry here whose CONTENT this scanner structurally cannot vet.
     # tax-generate writes this generator per workspace with the taxpayer's NAME
     # in its section headers, and a name has neither an SSN shape nor a
