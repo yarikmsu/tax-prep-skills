@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -388,11 +389,14 @@ def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(
 def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
     documents = tmp_path / "documents"
     documents.mkdir()
-    (documents / "w2.pdf").write_bytes(b"%PDF-1.4 synthetic W-2")
-    (documents / "interest.pdf").write_bytes(b"%PDF-1.4 synthetic 1099-INT")
+    wage_doc = documents / "w2.pdf"
+    interest_doc = documents / "interest.pdf"
+    wage_doc.write_bytes(b"%PDF-1.4 synthetic W-2")
+    interest_doc.write_bytes(b"%PDF-1.4 synthetic 1099-INT")
     withholding = 500 if wage is None else 0
     source = {"doc_id": "w2-sample", "file": "documents/w2.pdf", "form_type": "Form W-2",
               "payer": "Example employer", "person": "spouse",
+              "source_sha256": sha256(wage_doc.read_bytes()).hexdigest(),
               "key_boxes": {"federal_withholding_w2": withholding}}
     if wage is not None:
         source["key_boxes"]["wages"] = wage
@@ -400,6 +404,7 @@ def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
         source["w2_box_status"] = {"1": box1_status}
     parse_records.write_record(tmp_path, {"doc_id": "interest", "file": "documents/interest.pdf",
                                          "form_type": "1099-INT", "payer": "Example bank",
+                                         "source_sha256": sha256(interest_doc.read_bytes()).hexdigest(),
                                          "key_boxes": {"taxable_interest": 200}})
 
     def run(module, *args):
@@ -524,6 +529,59 @@ def test_a_blank_box_1_beside_other_w2_amounts_stays_open(boxes, outcome):
     assert _w2_items(raw)[0][1] == outcome
     zero = _w2("W-2", wages=0, **boxes)
     assert _w2_items(zero)[0][1] == "reviewed"
+
+
+def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_path):
+    source_file = tmp_path / "documents" / "interest.csv"
+    source_file.parent.mkdir()
+    source_file.write_text("Taxable interest\n200\n")
+    source = {"doc_id": "interest", "file": "documents/interest.csv",
+              "form_type": "1099-INT", "payer": "Example bank",
+              "key_boxes": {"taxable_interest": 200}}
+
+    def run(module, *args):
+        return subprocess.run([sys.executable, "-m", f"agents.lib.{module}", "--workspace",
+                               str(tmp_path), *args], capture_output=True, text=True, cwd=FIX_REPO)
+
+    def publish_and_check():
+        parse_records.write_record(tmp_path, source)
+        ledger = parse_records.write_ledger(tmp_path)
+        amount = source["key_boxes"]["taxable_interest"]
+        (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": amount})))
+        for gate in ("capabilities", "return_builder"):
+            receipt.record(tmp_path, gate, receipt.PASS)
+        checked = run("tie_out", "--json")
+        assert checked.returncode == 0, checked.stderr
+        return json.loads(ledger.read_text())["records"][0]
+
+    def reparse():
+        extracted = subprocess.run(
+            [sys.executable, "-m", "agents.lib.parse_utils", "--workspace", str(tmp_path),
+             "csv", source["file"], "--with-source-digest"], capture_output=True, text=True, cwd=FIX_REPO)
+        assert extracted.returncode == 0, extracted.stderr
+        data = json.loads(extracted.stdout)
+        source["source_sha256"] = data["source_sha256"]
+        source["key_boxes"]["taxable_interest"] = int(data["data"][1][0])
+        return publish_and_check()
+
+    publish_and_check()
+    legacy = run("filing_package", "--result", "result.json")
+    assert legacy.returncode == 2 and "re-parse required to bind source bytes" in legacy.stderr
+    legacy_draft = run("filing_package", "--result", "result.json", "--draft")
+    assert legacy_draft.returncode == 0 and "re-parse required to bind source bytes" in legacy_draft.stdout
+
+    bound = reparse()
+    assert bound["source_sha256"] == source["source_sha256"]
+    assert publish_and_check() == bound  # The carried-over record keeps its original digest.
+    assert run("filing_package", "--result", "result.json").returncode == 0
+
+    source_file.write_text("Taxable interest\n275\n")
+    assert run("filing_package", "--result", "result.json").returncode == 2
+    retied = run("tie_out", "--json")
+    assert retied.returncode == 2 and json.loads(retied.stdout)["changed_sources"]
+    assert run("filing_package", "--result", "result.json").returncode == 2
+    assert reparse()["key_boxes"]["taxable_interest"] == 275
+    assert run("filing_package", "--result", "result.json").returncode == 0
 
 
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):

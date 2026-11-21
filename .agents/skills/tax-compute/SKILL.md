@@ -317,6 +317,9 @@ Prove every parsed document landed on the return — the CP2000 killer:
      or `has_digital_asset_option_exercise` or `has_crypto_specific_identification`
      unanswered with digital assets on the return — ask the taxpayer, set it,
      and re-run Step 0.7 first.
+     A source changed since intake requires `/tax-parse` on that version of
+     the file, or `/tax-parse-crypto` for an exchange export. Rebuild the ledger
+     and recompute from the new amounts before re-running tie-out.
      Otherwise fix the aggregation (or the ledger, if the parse was wrong) and re-run. NEVER
      proceed to `/tax-generate` past a failed tie-out, and never "fix" a
      mismatch by editing the ledger to match the return without re-checking
@@ -330,4 +333,4 @@ Prove every parsed document landed on the return — the CP2000 killer:
    lists open material items, name each one and describe the return as a draft.
    Re-read any open W-2 box from the source, repair its per-document intake
    record and rebuild the ledger before recomputing. Verify ownership when
-   transcribing an amount.
+   transcribing an amount. A missing source digest also requires re-parsing.

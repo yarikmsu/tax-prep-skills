@@ -23,6 +23,7 @@ FILENAME = receipt.MATERIAL_EVIDENCE_NAME
 OUTCOMES = ("open", "computed", "reviewed", "not_applicable")
 _FORM_PREFIX = "form."
 W2_PREFIX = "w2."
+SOURCE_PREFIX = "source."
 _EXCLUDED_INPUTS = {FILENAME, receipt.RECEIPT_NAME, "answers.md"}
 # Compared case-folded: on a case-insensitive volume (macOS, Windows)
 # `ANSWERS.md` IS answers.md, and an exact match let it through.
@@ -166,6 +167,8 @@ def record(workspace: Path, item_id: str, label: str, outcome: str,
         raise MaterialEvidenceError("required forms must be completed through their filing workflow")
     if item_id.startswith(W2_PREFIX):
         raise MaterialEvidenceError("W-2 box outcomes come from the parse ledger")
+    if item_id.startswith(SOURCE_PREFIX):
+        raise MaterialEvidenceError("source-document outcomes come from the parse ledger")
     if outcome not in OUTCOMES or (outcome == "open") != (not inputs):
         raise MaterialEvidenceError("record a closed outcome with its source files, or mark it open")
     _, items = read(workspace)
