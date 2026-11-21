@@ -740,7 +740,7 @@ def _main(argv: list) -> int:
         # The same check /tax-generate's filing package makes, for the same
         # reason: a PDF rendered from a return no gate validated is a document
         # that looks exactly like one that was.
-        checked = receipt.verify(workspace)
+        checked = receipt.verify(workspace, for_filing=True, result_bytes=raw)
         reasons = list(checked.reasons)
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:

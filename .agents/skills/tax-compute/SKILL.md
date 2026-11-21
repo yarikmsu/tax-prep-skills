@@ -78,8 +78,8 @@ Before any computation, verify tax law data is current:
    interpreter), so read the JSON before acting on the code. Act on the status,
    which says WHICH figures:
    - **FRESH:** Proceed. Print the key rates being used (standard deduction, CTC amount, top bracket) so user can eyeball them.
-   - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) to check for new legislation since the fetch date (`"federal tax law changes {year} since {fetch_date}"`). If new law found, re-fetch affected rates. If no changes, proceed.
-   - **INCOMPLETE:** Re-fetch the missing fields listed in `null_fields` by searching the web (same live-results requirement — with no live web access, STOP and ask the user to paste the missing figures with their source URL; never guess a rate or threshold), then update `tax_law_{year}.json`.
+   - **STALE:** Search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL) to check for new legislation since the fetch date (`"federal tax law changes {year} since {fetch_date}"`). Re-fetch affected rates. After confirming unchanged applicable figures from their covered-year sources, run `tax_law_fetcher.py set` to record fresh provenance for those figures as well.
+   - **INCOMPLETE:** Re-fetch missing applicable fields listed in `null_fields` (same live-results requirement — with no live web access, STOP and ask the user to paste the missing figures with their source URL; never guess a rate or threshold). Keep unused blocks empty, such as exchange rates on a domestic return with no currency conversions.
    - **NOT_FOUND:** **STOP.** Tell user to run `/tax-setup` first. Do not proceed.
 4. Print the rates being used:
    ```
@@ -334,8 +334,11 @@ Prove every parsed document landed on the return — the CP2000 killer:
 3. This gate exists because `/tax-review` audits the already-aggregated
    result.json and structurally cannot see a document that dropped during
    aggregation — only the ledger-to-result comparison can.
-4. Run `sh agents/lib/run.sh -m agents.lib.receipt verify --json`. If it
-   lists open material items, name each one and describe the return as a draft.
+4. Run `sh agents/lib/run.sh -m agents.lib.receipt verify --for-filing --json`.
+   Resolve any applicable-law findings with `tax_law_fetcher.py set` and the
+   covered-year primary source. Recompute and rerun the gates after a cache
+   change. If it lists open material items, name each one and describe the
+   return as a draft.
    Re-read any open W-2 box from the source, repair its per-document intake
    record and rebuild the ledger before recomputing. Verify ownership when
    transcribing an amount. A missing source digest also requires re-parsing.

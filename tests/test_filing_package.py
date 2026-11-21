@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import capabilities, filing_package as FP, material_evidence, receipt  # noqa: E402
 from agents.lib import parse_records, return_builder, tie_out  # noqa: E402
+from tests.filing_law import write_synthetic_filing_law  # noqa: E402
 
 
 def _result(**sections):
@@ -256,9 +258,9 @@ FIX_REPO = Path(__file__).resolve().parent.parent
 
 
 def _package(tmp_path, *flags):
-    result = _result(schedule_d={"line_16": 5000})
     p = tmp_path / "result.json"
-    p.write_text(json.dumps(result))
+    if not p.exists():
+        p.write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     return subprocess.run(
         [sys.executable, "-m", "agents.lib.filing_package",
          "--result", str(p), "--workspace", str(tmp_path), *flags],
@@ -297,12 +299,107 @@ def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    write_synthetic_filing_law(tmp_path)
     for gate in receipt.REQUIRED_GATES:
         receipt.record(tmp_path, gate, receipt.PASS)
     out = _package(tmp_path)
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
     assert "NOT VALIDATED" not in out.stdout
+
+
+def test_applicable_amt_and_child_credit_law_block_final_even_with_passing_gates(tmp_path):
+    result = _result(form_1040={"line_9_total_income": 100000},
+                     form_6251={"iso_bargain_element": 8000})
+    result_path = tmp_path / "result.json"
+    profile_path = tmp_path / "taxpayer_profile.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    profile_path.write_text(json.dumps({"tax_year": 2025, "filing_status": "MFJ",
+                                        "dependents": [{"relationship": "child"}]}), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    law_path = tmp_path / "tax_law_2025.json"
+
+    def recertify():
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(tmp_path, gate, receipt.PASS)
+
+    recertify()
+    blocked = _package(tmp_path)
+    assert blocked.returncode == 2 and blocked.stdout == ""
+    assert "federal.amt.exemption.mfj" in blocked.stderr
+    assert "federal.child_tax_credit.refundable_limit" in blocked.stderr
+    draft = _package(tmp_path, "--draft")
+    assert draft.returncode == 0 and "federal.amt.exemption.mfj" in draft.stdout
+
+    law["federal"].update(amt={"exemption": {"mfj": 140000},
+                              "phaseout_start": {"mfj": 1000000}, "rate_28_breakpoint": 240000},
+                          child_tax_credit={"amount_per_child": 2000, "phase_out_start": {"mfj": 390000},
+                                            "refundable_limit": 1500})
+    law_path.write_text(json.dumps(law), encoding="utf-8")
+    recertify()
+    assert "_sources.federal.amt" in _package(tmp_path).stderr
+
+    law = write_synthetic_filing_law(tmp_path)
+    assert "tax_law_2025.json changed" in _package(tmp_path).stderr
+    recertify()
+    assert _package(tmp_path).returncode == 0
+
+    law["_provenance"]["federal.amt"]["applies_to"] = 2024
+    law_path.write_text(json.dumps(law), encoding="utf-8")
+    recertify()
+    assert "covered year and retrieval date in _provenance.federal.amt" in _package(tmp_path).stderr
+
+    verified = write_synthetic_filing_law(tmp_path)
+    verified["federal"]["amt"]["exemption"]["mfj"] += 1000
+    law_path.write_text(json.dumps(verified), encoding="utf-8")
+    recertify()
+    assert "federal.amt.exemption.mfj: record the exact verified figure" in _package(tmp_path).stderr
+
+    from agents.lib.tax_law_fetcher import set_figure
+    set_figure(2025, "federal.amt.exemption.mfj", 140000, "https://www.irs.gov/filing", str(tmp_path))
+    recertify()
+    assert _package(tmp_path).returncode == 0
+
+
+def test_a_fresh_leaf_keeps_its_own_date_but_cannot_refresh_its_sibling(tmp_path):
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result()), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    now = datetime.now()
+    entry = law["_provenance"]["federal.filing_statuses"]
+    law["_provenance"]["federal.filing_statuses.mfj.brackets"] = dict(entry)
+    entry["retrieved"] = (now - timedelta(days=45)).isoformat()
+    issues = filing_issues(result, {}, law, now=now)
+    assert issues == ["federal.filing_statuses.mfj.standard_deduction: reconfirm the covered-year figure with a live primary source."]
+
+
+def test_empty_exchange_rates_only_blocks_a_return_using_currency_conversion(tmp_path):
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result()), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    law["exchange_rates"] = {}
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert filing_issues(result, {}, law) == []
+    assert filing_issues(result, {"foreign_currencies": ["EUR"]}, law) == [
+        "exchange_rates.EUR: required covered-year figure is missing."]
+
+
+def test_state_regime_uses_the_filing_state(tmp_path):
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result()), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    profile = {"address": {"state": "FL"}}
+    assert filing_issues(result, profile, law) == ["The cache needs the covered-year state law for FL."]
+    (tmp_path / "taxpayer_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    assert filing_issues(result, profile, write_synthetic_filing_law(tmp_path)) == []
 
 
 def _material_cli(tmp_path, *args):
@@ -314,6 +411,7 @@ def _material_cli(tmp_path, *args):
 @pytest.mark.parametrize("outcome", ["computed", "reviewed", "not_applicable"])
 def test_material_outcome_controls_export_and_reopens_on_source_change(tmp_path, outcome):
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    write_synthetic_filing_law(tmp_path)
     source = tmp_path / "reviewed-worksheet.json"
     source.write_text("{}")
     args = ("--id", "estimated-payments", "--label", "Form 1040 estimated payments")
@@ -354,6 +452,7 @@ def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(
     profile_path = tmp_path / "taxpayer_profile.json"
     profile_path.write_text(json.dumps(profile))
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    write_synthetic_filing_law(tmp_path)
 
     def run_gates():
         gate = subprocess.run([sys.executable, "-m", "agents.lib.capabilities",
@@ -421,6 +520,7 @@ def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
                                   "line_2b_taxable_interest": lines["line_2b_taxable_interest"],
                                   "line_25a_w2_withholding": withholding})
         (tmp_path / "result.json").write_text(json.dumps(data))
+        write_synthetic_filing_law(tmp_path)
         for gate in ("capabilities", "return_builder"):
             receipt.record(tmp_path, gate, receipt.PASS)
         tying = run("tie_out", "--json")
@@ -563,6 +663,7 @@ def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_
         ledger = parse_records.write_ledger(tmp_path)
         amount = source["key_boxes"]["taxable_interest"]
         (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": amount})))
+        write_synthetic_filing_law(tmp_path)
         for gate in ("capabilities", "return_builder"):
             receipt.record(tmp_path, gate, receipt.PASS)
         checked = run("tie_out", "--json")
@@ -613,6 +714,7 @@ def test_validated_package_shows_reviewed_source_dispositions(tmp_path):
                                               skipped="exact copy", source_form={"duplicate_of": "kept"}))
     parse_records.write_ledger(tmp_path)
     (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": 100})))
+    write_synthetic_filing_law(tmp_path)
     for gate in ("capabilities", "return_builder"):
         receipt.record(tmp_path, gate, receipt.PASS)
     command = [sys.executable, "-m"]
@@ -651,6 +753,7 @@ def test_a_gate_with_no_verdict_stamps_the_package_but_does_not_refuse_it(tmp_pa
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    write_synthetic_filing_law(tmp_path)
     receipt.record(tmp_path, "capabilities", receipt.PASS)
     receipt.record(tmp_path, "tie_out", receipt.PASS)
     receipt.record(tmp_path, "return_builder", receipt.NOT_APPLICABLE)
@@ -669,6 +772,7 @@ def test_a_document_that_arrives_after_the_tie_out_refuses_the_package(tmp_path)
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    write_synthetic_filing_law(tmp_path)
     (tmp_path / "documents").mkdir()
     (tmp_path / "documents" / "w2.pdf").write_bytes(b"%PDF-1.4 first")
     for gate in receipt.REQUIRED_GATES:

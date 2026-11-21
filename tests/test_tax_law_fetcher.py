@@ -1368,6 +1368,8 @@ def _read(tmp_path, year=2026):
 class TestSetFigureWritesOneValidatedFigure:
 
     def test_a_leaf_is_written_pinned_and_dated_per_block(self, tmp_path):
+        from hashlib import sha256
+
         _fresh_cache(tmp_path)
         out = _set(tmp_path, "federal.filing_statuses.mfj.standard_deduction", 32200)
         data = _read(tmp_path)
@@ -1375,7 +1377,9 @@ class TestSetFigureWritesOneValidatedFigure:
         assert data["_sources"]["federal.filing_statuses"] == IRS
         # Dated per FIGURE: one re-fetched leaf never re-dates its siblings.
         prov = data["_provenance"]["federal.filing_statuses.mfj.standard_deduction"]
-        assert prov == {"retrieved": NOW.isoformat(), "applies_to": 2026, "source": IRS}
+        assert prov == {"retrieved": NOW.isoformat(), "applies_to": 2026, "source": IRS,
+                        "figure_digests": {"federal.filing_statuses.mfj.standard_deduction":
+                                           list(sha256(b"32200").digest())}}
         assert "federal.filing_statuses" not in data["_provenance"]
         assert out["pin"] == "federal.filing_statuses"
         # E7: the cache-wide stamp is NOT re-dated by a per-block write.

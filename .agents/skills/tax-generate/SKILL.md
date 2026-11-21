@@ -212,6 +212,9 @@ pass, or passed against inputs that have since changed. Re-run `/tax-compute` ra
 around it. Open or stale material outcomes also prevent final export. `--draft`
 renders anyway and stamps **NOT VALIDATED** in the page-1 box with each reason,
 including the name of every open item. Never file from a draft.
+Final export also checks the applicable tax-law figures, their primary sources,
+and their covered-year provenance against the same cache used by the gates.
+Resolve any law findings through `/tax-setup` and recompute before final export.
 If the receipt reports a missing intake digest or a changed source, re-parse
 the document before re-running computation.
 
