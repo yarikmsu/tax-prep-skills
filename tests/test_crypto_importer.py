@@ -3,6 +3,7 @@ import datetime
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -922,6 +923,28 @@ def test_cli_adapt_coinbase():
     assert p.returncode == 0
     data = json.loads(p.stdout)
     assert len(data["transactions"]) == 6
+
+
+def test_bound_crypto_adapter_uses_the_snapshot_when_the_source_is_replaced(tmp_path, monkeypatch, capsys):
+    from agents.lib import parse_utils
+
+    source = tmp_path / "exchange.csv"
+    original = (FIX / "coinbase.csv").read_bytes()
+    source.write_bytes(original)
+    read = parse_utils.read_source_snapshot
+
+    def replace_after_read(*args, **kwargs):
+        snapshot = read(*args, **kwargs)
+        source.write_bytes(b"A different export\n")
+        return snapshot
+
+    monkeypatch.setattr(parse_utils, "read_source_snapshot", replace_after_read)
+    assert ci._cli_adapt([str(source), "--exchange", "coinbase", "--assume-self-transfers",
+                          "--with-source-digest"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert len(output["transactions"]) == 6
+    assert output["source_sha256"] == sha256(original).hexdigest()
+    assert output["source_sha256"] != sha256(source.read_bytes()).hexdigest()
 
 
 def test_cli_compute_from_normalized_json():

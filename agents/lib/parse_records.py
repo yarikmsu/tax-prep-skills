@@ -61,6 +61,10 @@ LEDGER_FIELDS = frozenset({
     "misc_income",
     "rental_source",
     "w2g_income",
+    "w2_box_status",
+    "source_sha256",
+    "source_form",
+    "business_receipts",
 })
 RECORD_ONLY_FIELDS = frozenset({
     # The boxes AS READ, label by label, before any category judgement. This is

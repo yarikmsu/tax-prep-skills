@@ -555,7 +555,7 @@ def attachment_checklist(result: dict) -> list:
     return lines
 
 
-def render_markdown(result: dict) -> str:
+def render_markdown(result: dict, *, disclosures=()) -> str:
     order = assembly_order(result)
     lines = ["# Filing package — assembly order", "",
              "**NOT an e-file artifact.** No MeF submission, no Form 8879. "
@@ -570,6 +570,8 @@ def render_markdown(result: dict) -> str:
     lines += ["", "## Attachment checklist", ""]
     for item in attachment_checklist(result):
         lines.append(f"- [ ] {item}")
+    if disclosures:
+        lines += ["", "## Source form reconciliation", "", *[f"- {item}" for item in disclosures]]
     return "\n".join(lines) + "\n"
 
 
@@ -599,12 +601,11 @@ def _draft_banner(checked) -> str:
         lines += ["", "---", ""]
         return "\n".join(lines)
     lines = ["# NOT VALIDATED — DRAFT ONLY", "",
-             "This package was assembled with `--draft`. It does NOT describe "
-             "the workspace as it stands:", ""]
+             "This package was assembled with `--draft`. The following items "
+             "prevent final filing:", ""]
     lines += [f"- {reason}" for reason in checked.reasons]
-    lines += ["", "Re-run /tax-compute — its Step 0.7, 12.6 and 12.7 gates "
-                  "rewrite the validation receipt — and assemble again before "
-                  "anything here is filed.", "", "---", ""]
+    lines += ["", "Resolve open items and re-run /tax-compute before assembling "
+                  "the final package.", "", "---", ""]
     return "\n".join(lines)
 
 
@@ -643,14 +644,13 @@ def _main(argv: list) -> int:
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:
             checked = receipt.VerifyReport(False, checked.reasons + [packaged],
-                                           checked.notes)
+                                           checked.notes, checked.disclosures)
         if not checked.valid and not args.draft:
-            print("REFUSED: the filing package would not describe this "
-                  "workspace.", file=sys.stderr)
+            print("REFUSED: the return is not ready for final filing.", file=sys.stderr)
             for reason in checked.reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
-                  "receipt), or pass --draft for a NOT VALIDATED copy.",
+            print("\nResolve open items and re-run /tax-compute, or pass "
+                  "--draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2
         if args.json:
@@ -661,7 +661,7 @@ def _main(argv: list) -> int:
                 "receipt": checked.to_dict(),
             }, indent=2))
         else:
-            print(_draft_banner(checked) + render_markdown(result))
+            print(_draft_banner(checked) + render_markdown(result, disclosures=checked.disclosures))
     except (WorkspaceError, FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

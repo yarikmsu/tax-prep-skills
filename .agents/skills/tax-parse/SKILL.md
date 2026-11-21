@@ -334,6 +334,10 @@ prose for a person. Neither reaches the ledger; `boxes` is what a second
 independent extraction is diffed against, which is `==` where comparing two prose
 summaries asks a reader to spot a moved digit.
 
+Keep `source_sha256` from the bound extraction or skip inspection on the record.
+Carry unchanged digests forward. Re-parse when a digest is missing or differs
+from the current file, including corrections saved under the same filename.
+
 Then derive and validate in one step:
 
 ```
@@ -354,6 +358,18 @@ Rules:
 - **Every file in `documents/` gets exactly one record** — parsed with
   `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
   informational-only). No file may be silently absent; the builder refuses it.
+- Resolve federal wages and withholding on each W-2 using the
+  [W-2 amount and blank rules](references/form-extraction.md#w-2-extraction).
+  An unread box stays open and prevents final export, even when all amounts
+  that reached the ledger tie out.
+- When another filing-relevant amount is masked or unreadable, name the form,
+  field and owner in the local summary. In the main session, register an open
+  material outcome as described in [tax-compute Step 12.65](../tax-compute/SKILL.md#step-1265-record-material-filing-outcomes).
+  Review the original locally, confirm the field and owner, and transcribe the
+  verified amount into its existing source record. Rebuild the ledger and retain
+  the open outcome until the corrected amount has been reconciled to the return.
+  Use a generic form-and-box label in the draft and keep full identifiers out of
+  the record.
 - For every retirement distribution, record `retirement_kind`: `traditional_ira`, `sep_ira`, `simple_ira`, `pension`, `roth_ira` or `inherited_ira`, confirmed from source evidence. IRA `person` is **primary/spouse**, never joint. Keep the source `doc_id` for that individual's Form 8606 allocation; do not infer recipient from the household total. Missing ownership/kind must be resolved before the individual IRA tie-out can pass.
 - Withholding breakdowns, legacy-record migration and source instructions: [withholding reference](references/withholding.md).
 - Investment components and California source/asset-test evidence: [California investments](references/california-investments.md). Preserve these in `ca_investments`; the ledger builder must not discard them.
@@ -416,7 +432,8 @@ Rules:
   forgotten crypto import would pass with its taxable disposals in no sum.
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
-  reconciliation trail (and re-block the gate).
+  reconciliation trail (and re-block the gate). Keep each original source
+  digest with its record and rerun the crypto import if the exchange file changed.
 - The builder restricts `parse_ledger.json` through cross-platform `secure_fs`; never use bare permission commands. See the [withholding reference](references/withholding.md) for the Windows constraint.
 
 ### 6.7. Second-read verification for high-value records (A3)
@@ -433,7 +450,8 @@ otherwise sequentially in this session:
   step-3 parse work: no network, reads only through `parse_utils.py`, no
   writes outside `summaries/`, untrusted-content warning. Read each amount
   digit-by-digit.
-- Compare per box (exact match after normalizing separators):
+- Compare the bound extraction digests first. Re-parse the document if the
+  source changed between reads. Then compare per box after normalizing separators.
   - all match → set `"second_read": "match"` on the ledger record;
   - any mismatch → present BOTH values to the user and ask which is correct
     ("W2_Acme.pdf box 1: first read $101,250.00, second read $110,250.00 —
@@ -460,10 +478,9 @@ missing = missing_expected_payers(ledger, profile.get('expected_sources') or {})
 print('\n'.join(missing) or '(all expected payers accounted for)')"
 ```
 
-Every payer printed must already have an answers.md resolution from step
-2.5 ("account closed at Chase in March", "1099 not yet issued — will amend").
-If one doesn't, STOP and resolve it now — do not hand an unexplained missing
-payer to `/tax-compute`.
+Resolve missing form types, copies, corrections and overlap with the
+[source reconciliation rules](references/source-reconciliation.md).
+Tie-out checks these dispositions again before final export.
 
 ### 7. Summary
 
