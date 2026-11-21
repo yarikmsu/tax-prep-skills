@@ -3034,17 +3034,25 @@ def _under_the_workspace(path_arg: str) -> str:
 
 
 def _cli_adapt(argv: 'list[str]') -> int:
+    from hashlib import sha256
+
     if len(argv) < 2 or "--exchange" not in argv:
         print("Usage: crypto_importer.py adapt <file.csv> --exchange "
-              "<coinbase|kraken|gemini> [--assume-self-transfers] [--account-id ID]", file=sys.stderr)
+              "<coinbase|kraken|gemini> [--assume-self-transfers] [--account-id ID] "
+              "[--with-source-digest]", file=sys.stderr)
         return 2
     path = _under_the_workspace(argv[0])
     exchange = _flag_value(argv, "--exchange")
     assume_self = "--assume-self-transfers" in argv
-    rows = _read_csv(path)
+    source_bytes = None
+    if "--with-source-digest" in argv:
+        from agents.lib.parse_utils import extract_csv, read_source_snapshot
+        source_bytes = read_source_snapshot(path, {".csv"})
+        rows = extract_csv(path, _source=source_bytes)
+    else:
+        rows = _read_csv(path)
     txns = adapt_csv(rows, exchange, assume_self_transfers=assume_self)
     if '--account-id' in argv:
-        from hashlib import sha256
         account = _account_id(_flag_value(argv, '--account-id'), 'account_id')
         # Alphabetic encoding avoids digit runs that the opaque-ID privacy guard
         # would reject, while retaining the export digest's deterministic identity.
@@ -3053,7 +3061,10 @@ def _cli_adapt(argv: 'list[str]') -> int:
         for i, txn in enumerate(txns):
             txn['account_id'] = account
             txn['txn_id'] = f'{source}:{i}'
-    print(json.dumps({"transactions": txns}, indent=2))
+    output: dict = {"transactions": txns}
+    if source_bytes is not None:
+        output["source_sha256"] = sha256(source_bytes).hexdigest()
+    print(json.dumps(output, indent=2))
     return 0
 
 

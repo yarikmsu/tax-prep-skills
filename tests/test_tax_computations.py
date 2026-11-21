@@ -384,13 +384,13 @@ class TestComputeSeTax:
         assert result["se_tax"] == 0
         assert "below" in result["note"].lower()
 
-    def test_exactly_at_threshold(self):
-        """$400 profit (exactly at threshold) → SE IS computed."""
-        result = compute_se_tax(400, ss_wage_base=self.SS_WAGE_BASE_2025)
-        # SE earnings: 400 * 0.9235 = 369.40
-        expected_tax = round(369.40 * 0.124 + 369.40 * 0.029, 2)
-        assert result["se_earnings"] == 369.40
-        assert result["se_tax"] == expected_tax
+    def test_threshold_is_applied_to_schedule_se_line_4c(self):
+        """$400 Schedule C profit yields $369.40 net earnings after the line 4a factor."""
+        assert compute_se_tax(400, ss_wage_base=self.SS_WAGE_BASE_2025)["se_tax"] == 0
+        assert compute_se_tax(433.12, ss_wage_base=self.SS_WAGE_BASE_2025)["se_tax"] == 0
+        at_threshold = compute_se_tax(433.13, ss_wage_base=self.SS_WAGE_BASE_2025)
+        assert at_threshold["se_earnings"] == 400
+        assert at_threshold["se_tax"] == 61.20
 
     def test_legacy_flat_rate_no_wage_base(self):
         """No ss_wage_base → legacy flat rate (ss_rate + medicare_rate) on SE earnings."""
@@ -1806,6 +1806,18 @@ _2210_RATES = [
 
 
 class TestForm2210:
+    def test_confirmed_early_filing_and_full_payment_waives_the_fourth_installment_only(self):
+        payments = [{"date": day, "amount": 1000}
+                    for day in ("2025-04-15", "2025-06-16", "2025-09-15", "2026-01-30")]
+        kwargs = {"prior_year_tax": 4000, "prior_year_agi": 50000,
+                  "estimated_payments": payments, "underpayment_rates": _2210_RATES}
+        ordinary = compute_form_2210(5000, 0, "Single", 2025, **kwargs)
+        early = compute_form_2210(5000, 0, "Single", 2025, fourth_installment_waived=True, **kwargs)
+        assert ordinary["penalty"] > 0
+        assert early["quarters"][:3] == ordinary["quarters"][:3]
+        assert early["quarters"][3]["required_installment"] == 0
+        assert early["penalty"] == 0
+
     def test_de_minimis_under_1000(self):
         """§6654(e)(1): balance after withholding under $1,000 → no penalty.
         Estimated payments do NOT enter this test (2210 line 7 is tax minus
@@ -8237,7 +8249,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
     # Delegation targets: they validate, but they are not validators — listing
     # `_salt_cap` among the validators above would let `ptet.analyze` read as
     # "direct" when the check is a frame down.
-    DELEGATES = {"_salt_cap", "_context", "compute_ca_safe_harbor"}
+    DELEGATES = {"_salt_cap", "_build_with_payment_workpaper", "_context", "compute_ca_safe_harbor"}
 
     # "direct"      — hands `filing_status` to a validator in an UNCONDITIONAL
     #                 top-level statement. Checked against the tree.
@@ -8265,6 +8277,9 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/federal/irmaa.py::read_irmaa_tiers": "direct",
         "tax_computations/federal/international.py::check_form_8938_required": "direct",
         "tax_computations/federal/penalties.py::compute_form_2210": "direct",
+        "tax_computations/federal/payments.py::reviewed_payments": (
+            "conditional: a legacy return without payment activity returns no payment workpaper "
+            "for every status; estimate ownership uses the validated status on the reviewed path"),
         "tax_computations/federal/rentals.py::compute_rental_passive_losses": "direct",
         "tax_computations/federal/rentals.py::compute_residential_rental_return": "direct",
         "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
@@ -8296,7 +8311,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "scenario.py::salt_cap_may_move": "direct",
 
         "ptet.py::analyze": "delegates: _salt_cap",
-        "return_builder.py::build": "direct",
+        "return_builder.py::build": "delegates: _build_with_payment_workpaper",
 
         "projection/__init__.py::compute_safe_harbor": (
             "conditional: the status picks the 110% factor on the PRIOR-YEAR "
@@ -8491,6 +8506,8 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
             ptet_mod._salt_cap(2026, "Married Filing Separately")
         with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
             rb._context({"form_1040": {}}, {}, "Married Filing Jointly")
+        with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
+            rb._build_with_payment_workpaper({"form_1040": {}}, {}, [], "Married Filing Jointly", {})
         with pytest.raises(Exception, match="Single/MFJ/MFS/HoH/QSS"):
             wh.compute_ca_safe_harbor(0.0, None, None, 0.0,
                                       "Married Filing Jointly", 0.0, 0.0)

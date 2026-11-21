@@ -127,8 +127,8 @@ FIELD_MAP: dict[str, dict] = {
         #
         # Losing it UNDER-states line 26, which under-states line 33's
         # payments, which OVER-states line 37: the taxpayer is billed for money
-        # they have already paid. `return_builder._check_the_prior_overpayment`
-        # is the other end, and refuses a line 26 smaller than this figure.
+        # they have already paid. The federal payment review reconciles this
+        # opening amount to effective dates and allocations before deriving line 26.
         "source_path": "form_1040.line_36_applied_to_next_year",
         "target_file": "taxpayer_profile.json",
         "target_path": "prior_year.estimated_payments_applied",

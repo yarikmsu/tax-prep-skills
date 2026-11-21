@@ -629,10 +629,14 @@ class TestThePaymentsSideReachesTheRefund:
     def _ws(self, tmp_path, lines=None, extra=None, records=None, name="ws"):
         base = {"line_12_standard_deduction": 0}
         base.update(lines or {})
-        return _workspace(
+        ws = _workspace(
             tmp_path, base, extra=extra, name=name,
             records=records if records is not None else [
                 {"wages": 30000.0, "federal_withholding_w2": 5000.0}])
+        if base.get("line_26_estimated_payments"):
+            amount = base["line_26_estimated_payments"]
+            _set_federal_payments(ws, [_federal_row("receipt-a", amount)], 1, amount)
+        return ws
 
     def test_the_withholding_lines_are_the_ledgers_own_sums(self, tmp_path):
         _, derived = _build(self._ws(tmp_path, records=[
@@ -1262,11 +1266,12 @@ class TestTheReportAndTheOrder:
             "line_18_tax_plus_schedule2", "line_21_total_credits",
             "line_22_tax_minus_credits", "line_24_total_tax",
             "line_25a_w2_withholding", "line_25b_1099_withholding",
-            "line_25d_total_withholding", "line_33_total_payments",
+            "line_25d_total_withholding", "line_26_estimated_payments", "line_33_total_payments",
             "line_34_overpayment", "line_35a_refund", "line_37_amount_owed")
 
     def test_every_derived_line_has_a_stated_rule(self):
-        assert set(RB.RULES) == set(RB.DERIVED_ORDER)
+        assert set(RB.RULES) == set(RB.DERIVED_ORDER) | {
+            "line_8_schedule1_other", "line_10_adjustments", "line_23_other_taxes", "line_38_estimated_tax_penalty"}
         assert all(RB.RULES[f].strip() for f in RB.DERIVED_ORDER)
 
     def test_the_report_names_the_rule_not_just_the_figures(self, tmp_path, capsys):
@@ -1426,85 +1431,251 @@ class TestTheSkillTellsTheAgentToRunIt:
         assert "return_builder" in text
 
 
-class TestLastYearsLine36IsThisYearsLine26:
-    """Form 1040 line 26 is "estimated tax payments AND amount applied from the
-    prior-year return" — one line carrying two things, and the second has no
-    document behind it."""
+def _federal_row(payment_id, amount, *, kind="estimate", date="2026-04-15", person="primary", year=2026):
+    return {"payment_id": payment_id, "amount": amount, "kind": kind, "tax_year": year,
+            "date": date, "person": person}
 
-    def _profile(self, applied):
-        return {"filing_status": "MFJ", "tax_year": 2026,
-                "prior_year": {"estimated_payments_applied": applied}}
 
-    def _result(self, line_26):
-        return {"form_1040": {"line_26_estimated_payments": line_26}}
+def _set_federal_payments(ws, rows, count, total, *, carry=None, config=None, status="MFJ"):
+    path = ws / "taxpayer_profile.json"
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    profile["filing_status"] = status
+    profile["prior_year"] = {"estimated_payments_applied": carry}
+    profile["estimated_payments"] = {
+        "federal": rows,
+        "federal_review": {"confirmed": True, "tax_year": 2026, "estimate_count": count,
+                           "estimate_total": total},
+        "federal_2210": config,
+    }
+    path.write_text(json.dumps(profile), encoding="utf-8")
+    return profile
 
-    def test_a_line_26_below_the_applied_overpayment_is_REFUSED(self):
-        """The direction that matters: omitting it under-states line 26, which
-        under-states line 33's payments, which OVER-states line 37 — the
-        taxpayer pays money they already paid."""
-        with pytest.raises(RB.Blocked) as e:
-            RB._check_the_prior_overpayment(self._result(0.0),
-                                            self._profile(3000.0))
-        assert "3,000.00" in str(e.value)
-        assert "already paid" in str(e.value)
 
-    def test_it_is_an_INEQUALITY_not_an_equality(self):
-        """Line 26 is the applied overpayment PLUS any quarterly estimates
-        paid during the year, so it can exceed this figure by any amount — an
-        equality would refuse every taxpayer who also paid estimates."""
-        RB._check_the_prior_overpayment(self._result(12000.0),
-                                        self._profile(3000.0))
+def test_an_unsubstantiated_line_26_refuses_the_builder_and_both_final_gates(tmp_path):
+    ws = _workspace(tmp_path, {"line_26_estimated_payments": 15000})
+    path = ws / "taxpayer_profile.json"
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    profile["prior_year"] = {"estimated_payments_applied": 1000}
+    path.write_text(json.dumps(profile), encoding="utf-8")
+    with pytest.raises(RB.Blocked, match="reviewed federal payments"):
+        _build(ws)
+    assert RB._main(["--workspace", str(ws), "--check"]) == 2
+    assert T._main(["--workspace", str(ws)]) == 2
 
-    def test_exactly_equal_passes(self):
-        RB._check_the_prior_overpayment(self._result(3000.0),
-                                        self._profile(3000.0))
 
-    def test_a_negative_applied_figure_is_REFUSED(self):
-        """An overpayment applied forward is money already paid; a negative one
-        reaches line 26 as a payment being taken away."""
-        with pytest.raises(RB.Blocked, match="already paid"):
-            RB._check_the_prior_overpayment(self._result(0.0),
-                                            self._profile(-500.0))
+@pytest.mark.parametrize(("rows", "count", "total", "carry", "message"), [
+    ([_federal_row("q1", 500)], 2, 1000, 0, "count or total"),
+    ([_federal_row("q1", 500)] * 2, 2, 1000, 0, "duplicates"),
+    ([_federal_row("q1", 500, year=2025)], 1, 500, 0, "wrong federal tax year"),
+    ([_federal_row("q1", 500)], 1, 500, 1000, "prior-year credit"),
+    ([_federal_row("q1", float("nan"))], 1, 500, 0, "finite"),
+    ([_federal_row("q1", 500, date="20260415")], 1, 500, 0, "effective date"),
+])
+def test_invalid_payments_are_blocked_instead_of_changing_the_claim(tmp_path, rows, count, total, carry, message):
+    ws = _workspace(tmp_path)
+    _set_federal_payments(ws, rows, count, total, carry=carry)
+    with pytest.raises(RB.Blocked, match=message):
+        _build(ws)
 
-    def test_no_prior_overpayment_checks_nothing(self):
-        """A gate firing on a taxpayer who applied nothing forward is a gate
-        firing on correct data."""
-        RB._check_the_prior_overpayment(self._result(0.0), self._profile(0))
-        RB._check_the_prior_overpayment(self._result(0.0),
-                                        {"filing_status": "MFJ"})
 
-    def test_the_check_runs_inside_the_ordinary_check(self):
-        """It is part of "everything wrong with the return", not a separate
-        call a caller can forget.
+def test_only_the_reviewed_joint_share_flows_to_a_separate_return(tmp_path):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
 
-        Built from the shipped template rather than the two-field stub the
-        other cases use: `check` runs the component sweep first, and a sparse
-        return is refused for the missing lines before it reaches this."""
-        template = json.loads(
-            (REPO / "agents/templates/result_template.json")
-            .read_text(encoding="utf-8"))
-        result = {k: v for k, v in template.items()
-                  if k in ("form_1040", "schedule_d", "form_6251")}
-        result["form_1040"] = {k: v for k, v in result["form_1040"].items()
-                               if not k.startswith("_")}
-        RB.check(result, self._profile(0))          # the fixture is otherwise sound
-        with pytest.raises(RB.Blocked, match="already paid"):
-            RB.check(result, self._profile(3000.0))
+    ws = _workspace(tmp_path)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFS"}}
+    row = _federal_row("joint", 450, person="joint")
+    profile = _set_federal_payments(ws, [row], 1, 450, status="MFS")
+    with pytest.raises(ValueError, match="reviewed individual allocation"):
+        reviewed_payments(result, profile)
+    row["allocation_confirmed"] = True
+    assert reviewed_payments(result, profile).line_26 == 450
+    row["person"] = "spouse"
+    with pytest.raises(ValueError, match="reviewed individual allocation"):
+        reviewed_payments(result, profile)
 
-    def test_a_caller_that_passes_no_profile_does_not_silently_pass_it(self):
-        """The figure lives in `taxpayer_profile.json` and nowhere on the
-        return, so a caller without one cannot run this check at all. What it
-        must not do is look like it ran."""
-        import inspect
-        source = inspect.getsource(RB._check_the_prior_overpayment)
-        assert "profile is None" in source
-        doc = inspect.getdoc(RB._check_the_prior_overpayment)
-        assert "cannot run the check at all" in doc
 
-    def test_build_passes_the_profile_through(self):
-        import inspect
-        assert "profile" in inspect.signature(RB.build).parameters
-        assert "check(result, profile)" in inspect.getsource(RB.build)
+def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_path):
+    law = _law()
+    law["federal"]["underpayment_rates"] = [
+        {"effective_from": f"2026-{quarter}-01", "annual_rate": 0.073}
+        for quarter in ("04", "07", "10")
+    ] + [{"effective_from": "2027-01-01", "annual_rate": 0.073}]
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000}, law=law,
+                    extra={"meta": {"tax_year": 2026, "filing_status": "MFJ",
+                                    "limitations": ["Synthetic return"]}})
+    rows = [
+        _federal_row("prior-return", 1000, kind="carry_in"),
+        _federal_row("first-confirmation", 500, person="spouse", date="2026-09-15"),
+        _federal_row("second-confirmation", 500, date="2026-09-15"),
+        _federal_row("early-balance", 2000, kind="balance_due", date="2027-02-01"),
+    ]
+    config = {"method": "regular", "schedule_3_refundable_credits": 0, "excluded_current_year_tax": 0,
+              "prior_year_tax": 5000, "prior_year_agi": 30000}
+    _set_federal_payments(ws, rows, 2, 1000, carry=1000, config=config)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == 0
+    result_path = ws / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    form = result["form_1040"]
+    # $900 required per installment, $100 carry-in left after Q1. Q2 has
+    # $800 outstanding for 92 days, Q3 has $700 for 139 days, Q4 has $900
+    # for 17 days, all at the synthetic 7.3% annual rate.
+    assert form["line_24_total_tax"] == 4000
+    assert form["line_26_estimated_payments"] == form["line_33_total_payments"] == 2000
+    assert form["line_34_overpayment"] == form["line_35a_refund"] == 0
+    assert form["line_38_estimated_tax_penalty"] == 37.24
+    assert form["line_37_amount_owed"] == 2037.24
+    assert result["form_2210"]["estimated_payments_total"] == 4000
+    assert result["form_2210"]["balance_due_paid"] == 2000
+    assert RB._main(args + ["--check"]) == T._main(args) == 0
+    assert RC.verify(ws, required=("return_builder", "tie_out")).valid
+    assert RB._main(args) == 0
+    assert RC.verify(ws, required=("return_builder", "tie_out")).valid
+    from agents.lib import filing_package
+    RC.record(ws, "capabilities", RC.PASS)
+    package_args = [*args, "--result", "result.json"]
+    assert filing_package._main(package_args) == 0
+    assert any("$37.24 of Form 1040 line 37 remains" in item
+               for item in filing_package.attachment_checklist(result))
+
+    # Moving a date without changing totals invalidates the workpaper and
+    # makes both final gates refuse until the actual timeline is restored.
+    result["form_2210"]["payment_table"][0]["date"] = "2026-06-15"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    assert not RC.verify(ws, required=("return_builder", "tie_out")).valid
+    assert RB._main(args + ["--check"]) == T._main(args) == 2
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+
+    # Alter line 26 independently of the estimate history and 2210 workpaper.
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["form_1040"]["line_26_estimated_payments"] = 1000
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    assert RB._main(args + ["--check"]) == T._main(args) == 2
+    assert filing_package._main(package_args) == 2
+
+
+def test_let_irs_calculate_still_reconciles_payments_and_omits_form_2210(tmp_path):
+    from agents.lib import filing_package
+
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000},
+                    extra={"meta": {"tax_year": 2026, "filing_status": "MFJ",
+                                    "limitations": ["Synthetic return"]}})
+    config = {"method": "regular", "schedule_3_refundable_credits": 0, "excluded_current_year_tax": 0}
+    rows = [_federal_row("quarterly-estimate", 1000),
+            _federal_row("early-balance", 3000, kind="balance_due", date="2027-03-01")]
+    _set_federal_payments(ws, rows, 1, 1000, config=config)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == 2  # No cached rates and a payment is late.
+    _set_federal_payments(ws, rows, 1, 1000, config={**config, "method": "irs_calculates"})
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    assert result["form_1040"]["line_26_estimated_payments"] == 1000
+    assert result["form_1040"]["line_38_estimated_tax_penalty"] == 0
+    assert result["form_1040"]["line_37_amount_owed"] == 3000
+    assert all(entry["key"] != "form_2210" for entry in filing_package.assembly_order(result))
+    checklist = filing_package.attachment_checklist(result)
+    assert any("leave blank for the IRS" in line for line in checklist)
+    assert any("$0.00 of Form 1040 line 37 remains" in line for line in checklist)
+    assert not any("1040-V" in line for line in checklist)
+
+
+def _schedule_c_workspace(tmp_path, net=40000, *, exempt=False, other_taxes=250):
+    law = _law()
+    law["federal"].update({"social_security": {"wage_base": 175000, "employee_rate": 0.062},
+                           "se_tax": {"rate": 0.153, "net_earnings_factor": 0.9235}})
+    activity = {"activity_id": "business-a", "person": "primary", "line_31_net": net, "se_treatment": "regular"}
+    if exempt:
+        activity.update(se_treatment="approved_form_4361", approval_confirmed=True)
+    return _workspace(tmp_path, law=law, extra={
+        "meta": {"tax_year": 2026, "filing_status": "MFJ", "limitations": ["Synthetic return"]},
+        "schedule_c": {"line_1_gross_receipts": 50000, "line_31_net": net, "activities": [activity]},
+        "schedule_1_other_income": {"remaining_income": 500, "remaining_income_confirmed": True,
+                                    "schedule_c_excluded_from_remaining": True},
+        "schedule_se": {"inputs": {"tax_year": 2026,
+                                   "by_owner": {"primary": {"confirmed": True, "ss_wages": 0, "other_net_profit": 0}},
+                                   "remaining_adjustments": 200, "adjustments_exclude_se_deduction": True,
+                                   "remaining_other_taxes": other_taxes, "other_taxes_exclude_se_tax": True}},
+    })
+
+
+@pytest.mark.parametrize(("net", "exempt", "tax", "deduction"), [
+    (40000, False, 5651.82, 2825.91),  # line 4a: 40000 x .9235; SS + Medicare: x .153
+    (-4000, False, 0, 0),              # deductible business loss, with no net earnings for SE
+    (40000, True, 0, 0),               # approved Form 4361 for the only business
+])
+def test_schedule_c_settles_income_and_se_separately(tmp_path, net, exempt, tax, deduction):
+    from agents.lib import filing_package
+
+    remainder = 0 if exempt else 250
+    ws = _schedule_c_workspace(tmp_path, net, exempt=exempt, other_taxes=remainder)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    form = result["form_1040"]
+    assert result["schedule_1_other_income"]["schedule_1_line_3_business_income"] == net
+    assert form["line_8_schedule1_other"] == net + 500
+    assert result["schedule_se"]["schedule_1_line_15_deductible_se_tax"] == deduction
+    assert result["schedule_se"]["schedule_2_line_4_se_tax"] == tax
+    assert form["line_10_adjustments"] == 200 + deduction
+    assert form["line_11_agi"] == net + 300 - deduction
+    assert form["line_23_other_taxes"] == tax + remainder
+    schedule_keys = [entry["key"] for entry in filing_package.assembly_order(result)]
+    assert ("schedule_se.by_owner.primary" in schedule_keys) == bool(tax)
+    if exempt:
+        assert "schedule_se" in schedule_keys  # Schedule 2 still reports the approved exception.
+        assert any("Form 4361" in item for item in filing_package.attachment_checklist(result))
+    if tax:
+        assert form["line_24_total_tax"] == 11396.64
+        assert form["line_37_amount_owed"] == 11396.64
+
+
+def test_schedule_c_dropped_or_duplicated_flows_block_export(tmp_path):
+    from agents.lib import filing_package
+
+    ws = _schedule_c_workspace(tmp_path)
+    args = ["--workspace", str(ws)]
+    package_args = [*args, "--result", "result.json"]
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    RC.record(ws, "capabilities", RC.PASS)
+    assert filing_package._main(package_args) == 0
+    path = ws / "result.json"
+    original = path.read_text(encoding="utf-8")
+    for field, amount in (("line_8_schedule1_other", 500), ("line_8_schedule1_other", 80500),
+                          ("line_10_adjustments", 200), ("line_23_other_taxes", 250)):
+        changed = json.loads(original)
+        changed["form_1040"][field] = amount
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        assert RB._main(args + ["--check"]) == T._main(args) == filing_package._main(package_args) == 2
+    path.write_text(original, encoding="utf-8")
+    assert RB._main(args + ["--check"]) == T._main(args) == filing_package._main(package_args) == 0
+
+
+def test_build_before_other_taxes_are_reviewed_does_not_clear_final_gates(tmp_path):
+    ws = _schedule_c_workspace(tmp_path, other_taxes=None)
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    assert result["form_1040"]["line_11_agi"] == 37474.09
+    assert RB._main(args + ["--check"]) == T._main(args) == 2
+
+
+def test_schedule_se_prices_each_spouse_against_their_own_wage_cap(tmp_path):
+    ws = _schedule_c_workspace(tmp_path)
+    result, profile, ledger, tax_law, _ = RB.load(ws)
+    business = result["schedule_c"]
+    business["line_31_net"] = 48000
+    business["activities"].append({"activity_id": "business-b", "person": "spouse",
+                                    "line_31_net": 8000, "se_treatment": "regular"})
+    owners = result["schedule_se"]["inputs"]["by_owner"]
+    owners["primary"]["ss_wages"] = 175000
+    owners["spouse"] = {"confirmed": True, "ss_wages": 0, "other_net_profit": 0}
+    derived = RB.build(result, tax_law, ledger, "MFJ", profile)
+    # Primary: only Medicare on 36,940 net earnings. Spouse: both taxes on 7,388.
+    assert derived["line_23_other_taxes"] == 250 + 1071.26 + 1130.36
+    assert derived["line_10_adjustments"] == 200 + 535.63 + 565.18
+    business["activities"][1]["activity_id"] = "business-a"
+    with pytest.raises(RB.Blocked, match="unique local reference"):
+        RB.build(result, tax_law, ledger, "MFJ", profile)
 
 
 class TestTheRolloverFillsTheFieldNothingUsedToWrite:

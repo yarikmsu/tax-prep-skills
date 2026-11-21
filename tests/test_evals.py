@@ -67,7 +67,7 @@ _INAPPLICABLE_SECTIONS = (
     "state_planning_inputs",
     "social_security_worksheet", "schedule_1_government_benefits", "schedule_1_other_income", "other_forms_withholding",
     "schedule_1a", "charitable_non_itemizer", "schedule_a",
-    "schedule_ca_itemized", "form_6251", "form_2210", "schedule_c",
+    "schedule_ca_itemized", "form_6251", "form_2210", "schedule_c", "schedule_se",
     "form_8949", "crypto_summary", "form_8889_hsa", "section_988_fx",
     "form_8621_pfic", "form_1116_ftc", "form_8938_fatca", "fbar_fincen_114",
     "form_1099r_401k_rollover", "form_8959_additional_medicare",

@@ -166,6 +166,8 @@ from agents.lib.tax_computations import (  # noqa: E402
     net_capital_gains,
     qdcg_worksheet_applies,
 )
+from agents.lib.tax_computations.federal import payments as federal_payments  # noqa: E402
+from agents.lib.tax_computations.federal import schedule_c  # noqa: E402
 from agents.lib.tax_law_fetcher import load_tax_law  # noqa: E402
 from agents.lib.tie_out import (  # noqa: E402
     derive_ca_schedule_ca,
@@ -457,7 +459,7 @@ AMT_FIELD = "line_17_schedule2_part1"
 # a hand-kept order is a third copy of the form's numbering, after the field
 # name and the sort key, and it is the copy nothing would notice going stale.
 DERIVED_ORDER = tuple(sorted(
-    set(ledger_lines().values()) | {AMT_FIELD} | {d.field for d in DERIVATIONS},
+    set(ledger_lines().values()) | {AMT_FIELD, federal_payments.LINE_26} | {d.field for d in DERIVATIONS},
     key=_line_order))
 DERIVED_FIELDS = frozenset(DERIVED_ORDER)
 COMPONENT_FIELDS = SLICE_FIELDS - DERIVED_FIELDS
@@ -469,6 +471,11 @@ RULES = {d.field: d.formula for d in DERIVATIONS}
 RULES.update({field: f"the parse ledger's {category} total"
               for category, field in ledger_lines().items()})
 RULES[AMT_FIELD] = "Schedule 2 Part I = the Form 6251 AMT"
+RULES[federal_payments.LINE_26] = "the reviewed federal estimates and applied overpayment"
+RULES[federal_payments.LINE_38] = "the reviewed Form 2210 calculation or IRS assessment"
+RULES["line_8_schedule1_other"] = "Schedule 1 income including reviewed Schedule C line 31"
+RULES["line_10_adjustments"] = "remaining Schedule 1 adjustments plus the Schedule SE deduction"
+RULES["line_23_other_taxes"] = "remaining Schedule 2 Part II taxes plus Schedule SE tax"
 
 
 # The only two COMPONENTS that may carry a NEGATIVE figure: a capital LOSS on
@@ -630,11 +637,7 @@ def check(result: dict, profile: "dict | None" = None) -> None:
     """Everything wrong with the return AS RECORDED, in one place and before
     any arithmetic.
 
-    `profile` is OPTIONAL and that is a narrow allowance, not a default: one
-    check below needs a figure that lives in `taxpayer_profile.json` and
-    nowhere on the return, and every caller inside this module passes it. A
-    caller that does not gets the other checks and is TOLD, in
-    `_check_the_prior_overpayment`'s own refusal, which one it did not get.
+    The profile supplies opening workpapers for the applicable tax sections.
 
     Split across the value-assemblers it was easier to write in, a reader
     looking for "what does this refuse" had to open a function whose name says
@@ -649,7 +652,6 @@ def check(result: dict, profile: "dict | None" = None) -> None:
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
     _check_the_payments(result)
-    _check_the_prior_overpayment(result, profile)
     _check_charitable_vintages(result, profile)
     if profile is not None:
         from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
@@ -733,56 +735,6 @@ def _check_the_payments(result: dict) -> None:
             "the total it belongs to means either that line 31 never picked it "
             "up, which loses the credit, or that it is being counted twice.")
 
-
-def _check_the_prior_overpayment(result: dict, profile: "dict | None") -> None:
-    """LAST YEAR'S line 36 is part of THIS year's line 26, and nothing else
-    would notice it missing.
-
-    Form 1040 line 26 is "estimated tax payments and amount applied from
-    {year-1} return" — one line carrying two things. The second has no
-    document: an applied overpayment is a figure the taxpayer's PREVIOUS return
-    carried forward, so it produces no 1099, no ledger record, and the tie-out
-    gate — which compares intake against the return — cannot see it at all. The
-    only place it exists in this workspace is
-    `taxpayer_profile.json`'s `prior_year.estimated_payments_applied`, which
-    /tax-rollover fills from the prior result's line 36.
-
-    THE DIRECTION IS THE ONE AGENTS.md §4 CALLS A HARD ERROR. Omitting it
-    under-states line 26, which under-states line 33's payments, which
-    OVER-states line 37's amount owed — the taxpayer pays money they already
-    paid. Nothing downstream catches it: every total is correct arithmetic over
-    a component that is simply too small.
-
-    An INEQUALITY, deliberately. Line 26 is the applied overpayment PLUS any
-    quarterly estimates paid during the year, so it can exceed this figure by
-    any amount; it can never fall below it. A caller that passes no profile
-    cannot run the check at all, and it says so rather than passing — a check
-    that silently does not apply is the vacuity the receipt exists to prevent.
-    """
-    applied = (((profile or {}).get("prior_year") or {})
-               .get("estimated_payments_applied"))
-    if profile is None or applied in (None, 0):
-        return
-    applied = _num(applied, "prior_year.estimated_payments_applied")
-    if applied < 0:
-        raise Blocked(
-            f"taxpayer_profile.json prior_year.estimated_payments_applied is "
-            f"{applied:,.2f}. An overpayment applied forward is money already "
-            "paid; a negative one reaches line 26 as a payment being taken "
-            "away.")
-    line_26 = _path_num(result, "form_1040.line_26_estimated_payments",
-                        "line_26_estimated_payments")
-    if applied - line_26 > CENT:
-        raise Blocked(
-            f"Form 1040 line 26 is {line_26:,.2f}, and last year's return "
-            f"applied {applied:,.2f} forward to this year's estimated tax "
-            "(taxpayer_profile.json prior_year.estimated_payments_applied). "
-            "Line 26 is \"estimated tax payments AND amount applied from the "
-            "prior-year return\" — one line carrying both — so it cannot be "
-            "less than what was applied. Add the applied overpayment to any "
-            "quarterly estimates actually paid. Left out, line 33's payments "
-            "are short by that much and line 37 bills the taxpayer for money "
-            "they have already paid.")
 
 
 def _check_the_refund(available: float, applied: float) -> None:
@@ -1063,6 +1015,26 @@ def government_differences(result: dict, built: "dict | None") -> list[str]:
 
 def build(result: dict, tax_law: dict, ledger, filing_status: str,
           profile: "dict | None" = None) -> "dict[str, float]":
+    return _build_with_payment_workpaper(result, tax_law, ledger, filing_status, profile)[0]
+
+
+def _business_tax_workpaper(result, profile, ledger, tax_law, *, checking):
+    try:
+        return schedule_c.schedule_se_workpaper(result, profile, ledger, tax_law,
+                                               require_other_taxes=checking)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise Blocked(f"Schedule C and Schedule SE: {redact(exc)}") from None
+
+
+def _business_1040_lines(workpaper: dict | None) -> dict[str, float]:
+    if workpaper is None:
+        return {}
+    return {key: workpaper[key] for key in ("line_10_adjustments", "line_23_other_taxes")
+            if workpaper[key] is not None}
+
+
+def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_status: str,
+                                  profile: "dict | None", *, business_tax=None) -> tuple[dict[str, float], dict | None]:
     """Every derived line of Form 1040 lines 1-38, from the components.
 
     Returns the field -> value map; it does not mutate `result`. The INJECTED
@@ -1075,6 +1047,11 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
         raise ReturnBuilderError(f"{RESULT_NAME} has no form_1040 section")
     # Validate before branching into optional income workpapers too.
     _full_status_key(filing_status, "return builder")
+    if business_tax is None:
+        business_tax = _business_tax_workpaper(result, profile or {}, ledger, tax_law, checking=False)
+    business_lines = _business_1040_lines(business_tax)
+    if business_lines:
+        result = {**result, "form_1040": {**result["form_1040"], **business_lines}}
     rental = rental_workpaper(result, ledger, profile or {}, tax_law)
     if rental is not None:
         result = {**result, "schedule_e_rentals": rental}
@@ -1088,8 +1065,13 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
         **({"line_25c_other_withholding": other_withholding["total"]} if other_withholding is not None else {})}}
     check(result, profile)
 
+    try:
+        payments = federal_payments.reviewed_payments(result, profile or {}, filing_status)
+    except ValueError as exc:
+        raise Blocked(str(exc)) from None
+    config = ((profile or {}).get("estimated_payments") or {}).get("federal_2210")
     working = {**result["form_1040"], **ledger_income(ledger),
-               AMT_FIELD: _amt(result)}
+               AMT_FIELD: _amt(result), federal_payments.LINE_26: payments.line_26 if payments else 0.0}
 
     def g(field: str) -> float:
         return _num(working.get(field, 0), f"form_1040.{field}")
@@ -1102,13 +1084,25 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
     # certified, which is the one thing AGENTS.md §2 says nothing downstream
     # catches.
     _check_in_scope(result)
+    workpaper = None
     for d in DERIVATIONS:
         working[d.field] = round(d.compute(g, ctx), 2)
+        if d.field == "line_25d_total_withholding" and payments is not None and config is not None:
+            try:
+                workpaper = federal_payments.form_2210_workpaper(working, payments, config, tax_law)
+            except ValueError as exc:
+                raise Blocked(str(exc)) from None
+            working[federal_payments.LINE_38] = workpaper["line_38"]
     _check_the_refund(
         g("line_33_total_payments") - g("line_24_total_tax")
         - g("line_38_estimated_tax_penalty"),
         g("line_36_applied_to_next_year"))
-    return {field: working[field] for field in DERIVED_ORDER}
+    derived = {field: working[field] for field in DERIVED_ORDER} | business_lines
+    if business_tax is not None:
+        derived["line_8_schedule1_other"] = working["line_8_schedule1_other"]
+    if workpaper is not None:
+        derived[federal_payments.LINE_38] = working[federal_payments.LINE_38]
+    return derived, workpaper
 
 
 @dataclass(frozen=True)
@@ -1121,13 +1115,12 @@ class Change:
 def differences(result: dict, derived: "dict[str, float]") -> "list[Change]":
     """Every derived line whose recorded value is not what the rules produce.
 
-    Walked in DERIVED_ORDER, so the result is already in the form's order and
-    every key is one `build` produced — no fallback for a field that cannot
-    occur, which would read as a guard over nothing.
+    Walked in form order, including line 38 when the reviewed workpaper
+    supplies it.
     """
     form_1040 = result.get("form_1040") or {}
     out = []
-    for field in DERIVED_ORDER:
+    for field in sorted(derived, key=_line_order):
         value = derived[field]
         was = _maybe_num(form_1040.get(field))
         if was is not None and abs(was - value) < CENT:
@@ -1972,7 +1965,8 @@ def california_differences(result: dict, derived: dict) -> list[str]:
 
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
-          government=None, other_income=None, other_withholding=None, rental=None) -> bool:
+          government=None, other_income=None, other_withholding=None, rental=None, federal_2210=None,
+          business_tax=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -2003,9 +1997,17 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
             or any(existing_withholding.get(k) for k in ("w2g_withholding", "total"))):
         raise Blocked("publish the other-form withholding workpaper with its checked line25c")
     withholding_changes = other_forms_changes(result, other_withholding)
-    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes:
+    payment_changes = federal_2210 is not None and federal_2210 != result.get("form_2210")
+    business_changes = business_tax is not None and (business_tax != result.get("schedule_se") or
+        business_tax["schedule_2_line_4_se_tax"] != (result.get("schedule_c") or {}).get("se_tax"))
+    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes and not payment_changes and not business_changes:
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
+    if federal_2210 is not None:
+        updated["form_2210"] = federal_2210
+    if business_tax is not None:
+        updated["schedule_se"] = business_tax
+        updated["schedule_c"] = {**result["schedule_c"], "se_tax": business_tax["schedule_2_line_4_se_tax"]}
     if rental is not None:
         updated["schedule_e_rentals"] = rental
         updated["form_1040"]["line_8_schedule1_other"] = rental["total_schedule1"]
@@ -2153,6 +2155,7 @@ def _main(argv: list) -> int:
             print(json.dumps(review, indent=2))
             return 0
         result, profile, ledger, tax_law, contents = load(workspace)
+        original_result = result
         if args.check:
             # The digests this verdict will be bound to, taken from THE BYTES
             # `load` parsed rather than from a second read of the same paths.
@@ -2161,12 +2164,22 @@ def _main(argv: list) -> int:
             # certifying a return it never saw, which is what the receipt
             # exists to catch (V8).
             inputs = receipt.gate_inputs(workspace, GATE, contents=contents)
+            payment_changes = federal_payments.filing_differences(result, profile, tax_law)
+            if payment_changes:
+                print("BLOCKED: " + ", ".join(payment_changes), file=sys.stderr)
+                return _record_the_check(workspace, inputs, "FAILED", 2)
+        business_tax = _business_tax_workpaper(result, profile, ledger, tax_law, checking=args.check)
+        business_changes = schedule_c.flow_differences(result, business_tax) if args.check else []
+        if business_changes:
+            print("BLOCKED: Schedule C and Schedule SE disagree: " + ", ".join(business_changes), file=sys.stderr)
+            return _record_the_check(workspace, inputs, "FAILED", 2)
+        if business_tax is not None and not args.check:
+            result = {**result, "form_1040": {**result["form_1040"], **_business_1040_lines(business_tax)}}
         rental = rental_workpaper(result, ledger, profile, tax_law)
         rental_changes = rental_workpaper_differences(result, rental, require_review=args.check)
         if args.check and rental_changes:
             print("BLOCKED: residential rentals disagree: " + ", ".join(rental_changes), file=sys.stderr)
             return _record_the_check(workspace, inputs, "FAILED", 2)
-        original_result = result
         if rental is not None:
             result = {**result, "schedule_e_rentals": rental}
         other_withholding = other_forms_workpaper(result, ledger, profile)
@@ -2195,9 +2208,9 @@ def _main(argv: list) -> int:
             form = california.get("return_form", "540")
             print(f"Form {form} derived lines, Schedule P, FTB5805 and final settlement agree.")
             print(california[f"line_{123 if form == '540NR' else 113}_note"])
-        derived = build(result, tax_law, ledger,
-                        _filing_status(profile, result), profile)
-        changes = differences(result, derived)
+        derived, federal_2210 = _build_with_payment_workpaper(
+            result, tax_law, ledger, _filing_status(profile, result), profile, business_tax=business_tax)
+        changes = differences(original_result, derived)
         if args.check:
             if changes:
                 print(f"BLOCKED: {len(changes)} derived line(s) on Form 1040 "
@@ -2215,7 +2228,8 @@ def _main(argv: list) -> int:
         california = build_california({**result, "form_1040": federal_for_state},
                                       tax_law, ledger, profile)
         if write(workspace, original_result, derived, california=california, government=government,
-                 other_income=other_income, other_withholding=other_withholding, rental=rental):
+                 other_income=other_income, other_withholding=other_withholding, rental=rental,
+                 federal_2210=federal_2210, business_tax=business_tax):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "

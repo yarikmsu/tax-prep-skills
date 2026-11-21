@@ -7,6 +7,26 @@ For TY2026, read TP (cash tips), TT (qualified overtime premium), TA (employer
 Trump-account contributions), 14a (other labels) and 14b (TTOC). TP/TT feed
 the [tip/overtime source review](tips-overtime.md); TA feeds neither deduction.
 
+For each W-2, record the verified Box 1 amount as `key_boxes.wages` and Box 2
+as `key_boxes.federal_withholding_w2`. Use numeric `0` for a verified zero.
+For a box that is visibly blank, record `"blank"` under its number in
+`w2_box_status`, for example `"w2_box_status": {"2": "blank"}`. An unread or
+masked box uses `"unread"` and leaves the amount absent. If both amounts are
+unread, use empty `key_boxes` with both statuses recorded. A missing amount
+without verified blank evidence stays open too.
+
+A blank on Form W-2c can mean the original amount was unchanged. Reconcile
+the correction with the original Form W-2 before recording the effective
+amounts once. Keep the other document's coverage record and explain why its
+amounts were not added again.
+
+For local manual recovery, inspect the original Box 1 or 2 and confirm its
+owner against the record's `person`. Transcribe only the verified amount or
+blank into that person's existing source record. Remove an `unread` status
+when entering its amount. Rebuild the ledger, recompute the return and rerun
+tie-out. Use the existing masked identification conventions throughout.
+[IRS General Instructions for Forms W-2 and W-3](https://www.irs.gov/instructions/iw2w3).
+
 ### 1099-NEC Extraction
 Must capture: TY2025 boxes 1-7; TY2026 boxes 1a-1d and 2-7, including every state row.
 TY2026 box1a is total compensation, including 1b cash tips and 1d qualified

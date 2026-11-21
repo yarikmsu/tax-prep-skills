@@ -263,9 +263,13 @@ def _derived_schedules(result: dict) -> list:
     # `form_6251.amt` directly, from the days when line 17 had no field — so
     # "is there a Schedule 2 Part I" had one answer on the 1040 and another in
     # `form_6251`, and `return_builder` now derives the first from the second.
+    business_tax = result.get("schedule_se") or {}
+    owners = business_tax.get("by_owner") or {}
+    exemption = any(detail.get("approved_form_4361") and not detail.get("line_12_se_tax")
+                    for detail in owners.values())
     if (_field_num(f1040, "line_23_other_taxes", "line_23") != 0
-            or _field_num(f1040, "line_17_schedule2_part1", "line_17") != 0):
-        out.append(("Schedule 2 (Additional Taxes)", "02", None))
+            or _field_num(f1040, "line_17_schedule2_part1", "line_17") != 0 or exemption):
+        out.append(("Schedule 2 (Additional Taxes)", "02", "schedule_se" if owners else None))
     if (_field_num(f1040, "line_20_schedule3_line8", "line_20") != 0
             or _field_num(f1040, "line_31_schedule3_part2", "line_31") != 0
             or _field_num(f1040, "schedule_3_line_11_excess_ss",
@@ -284,7 +288,11 @@ def _derived_schedules(result: dict) -> list:
             or _section_present(result, "form_8938_fatca")):
         out.append(("Schedule B (Interest and Ordinary Dividends — incl. "
                     "Part III foreign accounts)", "08", None))
-    if _field_num(sch_c, "se_tax", "schedule_c.se_tax") > 0:
+    if type(business_tax.get("computed_tax_year")) is int:
+        for owner, detail in owners.items():
+            if _field_num(detail, "line_12_se_tax", "Schedule SE line 12") > 0:
+                out.append((f"Schedule SE (Self-Employment Tax) — {owner}", "17", f"schedule_se.by_owner.{owner}"))
+    elif _field_num(sch_c, "se_tax", "schedule_c.se_tax") > 0:
         out.append(("Schedule SE (Self-Employment Tax)", "17", None))
     if _field_num(f1040, "line_19_ctc", "line_19_ctc") > 0:
         out.append(("Schedule 8812 (Credits for Qualifying Children)", "47",
@@ -319,6 +327,9 @@ def assembly_order(result: dict) -> list:
     for key, (title, seq) in _FEDERAL_SEQUENCE.items():
         if _section_present(result, key):
             section = result.get(key) or {}
+            if key == "form_2210" and section.get("payment_table") is not None and (
+                    section.get("method") == "irs_calculates" or section.get("no_penalty")):
+                continue
             if key == "form_8606" and section.get("schema") == "individual-8606/v1":
                 people = section.get("by_taxpayer")
                 if not isinstance(people, dict) or not people:
@@ -393,6 +404,10 @@ def attachment_checklist(result: dict) -> list:
             lines.append("CA rentals: retain the separate FTB3885A depreciation and FTB3801 passive-loss workpapers; complete and attach official forms when required. ScheduleCA SectionB line5 uses only the final allowed-net difference after both PAL limits, not the raw depreciation difference again.")
     if _field_num(result.get("other_forms_withholding") or {}, "w2g_withholding", "W-2G withholding") > 0:
         lines.append("Attach each Form W-2G, Copy B, showing federal withholding in box 4 to the front of Form 1040.")
+    business_tax = result.get("schedule_se") or {}
+    for owner, detail in (business_tax.get("by_owner") or {}).items():
+        if detail.get("approved_form_4361") and not detail.get("line_12_se_tax"):
+            lines.append(f"Schedule 2 line 4: report the approved Form 4361 exception for the {owner} where applicable. Retain the IRS approval.")
 
     if _section_present(result, "form_8949"):
         lines.append(
@@ -403,12 +418,23 @@ def attachment_checklist(result: dict) -> list:
             "in place of additional 8949 pages (8949 instructions, "
             "Exception 2).")
     balance_due = _field_num(f1040, "line_37_amount_owed", "line_37")
-    if balance_due > 0:
+    remaining_balance = balance_due
+    federal_2210 = result.get("form_2210") or {}
+    if federal_2210.get("payment_table") is not None:
+        lines.append("Form 1040 line 26 uses reviewed federal estimates and any applied overpayment. Retain the IRS payment history, prior-return credit, and any joint-payment allocation with the return records.")
+        if federal_2210.get("method") == "irs_calculates":
+            lines.append("Form 1040 line 38: leave blank for the IRS to calculate any estimated-tax penalty.")
+        already_paid = _field_num(federal_2210, "balance_due_paid", "reviewed federal balance payment")
+        if already_paid > 0:
+            remaining_balance = max(0.0, round(balance_due - already_paid, 2))
+            lines.append(f"Federal balance after reviewed early payments: ${remaining_balance:,.2f} of Form 1040 line 37 remains to be paid.")
+    if remaining_balance > 0:
         lines.append(
             "Federal balance due: include Form 1040-V — payee 'United "
             "States Treasury', memo with SSN, tax year, and 'Form 1040'; "
             "do NOT staple the payment to the return (or pay via IRS "
             "Direct Pay and skip the voucher).")
+    if balance_due > 0:
         lines.append(
             "Owing this year usually means NEXT year needs estimated "
             "payments — run /tax-project for the 1040-ES (and CA 540-ES) "
@@ -555,7 +581,7 @@ def attachment_checklist(result: dict) -> list:
     return lines
 
 
-def render_markdown(result: dict) -> str:
+def render_markdown(result: dict, *, disclosures=()) -> str:
     order = assembly_order(result)
     lines = ["# Filing package — assembly order", "",
              "**NOT an e-file artifact.** No MeF submission, no Form 8879. "
@@ -570,6 +596,8 @@ def render_markdown(result: dict) -> str:
     lines += ["", "## Attachment checklist", ""]
     for item in attachment_checklist(result):
         lines.append(f"- [ ] {item}")
+    if disclosures:
+        lines += ["", "## Source form reconciliation", "", *[f"- {item}" for item in disclosures]]
     return "\n".join(lines) + "\n"
 
 
@@ -599,12 +627,11 @@ def _draft_banner(checked) -> str:
         lines += ["", "---", ""]
         return "\n".join(lines)
     lines = ["# NOT VALIDATED — DRAFT ONLY", "",
-             "This package was assembled with `--draft`. It does NOT describe "
-             "the workspace as it stands:", ""]
+             "This package was assembled with `--draft`. The following items "
+             "prevent final filing:", ""]
     lines += [f"- {reason}" for reason in checked.reasons]
-    lines += ["", "Re-run /tax-compute — its Step 0.7, 12.6 and 12.7 gates "
-                  "rewrite the validation receipt — and assemble again before "
-                  "anything here is filed.", "", "---", ""]
+    lines += ["", "Resolve open items and re-run /tax-compute before assembling "
+                  "the final package.", "", "---", ""]
     return "\n".join(lines)
 
 
@@ -643,14 +670,13 @@ def _main(argv: list) -> int:
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:
             checked = receipt.VerifyReport(False, checked.reasons + [packaged],
-                                           checked.notes)
+                                           checked.notes, checked.disclosures)
         if not checked.valid and not args.draft:
-            print("REFUSED: the filing package would not describe this "
-                  "workspace.", file=sys.stderr)
+            print("REFUSED: the return is not ready for final filing.", file=sys.stderr)
             for reason in checked.reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
-                  "receipt), or pass --draft for a NOT VALIDATED copy.",
+            print("\nResolve open items and re-run /tax-compute, or pass "
+                  "--draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2
         if args.json:
@@ -661,7 +687,7 @@ def _main(argv: list) -> int:
                 "receipt": checked.to_dict(),
             }, indent=2))
         else:
-            print(_draft_banner(checked) + render_markdown(result))
+            print(_draft_banner(checked) + render_markdown(result, disclosures=checked.disclosures))
     except (WorkspaceError, FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

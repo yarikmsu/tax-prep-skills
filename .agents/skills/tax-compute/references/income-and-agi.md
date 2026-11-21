@@ -46,6 +46,9 @@ Before computing, identify assumptions that could change the tax outcome by >$10
 - Home office used regularly and exclusively for business? (MEDIUM)
 - Business vehicle miles driven? (MEDIUM)
 - Any unreported business expenses not in documents? (HIGH if significant)
+- Which taxpayer owns each Schedule C? Confirm each signed line 31 from the
+  completed business worksheet and its Schedule SE treatment. For a Form 4361
+  exemption, review the IRS approval and confirm the activity is covered by it.
 
 **Batch 3 — Credits eligibility:**
 - CTC: Confirm each child's age and residency for the full year (HIGH — `child_tax_credit.amount_per_child` from tax_law JSON)
@@ -82,8 +85,8 @@ box1 separately from the reviewed casual/business contributions. Loss and
 professional business worksheets stay manual; do not net annual casual losses.
 When W-2Gs apply, reconfirm signed `schedule_1_other_income.remaining_income`
 and set `w2g_excluded_from_remaining: true`: it excludes separately mapped
-casual W-2G and MISC income and UI/PFL, but keeps reviewed Schedule C NET income
-and other actual winning income absent from the mapped contributions.
+casual W-2G and MISC income and UI/PFL. Keep other actual winning income absent
+from the mapped contributions. Follow the separate Schedule C routing below.
 An older confirmed aggregate is ambiguous; never infer its split.
 Call `compute_schedule1_other` with both MISC `records` and `w2g_records`, plus
 the new exclusion answer. Persist its output and use its total for actual
@@ -95,20 +98,46 @@ actual line8. Keep its W-2G manual-source disclosure in `meta.limitations`.
 **[schedule1_remaining_income]** in `answers.md`. Follow the parse skill's
 `references/misc-income.md`. For nonbusiness MISC income, set
 `schedule_1_other_income.remaining_income` to signed Schedule1 income EXCLUDING
-tracked MISC, separately mapped casual W-2G and UI/family benefits; confirm it explicitly, including zero.
-Include business NET profit/loss, taxable refunds and other applicable sources.
-Record the Schedule C net it includes as `schedule_c_net_included`; with a
-nonzero `schedule_c.line_31_net` the builder refuses a remainder that does
-not state exactly that amount.
+tracked MISC, separately mapped casual W-2G and UI/family benefits. Confirm it
+explicitly, including zero. Include taxable refunds and other applicable sources.
+When Schedule C applies, exclude its net from this remainder and confirm the
+exclusion as described below.
 Call `compute_schedule1_other` using the covered year and source records before
 Social Security or AGI/MAGI-dependent worksheets. Persist its output; without a
 benefits workpaper, its total supplies actual Form1040 line8 programmatically.
 With UI/PFL, its total supplies the government-benefits `other_income` argument;
 copy that derived amount into the non-benefit answer instead of summing it again.
 The builder repeats and checks both workpapers and actual line8 before any scope
-waiver. Business-only/zero-MISC legacy Schedule1 paths remain manual unless this
-workpaper is explicitly adopted. Never put MISC withholding or a box-7 threshold
+waiver. Never put MISC withholding or a box-7 threshold
 in business receipts. Refresh affected worksheets after an income change.
+
+**Schedule C and Schedule SE:** record every reviewed Schedule C in
+`schedule_c.activities` with `activity_id` (a unique local worksheet reference),
+`person` (`primary` or `spouse`), signed
+`line_31_net`, and `se_treatment` (`regular` or `approved_form_4361`). For the
+latter, record `approval_confirmed: true` after reviewing IRS approval for
+that activity. Sum signed line 31 amounts in `schedule_c.line_31_net`. Assign
+each profit or loss to its owner, including on a joint return. Keep receipts
+and expenses in their own Schedule C workpapers.
+
+Set `schedule_1_other_income.remaining_income` to the verified signed income
+apart from Schedule C and other separately derived Schedule 1 sources. Set
+`remaining_income_confirmed: true` and `schedule_c_excluded_from_remaining:
+true`, including when the remainder is zero. Reconcile a legacy aggregate
+against its source worksheets before reusing it. The builder adds Schedule C
+once to Schedule 1 line 3 and Form 1040 line 8. It supplies the resulting
+non-benefit income to the government-benefits worksheet when both apply.
+
+Under `schedule_se.inputs`, enter the covered `tax_year` and the confirmed
+`by_owner` inputs. Each owner has `ss_wages` from Schedule SE line 8d (including
+W-2 boxes 3 and 7, and other amounts on that line when applicable), signed
+`other_net_profit` from qualifying non-Schedule-C sources, and `confirmed:
+true`. Record zero amounts when they have been checked. Include every spouse
+with income or loss that belongs on an individual Schedule SE. The builder
+calculates regular Schedule SE and excludes approved Form 4361 income from
+that calculation while retaining it in taxable Schedule 1 business income.
+Review the covered-year Schedule SE instructions for the regular method and
+flag other methods or exemptions before preparing the return.
 
 **Government benefits (1099-G):** record **[government_benefit_sources]** and
 **[schedule1_nonbenefit_income]** in `answers.md`. Confirm source year/revision,
@@ -116,10 +145,10 @@ UI versus family/medical program identity, actual receipts and applicable
 same-year UI repayments/contribution reductions. Never reduce PFL by the old
 nonitemizer contribution rule. The parse skill's government-benefits reference
 defines `government_benefits` metadata and revision-aware withholding boxes.
-When a MISC workpaper applies, use its derived total as the following non-benefit
+When a non-benefit income workpaper applies, use its derived total as the following non-benefit
 input; otherwise set `schedule_1_government_benefits.other_income` to the signed total of ALL
 OTHER Schedule1 income, including refunds/business/K-1 income/losses, and set
-`other_income_confirmed: true`, with `schedule_c_net_included` as above.
+`other_income_confirmed: true`.
 Include a deliberate zero. Do not reuse an old
 aggregate that may already contain some benefits. Before any Social Security,
 AGI or MAGI-dependent worksheet, call `compute_government_benefits` with the
@@ -172,7 +201,7 @@ Line 5a/5b: Pensions (1099-R; Code G rollover = 5a only, 5b = $0)
 Line 6a: DERIVED — SSA-1099 box 5 total (the ledger's `ss_benefits` sum)
 Line 6b: taxable amount from compute_taxable_ss below — yours
 Line 7: Capital gain/loss from Schedule D line 16
-Line 8: Other Schedule 1 income; DERIVED from the benefits workpaper when used
+Line 8: Schedule 1 income; DERIVED from the active income and benefit workpapers
 Line 9: DERIVED — TOTAL INCOME = 1z + 2b + 3b + 4b + 5b + 6b + 7 + 8
         (6b — the TAXABLE benefit amount — is IN the sum; omitting it
         understates AGI by exactly what the worksheet just computed, which is
@@ -521,7 +550,10 @@ intake gate ties each allocation to its owner's document. When either owner's
 
 ### Step 4: Compute AGI (Form 1040 Lines 10-11)
 
-Line 11 is DERIVED (`return_builder`); line 10 is yours.
+Line 11 is DERIVED. When Schedule C applies, enter all other Schedule 1
+adjustments in `schedule_se.inputs.remaining_adjustments` and set
+`adjustments_exclude_se_deduction: true` after review. The builder adds the
+deductible half of Schedule SE tax from Schedule 1 line 15 and writes line 10.
 
 ```
 Line 10: Adjustments to income from Schedule 1 Part II:

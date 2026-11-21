@@ -3,6 +3,7 @@ import csv
 
 import pytest
 
+from agents.lib.parse_utils import extract_csv, extract_excel
 from agents.lib.secure_fs import mask_table
 from tests.test_identifier_residuals import _prints
 from tests.test_identifier_spellings import _comb, _wide
@@ -334,6 +335,43 @@ def test_thousands_grouping_cannot_join_separate_financial_cells(space, groups, 
     if wide:
         rows = [[_wide(cell) for cell in row] for row in rows]
     assert mask_table(rows) == rows
+
+
+@pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f", "\t"])
+@pytest.mark.parametrize("caption", ["Annual earnings", "Federal taxable wages", "W-2 Box 1"])
+def test_grouped_amount_between_count_columns_stays_with_its_heading(space, caption):
+    amount = f"12{space}500"
+    values = ["850", amount, "1"]
+    rows = [["Document type", "Count", caption, "Copies"], ["", "", "", ""],
+            ["SSN", *values], ["SSN", _ssn("-"), "", ""]]
+    out = mask_table(rows)
+    assert out[:3] == rows[:3]
+    assert out[-1][1] == MASKED
+
+
+def test_unowned_three_cell_reading_still_masks_an_identifier():
+    digits = _ssn("")
+    fragments = [digits[:3], f"{digits[3:5]} {digits[5:8]}", digits[8:]]
+    rows = [["SSN", "", ""], fragments]
+    masked = mask_table(rows)[-1]
+    assert not _prints(digits[:5], " ".join(masked))
+
+
+@pytest.mark.parametrize("kind", ["csv", "xlsx"])
+def test_grouped_amount_keeps_its_owner_and_field_through_table_extraction(tmp_path, kind):
+    rows = [["Owner", "Document type", "Count", "W-2 Box 1", "Copies"],
+            ["Spouse", "SSN", "850", "12\u202f500", "1"],
+            ["Primary", "SSN", _ssn("-"), "125.00", "1"]]
+    if kind == "csv":
+        path = tmp_path / "amounts.csv"
+        with path.open("w", newline="") as stream:
+            csv.writer(stream).writerows(rows)
+        extracted = extract_csv(str(path), workspace=str(tmp_path))
+    else:
+        path = _workbook(tmp_path / "amounts.xlsx", rows)
+        extracted = next(iter(extract_excel(str(path), workspace=str(tmp_path)).values()))
+    assert extracted[:2] == rows[:2]
+    assert extracted[2] == ["Primary", "SSN", MASKED, "125.00", "1"]
 
 
 @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])

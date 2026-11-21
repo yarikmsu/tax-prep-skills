@@ -67,11 +67,14 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib import receipt  # noqa: E402
+from agents.lib import material_evidence, receipt  # noqa: E402
+from agents.lib.tax_computations.federal import payments as federal_payments  # noqa: E402
+from agents.lib.tax_computations.federal import schedule_c  # noqa: E402
+from agents.lib.tax_computations.federal import source_reconciliation  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -93,7 +96,7 @@ from agents.lib.tax_computations import (  # noqa: E402
 )
 from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS, _ca_input  # noqa: E402
 from agents.lib.tax_computations.federal.government_benefits import (  # noqa: E402
-    BENEFIT_CATEGORIES, _money, compute_government_benefits, validate_government_benefits,
+    BENEFIT_CATEGORIES, compute_government_benefits, validate_government_benefits,
 )
 from agents.lib.tax_computations.federal.misc_income import (  # noqa: E402
     MISC_OTHER, compute_schedule1_other, validate_misc_income,
@@ -151,6 +154,7 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   # no return at all.
                   "other_local_withholding"}
 _INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
+_INFORMATIONAL.add(source_reconciliation.BOOK_GROSS)
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -576,6 +580,10 @@ def _ny_city_and_yonkers_findings(result: dict, flags: "dict | None",
 
 
 _ALL_CATEGORIES = set(CATEGORY_TARGETS) | _INFORMATIONAL | set(_BLOCKING_CATEGORIES)
+_W2_BOXES = {
+    "1": ("wages", "wages"),
+    "2": ("federal_withholding_w2", "federal income tax withheld"),
+}
 
 
 @dataclass(frozen=True)
@@ -608,6 +616,10 @@ class LedgerRecord:
     misc_income: "dict | None" = None
     w2g_income: "dict | None" = None
     rental_source: "dict | None" = None
+    w2_box_status: "dict[str, str] | None" = None
+    source_sha256: "str | None" = None
+    source_form: "dict | None" = None
+    business_receipts: "list[dict] | None" = None
 
 
 @dataclass(frozen=True)
@@ -634,6 +646,9 @@ class TieOutReport:
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
     advisories: "tuple[str, ...]"  # loud manual-verify notes (never a failure)
     failed: bool
+    changed_sources: "tuple[str, ...]" = ()
+    source_issues: "tuple[str, ...]" = ()
+    source_disclosures: "tuple[str, ...]" = ()
 
 
 def _num(value, where: str) -> float:
@@ -698,6 +713,29 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
                                   'keys of a state code and the form\'s locality name, as in "OH:COLUMBUS"')
 
 
+def _w2_code(form_type: str) -> str:
+    return source_reconciliation.form_code(form_type)
+
+
+def _is_w2(form_type: str, boxes: dict) -> bool:
+    return (_w2_code(form_type) in {"W2", "W2C"}
+            or any(category in boxes for category, _ in _W2_BOXES.values()))
+
+
+def _w2_box_status(status: object, boxes: dict, is_w2: bool, where: str) -> dict[str, str]:
+    if status is None:
+        return {}
+    if not is_w2 or not isinstance(status, dict):
+        raise TieOutError(f"{where}.w2_box_status requires a non-skipped W-2 record and an object")
+    for box, value in status.items():
+        if box not in _W2_BOXES or value not in ("blank", "unread"):
+            raise TieOutError(f"{where}.w2_box_status accepts blank or unread for box 1 or 2")
+        category, _ = _W2_BOXES[box]
+        if category in boxes:
+            raise TieOutError(f"{where}: W-2 box {box} has both an amount and a blank or unread status")
+    return status
+
+
 def load_ledger(raw: dict) -> "list[LedgerRecord]":
     """Validate the parse_ledger.json payload strictly — a malformed ledger
     must never look like a passing tie-out."""
@@ -723,6 +761,10 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 "amounts while still passing coverage."
             )
         seen_files.add(file)
+        source_sha256 = rec.get("source_sha256")
+        if source_sha256 is not None and (not isinstance(source_sha256, str)
+                                          or not re.fullmatch("[0-9a-f]{64}", source_sha256)):
+            raise TieOutError(f"{where}.source_sha256 must be a lowercase SHA-256 digest")
         skipped = rec.get("skipped")
         if skipped is not None and (not isinstance(skipped, str) or not skipped.strip()):
             raise TieOutError(f"{where}.skipped must be null or a non-empty reason")
@@ -731,7 +773,12 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             boxes = {}
         if not isinstance(boxes, dict):
             raise TieOutError(f"{where}.key_boxes must be an object")
-        if skipped is None and not boxes:
+        form_type = _require_str(rec.get("form_type"), f"{where}.form_type")
+        w2_status = _w2_box_status(rec.get("w2_box_status"), boxes,
+                                   skipped is None and _is_w2(form_type, boxes), where)
+        if _w2_code(form_type) == "W2C" and "blank" in w2_status.values():
+            raise TieOutError(f"{where}: reconcile Form W-2c blanks with the original W-2")
+        if skipped is None and not boxes and not w2_status:
             raise TieOutError(
                 f"{where} ({redact(doc_id)}): a non-skipped record must carry "
                 "key_boxes — "
@@ -757,9 +804,17 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 raise TieOutError(
                     f"{where}.key_boxes[{cat}] cannot be negative ({v})")
             validated.append((cat, v))
+        validated.extend((_W2_BOXES[box][0], 0.0) for box, value in w2_status.items()
+                         if value == "blank")
         person = rec.get("person") or "joint"
         if person not in ("primary", "spouse", "joint"):
             raise TieOutError(f"{where}.person must be primary/spouse/joint")
+        try:
+            source_form = source_reconciliation.validate_form(rec.get("source_form"), skipped is not None)
+            business_receipts = source_reconciliation.validate_book(
+                rec.get("business_receipts"), boxes, person, skipped is not None)
+        except ValueError as exc:
+            raise TieOutError(f"{where}: {exc}") from None
         foreign = rec.get("foreign", False)
         if not isinstance(foreign, bool):
             raise TieOutError(
@@ -824,14 +879,15 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 raise TieOutError(f"{where}: {exc}") from None
         records.append(LedgerRecord(
             doc_id=doc_id, file=file,
-            form_type=_require_str(rec.get("form_type"), f"{where}.form_type"),
+            form_type=form_type,
             payer=_require_str(rec.get("payer"), f"{where}.payer"),
             person=person, key_boxes=tuple(validated), skipped=skipped,
             foreign=foreign, second_read=second_read, retirement_kind=retirement_kind,
             other_state_withholding_by_state=other_states,
             other_local_withholding_by_locality=other_localities, ca_investments=ca_investments,
             government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
-            rental_source=rental_source))
+            rental_source=rental_source, w2_box_status=w2_status, source_sha256=source_sha256,
+            source_form=source_form, business_receipts=business_receipts))
     return records
 
 
@@ -864,8 +920,31 @@ def _payer_tokens(name: str) -> frozenset:
         if t)
 
 
-def missing_expected_payers(ledger: "list[LedgerRecord]",
-                            expected_sources: dict) -> "list[str]":
+_EXPECTED_FORM_LABELS = {
+    "w2_employers": "Form W-2", "interest_payers": "interest reporting",
+    "dividend_payers": "dividend reporting", "brokerages": "brokerage reporting",
+    "foreign_accounts": "foreign account statement",
+}
+
+
+def _has_expected_kind(record: LedgerRecord, kind: str) -> bool:
+    boxes = dict(record.key_boxes)
+    code = source_reconciliation.form_code(record.form_type)
+    if kind == "w2_employers":
+        return _is_w2(record.form_type, boxes)
+    if kind == "interest_payers":
+        return ("taxable_interest" in boxes or ("tax_exempt_interest" in boxes
+                and ("exempt_interest_dividends" not in boxes or
+                     boxes["tax_exempt_interest"] > boxes["exempt_interest_dividends"])))
+    if kind == "dividend_payers":
+        return bool(boxes.keys() & {"ordinary_dividends", "qualified_dividends", "capital_gain_distributions",
+                                    "exempt_interest_dividends", "qbi_dividends"})
+    if kind == "brokerages":
+        return ("capital_proceeds" in boxes or "1099B" in code or "CONSOLIDATED" in code or "BROKERAGE" in code)
+    return record.foreign
+
+
+def missing_expected_forms(ledger: list[LedgerRecord], expected_sources: dict) -> list[tuple[str, str]]:
     """A4: expected payers (rolled over from the prior year by /tax-rollover)
     with no matching ledger payer — each is a document that existed last year
     and is absent this year (the CP2000 intake gap /tax-parse step 2.5 must
@@ -877,27 +956,47 @@ def missing_expected_payers(ledger: "list[LedgerRecord]",
     (safe direction: one extra question) rather than false-matching."""
     if not isinstance(expected_sources, dict):
         raise TieOutError("expected_sources must be an object")
-    expected = []
+    missing = []
     for key, values in expected_sources.items():
         if key.startswith("_"):
             continue
         if not isinstance(values, list):
             raise TieOutError(f"expected_sources.{key} must be a list")
+        if key not in _EXPECTED_FORM_LABELS:
+            raise TieOutError("expected_sources contains an unrecognized source kind")
         for v in values:
             # /tax-rollover writes OBJECT entries — {"name", "ein"} for
             # employers, {"name", "country_code"} for payers,
             # {"institution", "country_code", "account_last4"} for foreign
             # accounts. Plain strings are accepted for hand-maintained lists.
-            expected.append(_expected_payer_name(v, f"expected_sources.{key}"))
-    ledger_tokens = [t for t in (_payer_tokens(r.payer) for r in ledger) if t]
-    missing = []
-    for name in expected:
-        toks = _payer_tokens(name)
-        if not toks:
-            continue
-        if not any(toks <= lt or lt <= toks for lt in ledger_tokens):
-            missing.append(name)
-    return sorted(set(missing))
+            name = _expected_payer_name(v, f"expected_sources.{key}")
+            detail = v if isinstance(v, dict) else {}
+            if detail.get("resolution") == "issuer_confirmed_no_form":
+                continue
+            if "resolution" in detail:
+                raise TieOutError("expected-source resolution must be issuer_confirmed_no_form or absent")
+            tokens = _payer_tokens(name)
+            person = detail.get("person")
+            last4 = detail.get("account_last4")
+            if person is not None and person not in ("primary", "spouse", "joint"):
+                raise TieOutError("expected-source person must be primary, spouse or joint")
+            if last4 is not None and (not isinstance(last4, str) or not re.fullmatch(r"[0-9]{4}", last4)):
+                raise TieOutError("expected-source account_last4 must contain four account digits")
+            for record in ledger:
+                payer = _payer_tokens(record.payer)
+                if (record.skipped is None and tokens and payer and (tokens <= payer or payer <= tokens)
+                        and (person is None or record.person == person)
+                        and (last4 is None or last4 == (record.source_form or {}).get("account_last4"))
+                        and _has_expected_kind(record, key)):
+                    break
+            else:
+                missing.append((_EXPECTED_FORM_LABELS[key], name))
+    return missing
+
+
+def missing_expected_payers(ledger: list[LedgerRecord], expected_sources: dict) -> list[str]:
+    """Compatibility view for the intake prompt."""
+    return sorted({name for _, name in missing_expected_forms(ledger, expected_sources)})
 
 
 def foreign_payers(ledger: "list[LedgerRecord]") -> "list[str]":
@@ -2103,22 +2202,6 @@ def _other_state_routing_checks(ledger: "list[LedgerRecord]", result: dict,
     return errors
 
 
-def _schedule_c_net_stated(sheet: dict, result: dict, where: str) -> "float | None":
-    """A typed Schedule 1 remainder becomes a derived line 8, so it must say how
-    much Schedule C net it holds; dropping that net otherwise leaves AGI short
-    with --check green."""
-    c = result.get("schedule_c")
-    net = _money(c.get("line_31_net", 0), "schedule_c.line_31_net", signed=True) if isinstance(c, dict) else 0.0
-    stated = sheet.get("schedule_c_net_included")
-    if stated is None and not net:
-        return None
-    if stated is None:
-        raise ValueError(f"{where}: state schedule_c_net_included, the Schedule C net it includes")
-    if abs(_money(stated, f"{where}.schedule_c_net_included", signed=True) - net) > .005:
-        raise ValueError(f"{where} must include Schedule C line 31 net profit or loss exactly once")
-    return net
-
-
 def _w2g_sources(ledger: "list[LedgerRecord]", profile: dict) -> tuple[list, list]:
     records, years = [], []
     for rec in ledger:
@@ -2310,23 +2393,27 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
         or r["w2g_income"]["schedule_c_gross"] or r["w2g_income"]["income_method"] == "reviewed_worksheet"
         for r in w2g_records)
     rentals = rental_is_active(ledger, result, profile)
-    inactive = not positive and not rentals and (sheet is None or scaffold)
+    business_net = schedule_c.schedule_c_net(result, profile)
+    inactive = not positive and not rentals and business_net is None and (sheet is None or scaffold)
     if not source_years and inactive:
         return None
     year = _covered_source_year(result, profile, source_years, "Schedule1")
     if inactive:
         return None
     if not isinstance(sheet, dict) or scaffold:
-        raise ValueError("confirm remaining Schedule1 income EXCLUDING tracked MISC, casual W-2G and government benefits, including zero")
-    stated = _schedule_c_net_stated(sheet, result, "schedule_1_other_income.remaining_income")
+        raise ValueError("confirm remaining Schedule1 income, excluding separately computed business income, rentals, MISC, W-2G and benefits")
+    if business_net is not None and sheet.get("schedule_c_excluded_from_remaining") is not True:
+        raise ValueError("confirm remaining Schedule1 income excluding Schedule C line 31, including zero")
     if rentals and sheet.get("rentals_excluded_from_remaining") is not True:
         raise ValueError("reconfirm remaining Schedule1 income EXCLUDING computed rentals; do not retain an old manual rental net")
     built = compute_schedule1_other(tax_year=year, records=records,
         remaining_income=sheet.get("remaining_income"),
         remaining_income_confirmed=sheet.get("remaining_income_confirmed"),
         w2g_records=w2g_records, w2g_excluded_from_remaining=sheet.get("w2g_excluded_from_remaining", False))
-    if stated is not None:  # the rebuilt sheet keeps its own statement
-        built["schedule_c_net_included"] = stated
+    if business_net is not None:
+        built["schedule_c_excluded_from_remaining"] = True
+        built["schedule_1_line_3_business_income"] = business_net
+        built["total"] = round(built["total"] + business_net, 2)
     if rentals:
         built["rentals_excluded_from_remaining"] = True
         if include_rentals:
@@ -2412,7 +2499,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # restore: keep following line 8 rather than reverting a later edit.
     unconfirmed = isinstance(sheet, dict) and sheet.get("other_income_confirmed") is not True
     other_sheet = derive_schedule1_other_workpaper(ledger, result, profile, include_rentals=include_rentals)
-    stated = None
     if other_sheet is not None:
         other, confirmed = other_sheet["total"], True
     elif sheet is None or scaffold or (not positive and unconfirmed):
@@ -2421,7 +2507,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
         other = (result.get("form_1040") or {}).get("line_8_schedule1_other")
         confirmed = False
     elif isinstance(sheet, dict):
-        stated = _schedule_c_net_stated(sheet, result, "schedule_1_government_benefits.other_income")
         other, confirmed = sheet.get("other_income"), sheet.get("other_income_confirmed")
     else:
         raise ValueError("schedule_1_government_benefits must be an object or absent")
@@ -2439,8 +2524,6 @@ def derive_government_workpaper(ledger: "list[LedgerRecord]", result: dict, prof
     # to a governmental UI program; an itemizer takes them on Schedule A.
     if built["unemployment_contribution_reduction"] and (result.get("schedule_a") or {}).get("use_itemized") is True:
         raise ValueError("an itemizer deducts UI program contributions on Schedule A, not on Schedule 1 line 7")
-    if stated is not None:  # the rebuilt sheet keeps its own statement
-        built["schedule_c_net_included"] = stated
     built["computed_tax_year"] = year
     return built
 
@@ -2816,8 +2899,25 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         if r.skipped is not None and r.skipped.strip().lower().startswith("pending")))
 
     sums = category_sums(ledger)
+    meta = result.get("meta")
+    year = (meta.get("tax_year") if isinstance(meta, dict) else None) or (profile or {}).get("tax_year")
+    source_review = source_reconciliation.review(ledger, year)
+    expected = (profile or {}).get("expected_sources")
+    missing_forms = missing_expected_forms(ledger, expected) if expected is not None else []
+    source_issues = source_review.problems + tuple(
+        f"Expected {label} item #{number} is missing from the reported intake."
+        for number, (label, _) in enumerate(missing_forms, 1))
+    if source_review.business_gross is not None:
+        sums[source_reconciliation.BUSINESS_GROSS] = source_review.business_gross
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
+    missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
+    try:
+        business_tax = schedule_c.schedule_se_workpaper(result, profile or {}, ledger, tax_law or {},
+                                                       require_other_taxes=True)
+        missing_targets.extend(schedule_c.flow_differences(result, business_tax))
+    except (ValueError, TypeError, OverflowError) as exc:
+        missing_targets.append(f"Schedule C and Schedule SE: {redact(exc)}")
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
     missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))
@@ -2940,8 +3040,10 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         delta = round(sums[cat] - result_total, 2)
         # at-least categories: only ledger > result (the under-report
         # direction) fails; a return reporting MORE than the 1099s is legal.
-        ok = (delta <= tolerance if cat in _AT_LEAST_CATEGORIES
-              else abs(delta) <= tolerance)
+        if cat == source_reconciliation.BUSINESS_GROSS and source_review.business_gross is not None:
+            ok = delta == 0
+        else:
+            ok = delta <= tolerance if cat in _AT_LEAST_CATEGORIES else abs(delta) <= tolerance
         sum_checks.append(SumCheck(
             category=cat, ledger_total=round(sums[cat], 2),
             result_total=round(result_total, 2), delta=delta,
@@ -3463,7 +3565,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         result, profile_flags, tolerance)
     failed = bool(missing_records or phantom_files or pending_skips
                   or missing_targets or pfic_incomplete
-                  or ny_city_and_yonkers
+                  or ny_city_and_yonkers or source_issues
                   or any(not c.ok and not c.advisory for c in sum_checks))
     return TieOutReport(
         records=len(ledger), skipped=sum(1 for r in ledger if r.skipped is not None),
@@ -3475,7 +3577,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         ny_city_and_yonkers=ny_city_and_yonkers,
         unverifiable=tuple(unverifiable),
         advisories=tuple(advisories),
-        failed=failed)
+        failed=failed, source_issues=source_issues, source_disclosures=source_review.disclosures)
 
 
 def render_markdown(report: TieOutReport) -> str:
@@ -3491,6 +3593,14 @@ def render_markdown(report: TieOutReport) -> str:
         lines += ["## ⛔ Ledger records pointing at missing files", ""]
         lines += [f"- {f}" for f in report.phantom_files]
         lines.append("")
+    if report.changed_sources:
+        lines += ["## ⛔ Source documents changed since intake", ""]
+        lines += [f"- {item}" for item in report.changed_sources]
+        lines += ["", "Re-parse these documents and rebuild the ledger before computing again.", ""]
+    if report.source_issues:
+        lines += ["## ⛔ Unresolved source forms", "", *[f"- {item}" for item in report.source_issues], ""]
+    if report.source_disclosures:
+        lines += ["## Source form reconciliation", "", *[f"- {item}" for item in report.source_disclosures], ""]
     if report.pending_skips:
         lines += ["## ⛔ Documents skipped PENDING another skill", ""]
         lines += [f"- {s}" for s in report.pending_skips]
@@ -3618,13 +3728,62 @@ def write_report(workspace: Path, markdown: str) -> Path:
     return target
 
 
-def _read_json(path: Path, what: str) -> dict:
+def _read_json_snapshot(path: Path, what: str) -> tuple[bytes, dict]:
     if not path.exists():
         raise TieOutError(f"{what} not found at {redact(path)}")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+        return raw, json.loads(raw)
     except json.JSONDecodeError as e:
         raise TieOutError(f"{what} is malformed: {redact(e)}")
+
+
+def _read_json(path: Path, what: str) -> dict:
+    return _read_json_snapshot(path, what)[1]
+
+
+def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
+    records = (record for record in ledger if record.skipped is None
+               and _is_w2(record.form_type, dict(record.key_boxes)))
+    items = {}
+    for number, record in enumerate(records, 1):
+        boxes = dict(record.key_boxes)
+        status = record.w2_box_status or {}
+        for box, (category, meaning) in _W2_BOXES.items():
+            if status.get(box) == "blank":
+                outcome = "not_applicable"
+            elif category in boxes:
+                outcome = "reviewed"
+            else:
+                outcome = "open"
+            item_id = f"{material_evidence.W2_PREFIX}{receipt._entry_key(record.doc_id)}.{box}"
+            items[item_id] = {
+                "label": f"W-2 #{number} Box {box} ({meaning})",
+                "outcome": outcome,
+                "inputs": {"parse_ledger.json": ledger_digest} if outcome != "open" else {},
+            }
+    return items
+
+
+def _source_outcomes(ledger: list[LedgerRecord], gate_inputs: dict) -> tuple[dict, tuple[str, ...]]:
+    items = {}
+    changed = []
+    for number, record in enumerate(ledger, 1):
+        key = receipt._entry_key(str(Path(record.file)))
+        current = gate_inputs.get(key, {}).get("digest")
+        if current is None:
+            continue  # Coverage reports a missing or ineligible file.
+        if record.source_sha256 is None:
+            detail = "re-parse required to bind source bytes"
+        elif current != record.source_sha256:
+            detail = "changed since intake"
+            changed.append(f"Document #{number} in the parse ledger")
+        else:
+            continue
+        items[f"{material_evidence.SOURCE_PREFIX}{key}"] = {
+            "label": f"Document #{number} in the parse ledger ({detail})", "outcome": "open", "inputs": {},
+        }
+    return items, tuple(changed)
 
 
 def _main(argv: list) -> int:
@@ -3640,12 +3799,24 @@ def _main(argv: list) -> int:
         hold_workspace(workspace, "tie_out")
         ledger_path = _validate_subpath((workspace / "parse_ledger.json").resolve(), workspace)
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
+        ledger_raw, ledger_data = _read_json_snapshot(ledger_path, "parse_ledger.json")
+        ledger = load_ledger(ledger_data)
         # BEFORE anything is read: the digests this gate's verdict will be
         # bound to. Hashing after the verdict would bind a PASS to a document
         # that arrived while the report was being written — a gate certifying a
         # file it never saw, which is what the receipt exists to catch (V8).
-        gate_inputs = receipt.gate_inputs(workspace, "tie_out")
-        ledger = load_ledger(_read_json(ledger_path, "parse_ledger.json"))
+        gate_inputs = receipt.gate_inputs(workspace, "tie_out", contents={
+            material_evidence.FILENAME: None,
+            "parse_ledger.json": ledger_raw,
+        })
+        source_items, changed_sources = _source_outcomes(ledger, gate_inputs)
+        material_evidence.sync_group(workspace, material_evidence.SOURCE_PREFIX, source_items)
+        material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
+                                     _w2_outcomes(ledger, receipt._sha256(ledger_raw)))
+        evidence_raw, _ = material_evidence.read(workspace)
+        if evidence_raw is not None:
+            name = material_evidence.FILENAME
+            gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}
         result = _read_json(result_path, "result.json")
         crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
         crypto_source = _read_json(crypto_path, 'crypto_transactions.json') if crypto_path.exists() else None
@@ -3693,6 +3864,8 @@ def _main(argv: list) -> int:
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
+            if _cy is None:
+                _cy = prof.get("tax_year")
             (pfic_positive_event_ids, pfic_missing_amount_ids,
              pfic_disposition_positive_ids) = _pfic_positive_event_ids(prof, _cy)
             (pfic_holding_mismatch_ids, pfic_multiyear_disposition_ids,
@@ -3702,7 +3875,7 @@ def _main(argv: list) -> int:
             # add-on), not just the deferred lower bound. Absent/incomplete → a
             # multi-year fund's add-on is unverifiable and the recompute FAILS closed.
             _hist_rate, _under_rates = None, None
-            if _cy is not None:
+            if type(_cy) is int:
                 _law_path = (workspace / f"tax_law_{_cy}.json").resolve()
                 if _law_path.exists():
                     try:
@@ -3739,8 +3912,11 @@ def _main(argv: list) -> int:
                           specific_identification_answer=specific_identification_answer,
                           crypto_source=crypto_source,
                           profile=prof, tax_law=ca_law)
+        if changed_sources:
+            report = replace(report, failed=True, changed_sources=changed_sources)
         markdown = render_markdown(report)
-    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError, OSError) as e:
+    except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError,
+            material_evidence.MaterialEvidenceError, OSError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)
         return 1
 
@@ -3760,6 +3936,9 @@ def _main(argv: list) -> int:
             "skipped": report.skipped,
             "missing_records": list(report.missing_records),
             "phantom_files": list(report.phantom_files),
+            "changed_sources": list(report.changed_sources),
+            "source_issues": list(report.source_issues),
+            "source_disclosures": list(report.source_disclosures),
             "pending_skips": list(report.pending_skips),
             "sum_checks": [vars(c) for c in report.sum_checks],
             "missing_result_targets": list(report.missing_result_targets),
@@ -3791,7 +3970,7 @@ def _main(argv: list) -> int:
     # both refuse a filing package (V8).
     return receipt.record_after_verdict(
         workspace, "tie_out", receipt.PASS if not report.failed else "FAILED",
-        exit_code, inputs=gate_inputs)
+        exit_code, inputs=gate_inputs, disclosures=report.source_disclosures)
 
 
 if __name__ == "__main__":
