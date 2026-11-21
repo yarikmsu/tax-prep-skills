@@ -12,9 +12,8 @@ worksheets (ISO/AMT, 8863, 2441, 5695/8936, gambling, FEIE-vs-FTC) are
 non-blocking limitations that land in result.json meta.limitations (the C2
 manifest, printed on page 1 of the PDF by /tax-generate).
 
-Pure compute + markdown renderer + CLI, following projection / yoy_diff.py.
-Read-only: never writes any file (the SKILL copies the manifest lines into
-result.json).
+Pure compute + markdown renderer + CLI. The CLI records required-form items
+and its receipt verdict. The skill copies the manifest lines into result.json.
 
 Blocking items can be ACKNOWLEDGED: the user explicitly accepts the gap, the
 skill records that decision in answers.md, and the rule id is added to
@@ -32,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib import receipt  # noqa: E402
+from agents.lib import material_evidence, receipt  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
     _validate_subpath,
@@ -71,6 +70,7 @@ class Rule:
     form: str
     note: str
     state: "str | None" = None
+    required_form: bool = False
 
     def __post_init__(self):
         if self.level not in (UNSUPPORTED, MANUAL):
@@ -178,7 +178,8 @@ RULES: "tuple[Rule, ...]" = (
     Rule("marketplace_insurance", "has_marketplace_insurance", UNSUPPORTED,
          "Marketplace (ACA) health insurance", "Form 8962",
          "Premium-tax-credit reconciliation is MANDATORY when advance PTC was "
-         "paid — filing without it delays refunds and triggers IRS letters."),
+         "paid — filing without it delays refunds and triggers IRS letters.",
+         required_form=True),
     Rule("part_year_residency", "moved_states_this_year", UNSUPPORTED,
          "Moved states during the tax year", "Part-year state returns",
          "Part-year/nonresident income allocation and the other-state tax "
@@ -1098,6 +1099,18 @@ def _state_note(profile: dict) -> str:
             "welcome.")
 
 
+def required_form_items(profile: dict) -> dict[str, str]:
+    """Required-form checks that have been wired into final export."""
+    flags = profile.get("flags")
+    if flags is None:
+        return {}
+    if not isinstance(flags, dict):
+        raise CapabilityError("flags must be an object (not a scalar/list)")
+    return {f"form.{rule.rule_id}": f"{rule.form} ({rule.situation})"
+            for rule in RULES if rule.required_form and _flag_value(flags, rule.flag)
+            and (rule.state is None or rule.state == _filing_state(profile))}
+
+
 def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> CapabilityReport:
     """Evaluate the capability matrix against a taxpayer profile.
 
@@ -1480,6 +1493,11 @@ def _main(argv: list) -> int:
         print(render_markdown(report))
 
     exit_code = 2 if report.blocking else 0
+    try:
+        material_evidence.sync_required_forms(workspace, required_form_items(profile))
+    except (material_evidence.MaterialEvidenceError, CapabilityError, RolloverError, OSError) as e:
+        print(f"ERROR: {redact(e)}", file=sys.stderr)
+        return max(exit_code, 1)
     # The receipt is written AFTER the verdict is printed and cannot lower its
     # exit code: this gate's job is to block an out-of-scope return, and a
     # permissions fault must not be able to mask that. A BLOCKED gate is

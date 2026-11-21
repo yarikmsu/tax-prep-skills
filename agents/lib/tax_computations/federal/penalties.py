@@ -155,6 +155,8 @@ def compute_form_2210(
     underpayment_rates: list | None = None,
     prior_year_zero_liability_confirmed: bool = False,
     prior_year_return_filed_12_months_confirmed: bool = False,
+    *,
+    fourth_installment_waived: bool = False,
 ) -> dict:
     """Form 2210 underpayment-of-estimated-tax penalty at filing (1040 line 38).
 
@@ -202,6 +204,8 @@ def compute_form_2210(
             (IRC §6621 quarterly rates: {"effective_from", "annual_rate"}).
             Empty/None or a missing accruing quarter → underpayments are still reported but
             the dollar penalty is NOT computed (loud note), never guessed.
+        fourth_installment_waived: confirmed that the taxpayer filed and paid
+            the full balance on time for the January 31 exception in §6654(h).
 
     The annualized-income method (Schedule AI) is NOT modeled — for lumpy
     income it usually REDUCES the penalty, so the figure here may overstate;
@@ -214,6 +218,8 @@ def compute_form_2210(
     fs = _normalize_filing_status(filing_status)
     if isinstance(tax_year, bool) or not isinstance(tax_year, int):
         raise ValueError(f"tax_year must be an int, got {tax_year!r}")
+    if type(fourth_installment_waived) is not bool:
+        raise ValueError("fourth_installment_waived must be a boolean")
     # current_year_tax (2210 line 4) may be NEGATIVE: refundable credits
     # (EIC, refundable ACTC/AOTC, net PTC, fuel credit) can exceed line 24.
     # Rejecting it would crash the unconditional /tax-compute call on exactly
@@ -249,8 +255,8 @@ def compute_form_2210(
         "not modeled",
         "§6654(i) farmers/fishermen (66⅔% harbor, single Jan-15 installment) "
         "not modeled — the four-installment default OVERSTATES for them",
-        "§6654(h) not modeled: filing AND paying in full by Jan 31 stops the "
-        "fourth installment's accrual",
+        ("§6654(h): the fourth installment is waived because filing and full payment by Jan 31 were confirmed"
+         if fourth_installment_waived else "§6654(h): filing and full payment by Jan 31 can waive the fourth installment"),
         "prior-year MFJ filers now filing MFS must allocate the joint "
         "prior-year tax per Pub 505 — passing the full joint figure "
         "OVERSTATES the prior-year harbor",
@@ -455,13 +461,16 @@ def compute_form_2210(
                  next_business_day(datetime.date(tax_year + 1, 1, 15))]
     final_date = datetime.date(tax_year + 1, 4, 15)
     per_installment = required / 4.0
+    installments = {d: per_installment for d in due_dates}
+    if fourth_installment_waived:
+        installments[due_dates[-1]] = 0.0
 
     # Timeline simulation per the Part III worksheet: charges open
     # underpayment slices; payments (deemed-even withholding on each due
     # date + dated estimates) retire slices oldest-first; excess sits as
     # credit against future installments. Charges sort before same-date
     # payments so a timely payment retires its installment at zero days.
-    timeline = [(d, 0, per_installment) for d in due_dates]
+    timeline = [(d, 0, amount) for d, amount in installments.items()]
     timeline += [(d, 1, wh / 4.0) for d in due_dates]
     timeline += [(d, 1, a) for d, a in est_events]
     timeline.sort(key=lambda t: (t[0], t[1]))
@@ -502,7 +511,7 @@ def compute_form_2210(
             persisting[start] += amount
     result["quarters"] = [
         {"due_date": d.isoformat(),
-         "required_installment": round(per_installment, 2),
+         "required_installment": round(installments[d], 2),
          "underpayment": round(persisting[d], 2)}
         for d in due_dates]
 
