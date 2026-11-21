@@ -67,7 +67,7 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -613,6 +613,7 @@ class LedgerRecord:
     w2g_income: "dict | None" = None
     rental_source: "dict | None" = None
     w2_box_status: "dict[str, str] | None" = None
+    source_sha256: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -639,6 +640,7 @@ class TieOutReport:
     unverifiable: "tuple[str, ...]"  # Check D warnings (section present, figures unavailable)
     advisories: "tuple[str, ...]"  # loud manual-verify notes (never a failure)
     failed: bool
+    changed_sources: "tuple[str, ...]" = ()
 
 
 def _num(value, where: str) -> float:
@@ -751,6 +753,10 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 "amounts while still passing coverage."
             )
         seen_files.add(file)
+        source_sha256 = rec.get("source_sha256")
+        if source_sha256 is not None and (not isinstance(source_sha256, str)
+                                          or not re.fullmatch("[0-9a-f]{64}", source_sha256)):
+            raise TieOutError(f"{where}.source_sha256 must be a lowercase SHA-256 digest")
         skipped = rec.get("skipped")
         if skipped is not None and (not isinstance(skipped, str) or not skipped.strip()):
             raise TieOutError(f"{where}.skipped must be null or a non-empty reason")
@@ -866,7 +872,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
             other_state_withholding_by_state=other_states,
             other_local_withholding_by_locality=other_localities, ca_investments=ca_investments,
             government_benefits=government_benefits, misc_income=misc_income, w2g_income=w2g_income,
-            rental_source=rental_source, w2_box_status=w2_status))
+            rental_source=rental_source, w2_box_status=w2_status, source_sha256=source_sha256))
     return records
 
 
@@ -3526,6 +3532,10 @@ def render_markdown(report: TieOutReport) -> str:
         lines += ["## ⛔ Ledger records pointing at missing files", ""]
         lines += [f"- {f}" for f in report.phantom_files]
         lines.append("")
+    if report.changed_sources:
+        lines += ["## ⛔ Source documents changed since intake", ""]
+        lines += [f"- {item}" for item in report.changed_sources]
+        lines += ["", "Re-parse these documents and rebuild the ledger before computing again.", ""]
     if report.pending_skips:
         lines += ["## ⛔ Documents skipped PENDING another skill", ""]
         lines += [f"- {s}" for s in report.pending_skips]
@@ -3690,6 +3700,27 @@ def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
     return items
 
 
+def _source_outcomes(ledger: list[LedgerRecord], gate_inputs: dict) -> tuple[dict, tuple[str, ...]]:
+    items = {}
+    changed = []
+    for number, record in enumerate(ledger, 1):
+        key = receipt._entry_key(str(Path(record.file)))
+        current = gate_inputs.get(key, {}).get("digest")
+        if current is None:
+            continue  # Coverage reports a missing or ineligible file.
+        if record.source_sha256 is None:
+            detail = "re-parse required to bind source bytes"
+        elif current != record.source_sha256:
+            detail = "changed since intake"
+            changed.append(f"Document #{number} in the parse ledger")
+        else:
+            continue
+        items[f"{material_evidence.SOURCE_PREFIX}{key}"] = {
+            "label": f"Document #{number} in the parse ledger ({detail})", "outcome": "open", "inputs": {},
+        }
+    return items, tuple(changed)
+
+
 def _main(argv: list) -> int:
     import argparse
     parser = argparse.ArgumentParser(prog="agents.lib.tie_out")
@@ -3705,17 +3736,22 @@ def _main(argv: list) -> int:
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
         ledger_raw, ledger_data = _read_json_snapshot(ledger_path, "parse_ledger.json")
         ledger = load_ledger(ledger_data)
-        material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
-                                     _w2_outcomes(ledger, receipt._sha256(ledger_raw)))
         # BEFORE anything is read: the digests this gate's verdict will be
         # bound to. Hashing after the verdict would bind a PASS to a document
         # that arrived while the report was being written — a gate certifying a
         # file it never saw, which is what the receipt exists to catch (V8).
-        evidence_raw, _ = material_evidence.read(workspace)
         gate_inputs = receipt.gate_inputs(workspace, "tie_out", contents={
-            material_evidence.FILENAME: evidence_raw,
+            material_evidence.FILENAME: None,
             "parse_ledger.json": ledger_raw,
         })
+        source_items, changed_sources = _source_outcomes(ledger, gate_inputs)
+        material_evidence.sync_group(workspace, material_evidence.SOURCE_PREFIX, source_items)
+        material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
+                                     _w2_outcomes(ledger, receipt._sha256(ledger_raw)))
+        evidence_raw, _ = material_evidence.read(workspace)
+        if evidence_raw is not None:
+            name = material_evidence.FILENAME
+            gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}
         result = _read_json(result_path, "result.json")
         crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
         crypto_source = _read_json(crypto_path, 'crypto_transactions.json') if crypto_path.exists() else None
@@ -3809,6 +3845,8 @@ def _main(argv: list) -> int:
                           specific_identification_answer=specific_identification_answer,
                           crypto_source=crypto_source,
                           profile=prof, tax_law=ca_law)
+        if changed_sources:
+            report = replace(report, failed=True, changed_sources=changed_sources)
         markdown = render_markdown(report)
     except (WorkspaceError, TieOutError, RolloverError, receipt.ReceiptError,
             material_evidence.MaterialEvidenceError, OSError) as e:
@@ -3831,6 +3869,7 @@ def _main(argv: list) -> int:
             "skipped": report.skipped,
             "missing_records": list(report.missing_records),
             "phantom_files": list(report.phantom_files),
+            "changed_sources": list(report.changed_sources),
             "pending_skips": list(report.pending_skips),
             "sum_checks": [vars(c) for c in report.sum_checks],
             "missing_result_targets": list(report.missing_result_targets),

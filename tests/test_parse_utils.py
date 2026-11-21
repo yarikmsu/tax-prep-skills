@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import sys
+import json
+from hashlib import sha256
 from pathlib import Path
 
 import openpyxl
@@ -1075,6 +1077,24 @@ def _build_pdf(path):
     story.append(table)
     SimpleDocTemplate(str(path), pagesize=letter).build(story)
     return path
+
+
+@pytest.mark.parametrize("mode", ["extract", "tables", "excel"])
+def test_bound_cli_returns_safe_data_with_the_source_digest(tmp_path, mode):
+    if mode == "excel":
+        path = _workbook(tmp_path / "source.xlsx", rows=[["Employee SSN", _ssn("-")], ["Wages", 4321]])
+    else:
+        path = _build_pdf(tmp_path / "source.pdf")
+    repo = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-m", "agents.lib.parse_utils", "--workspace", str(tmp_path),
+                             mode, path.name, "--with-source-digest"], cwd=repo,
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["source_sha256"] == sha256(path.read_bytes()).hexdigest()
+    data = str(output["data"])
+    assert MASKED in data and _ssn("-") not in data
+    assert ("4321" if mode == "excel" else "100,000.00") in data
 
 
 def _raw_pdf(path):
