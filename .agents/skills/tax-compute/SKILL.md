@@ -180,10 +180,11 @@ sh agents/lib/run.sh -m agents.lib.return_builder
 Every 1040 line that is ARITHMETIC over other lines — 1z, 9, 11, 14, 15, 16, 17,
 18, 21, 22, 24, 25d, 33, 34, 35a, 37 — plus the eight lines that are a straight
 sum of the parse records (1a, 2a, 2b, 3a, 3b, 6a and the two withholding lines
-25a and 25b) is computed by that command and written to `result.json`. **Do not
+25a and 25b) is computed by that command and written to `result.json`. The
+builder also derives line 26 from reviewed estimates and applied overpayments
+and updates line 38 when the Form 2210 review is present. **Do not
 write one of them by hand.** Everything else on the form is a COMPONENT you
-still decide: what is taxable, whether to itemize, what the credits allow, what
-was paid.
+still decide: what is taxable, whether to itemize, and what the credits allow.
 
 It is idempotent and it does not rewrite an unchanged file, so **run it whenever
 a group of components is finished** and let Step 12.6 be what proves you
