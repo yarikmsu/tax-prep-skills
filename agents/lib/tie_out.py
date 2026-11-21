@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib import material_evidence, receipt  # noqa: E402
+from agents.lib.tax_computations.federal import payments as federal_payments  # noqa: E402
 from agents.lib.tax_computations.federal import source_reconciliation  # noqa: E402
 from agents.lib.rollover import (  # noqa: E402
     RolloverError,
@@ -2925,6 +2926,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         sums[source_reconciliation.BUSINESS_GROSS] = source_review.business_gross
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
+    missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
     missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))
@@ -3871,6 +3873,8 @@ def _main(argv: list) -> int:
             (expected_pfic_fund_ids, any_taxable_pfic_recorded,
              invalid_pfic_elections) = _expected_pfic_fund_ids(prof)
             _cy = result.get("meta", {}).get("tax_year") if isinstance(result.get("meta"), dict) else None
+            if _cy is None:
+                _cy = prof.get("tax_year")
             (pfic_positive_event_ids, pfic_missing_amount_ids,
              pfic_disposition_positive_ids) = _pfic_positive_event_ids(prof, _cy)
             (pfic_holding_mismatch_ids, pfic_multiyear_disposition_ids,
@@ -3880,7 +3884,7 @@ def _main(argv: list) -> int:
             # add-on), not just the deferred lower bound. Absent/incomplete → a
             # multi-year fund's add-on is unverifiable and the recompute FAILS closed.
             _hist_rate, _under_rates = None, None
-            if _cy is not None:
+            if type(_cy) is int:
                 _law_path = (workspace / f"tax_law_{_cy}.json").resolve()
                 if _law_path.exists():
                     try:
