@@ -129,7 +129,8 @@ def test_overlapping_business_receipts_release(workspace):
                   "line_78": 11000, "line_115": 1128.22})
     package = _assert_ready(workspace, ("form_1040", "schedule_1_other_income", "schedule_se", "schedule_c",
                                        "schedule_d", "schedule_se.by_owner.primary", "form_8995_qbi", "california_540"))
-    assert any("overlapping business forms were counted once" in row for row in package["receipt"]["disclosures"])
+    assert any("overlapping business forms were counted once" in row and "1 receipt, $12,000.00" in row
+               for row in package["receipt"]["disclosures"])
     lines = _pdf_lines(workspace)
     assert {"Line 23 — other taxes $1,412.96", "Line 24 — total tax $26,059.32",
             "Line 35a — refund $1,440.68", "Line 115 $1,128.22"} <= lines
@@ -213,6 +214,7 @@ def test_personal_1099k_requires_source_bound_review_when_business_is_active(wor
         "key_boxes": {"form_1099k_box_1a": 125, "personal_1099k": 125},
     })
     release.write_json(ledger_path, ledger)
+    release.record_business_overlap(workspace)
     release.run(workspace, "return_builder", "--check")
     report = release.run(workspace, "tie_out", "--json", expected=2)
     assert "input.1099k_personal_routing" in report
@@ -227,6 +229,16 @@ def test_personal_1099k_requires_source_bound_review_when_business_is_active(wor
     release.write_json(review, {"routing": "review reopened"})
     stale = release.run(workspace, "tie_out", "--json", expected=2)
     assert "input.1099k_personal_routing" in stale
+
+
+def test_changed_business_remittance_reopens_overlap_review(workspace):
+    release.add_overlapping_business(workspace)
+    release.compute(workspace)
+    remittance = workspace / release.BUSINESS_REMITTANCE
+    release.write_secure(remittance, "payment,amount\ndifferent-payment,12000.00\n")
+    report = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "input.business_receipt_overlap" in report
+    _assert_refused(workspace, "the tie_out gate recorded")
 
 
 def test_open_deduction_blocks_even_when_arithmetic_passes(workspace):

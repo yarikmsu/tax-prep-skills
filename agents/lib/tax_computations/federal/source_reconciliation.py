@@ -111,18 +111,26 @@ def _cents(value: object) -> int:
 def validate_book(rows: object, boxes: dict, person: str, skipped: bool) -> list[dict]:
     if rows is None and BOOK_GROSS not in boxes:
         return []
+    from agents.lib.material_evidence import MaterialEvidenceError, _source_path
+
     if skipped or person not in {"primary", "spouse"} or not isinstance(rows, list) or not rows:
         raise ValueError("business receipts need a non-skipped book record and one taxpayer owner")
     if set(boxes) != {BOOK_GROSS}:
         raise ValueError("a business book record carries only its book gross category")
+    required = {"payment_id", "amount", "reported_by"}
     for row in rows:
-        if not isinstance(row, dict) or set(row) != {"payment_id", "amount", "reported_by"}:
+        if not isinstance(row, dict) or not required <= row.keys() <= required | {"evidence_file"}:
             raise ValueError("each book receipt needs payment_id, amount and reported_by")
         reporters = row["reported_by"]
         if (not _opaque_id(row["payment_id"]) or not isinstance(reporters, list)
                 or not all(_opaque_id(doc_id) for doc_id in reporters)
                 or len(set(reporters)) != len(reporters)):
             raise ValueError("book receipts require an opaque payment id and distinct source ids")
+        if "evidence_file" in row:
+            try:
+                _source_path(row["evidence_file"])
+            except MaterialEvidenceError:
+                raise ValueError("business receipt evidence_file must be a safe workspace input") from None
     if sum(_cents(row["amount"]) for row in rows) != _cents(boxes[BOOK_GROSS]):
         raise ValueError("business-book receipt amounts must reconcile to the book gross")
     return rows
@@ -275,14 +283,15 @@ def _shared_statements(active: list) -> list[str]:
     return problems
 
 
-def _book_total(ledger: list[LedgerRecord], year: object) -> tuple[float | None, bool]:
+def _book_total(ledger: list[LedgerRecord], year: object,
+                overlap_sources: dict[str, str]) -> tuple[float | None, int, int]:
     reported = {r.doc_id: r for r in ledger if r.skipped is None and BUSINESS_GROSS in dict(r.key_boxes)}
     classes = {_base_form(r.form_type) for r in reported.values() if dict(r.key_boxes)[BUSINESS_GROSS] > 0}
     books = [r for r in ledger if r.business_receipts]
     if not books:
         if {"1099NEC", "1099K"} <= classes:
             raise ValueError("Reconcile business Forms 1099-NEC and 1099-K to a receipt-level book before final export.")
-        return None, False
+        return None, 0, 0
     if type(year) is not int or any((r.source_form or {}).get("tax_year") != year for r in books):
         raise ValueError("business books must identify the covered tax year")
     if any(not book.source_sha256 for book in books):
@@ -294,7 +303,13 @@ def _book_total(ledger: list[LedgerRecord], year: object) -> tuple[float | None,
         raise ValueError("business books and reported receipts must belong to one Schedule C owner")
     seen: set[str] = set()
     totals: dict[str, int] = defaultdict(int)
-    gross, overlap = 0, False
+    # The evidence is the processor's report or the client's remittance, never
+    # a document the ledger already holds: a superseded copy of the 1099-K, or
+    # the parser's own summary of it, vouched for the overlap it was to prove.
+    reported_files = {r.file.casefold() for r in ledger}
+    reported_files.update({"parse_ledger.json", "result.json", "taxpayer_profile.json", f"tax_law_{year}.json"})
+    reported_digests = {None, *(r.source_sha256 for r in ledger)}
+    gross, overlap_count, overlap_cents = 0, 0, 0
     for book in books:
         for row in book.business_receipts or []:
             payment_id, reporters = row["payment_id"], row["reported_by"]
@@ -307,21 +322,33 @@ def _book_total(ledger: list[LedgerRecord], year: object) -> tuple[float | None,
                 if doc_id not in reported or not reported[doc_id].source_sha256:
                     raise ValueError("a book receipt names an unbound or inactive business source")
                 totals[doc_id] += cents
-            overlap |= cents > 0 and len(reporters) > 1
+            if len(reporters) > 1:
+                evidence = row.get("evidence_file")
+                if (not isinstance(evidence, str) or evidence.casefold() in reported_files
+                        or evidence.casefold().startswith("summaries/")
+                        or overlap_sources.get(evidence) in reported_digests):
+                    raise ValueError("An overlapping business receipt needs a separate evidence_file "
+                                     "bound to input.business_receipt_overlap and the current parse ledger.")
+                if cents > 0:
+                    overlap_count += 1
+                    overlap_cents += cents
     for doc_id, record in reported.items():
         if totals[doc_id] != _cents(dict(record.key_boxes)[BUSINESS_GROSS]):
             raise ValueError("the books do not reconcile the full reported amount of each business form")
-    return gross / 100, overlap
+    return gross / 100, overlap_count, overlap_cents
 
 
 def review(ledger: list[LedgerRecord], tax_year: object, *,
-           personal_1099k_sources: dict[str, str] | None = None) -> SourceReview:
+           personal_1099k_sources: dict[str, str] | None = None,
+           overlap_sources: dict[str, str] | None = None) -> SourceReview:
     problems, disclosures = _review_forms(ledger, tax_year, personal_1099k_sources)
     try:
-        gross, overlap = _book_total(ledger, tax_year)
+        gross, count, cents = _book_total(ledger, tax_year, overlap_sources or {})
     except ValueError as exc:
         problems.append(str(exc))
-        gross, overlap = None, False
-    if overlap:
-        disclosures.append("Payments reported on overlapping business forms were counted once from the reviewed books.")
+        return SourceReview(tuple(problems), tuple(disclosures), None)
+    if count:
+        unit = "receipt" if count == 1 else "receipts"
+        disclosures.append("Payments reported on overlapping business forms were counted once "
+                           f"from the reviewed books ({count} {unit}, ${cents / 100:,.2f}).")
     return SourceReview(tuple(problems), tuple(disclosures), gross)

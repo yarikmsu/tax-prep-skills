@@ -16,6 +16,7 @@ from evals.fixture import _document
 ROOT = Path(__file__).resolve().parents[1]
 YEAR = 2025
 LAW = f"tax_law_{YEAR}.json"
+BUSINESS_REMITTANCE = "business-remittance.csv"
 IRS = "https://www.irs.gov/pub/irs-drop/rp-24-40.pdf"
 FTB = "https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html"
 SCHEDULE_X = "https://www.ftb.ca.gov/forms/2025/2025-540-tax-rate-schedules.pdf"
@@ -170,7 +171,10 @@ def add_overlapping_business(workspace: Path) -> None:
     _document(documents / "business-book.pdf", "Synthetic business books", [
         ("Payment ID", "synthetic-receipt"), ("Reported by", "1099-nec,1099-k"),
         ("Gross payment", "12,000.00"), ("Business expenses", "2,000.00"),
+        ("Evidence file", BUSINESS_REMITTANCE),
     ])
+    write_secure(workspace / BUSINESS_REMITTANCE, "payment,reporters,amount\n"
+                 "synthetic-receipt,1099-nec and 1099-k,12000.00\n")
     path = workspace / "taxpayer_profile.json"
     profile = read_json(path)
     profile["flags"]["has_self_employment"] = True
@@ -230,7 +234,8 @@ def parse_sources(workspace: Path, *, unread_box_2: bool = False) -> list[dict]:
             record.update(form_type="business books", payer="Synthetic proprietor",
                           key_boxes={"self_employment_book_gross": gross},
                           business_receipts=[{"payment_id": boxes["Payment ID"], "amount": gross,
-                                              "reported_by": boxes["Reported by"].split(",")}])
+                                              "reported_by": boxes["Reported by"].split(","),
+                                              "evidence_file": boxes["Evidence file"]}])
         record["boxes"] = boxes
         parse_records.write_record(workspace, record)
         records.append(record)
@@ -302,6 +307,12 @@ def record_deduction(workspace: Path) -> None:
         "--input", "taxpayer_profile.json", "--input", LAW)
 
 
+def record_business_overlap(workspace: Path) -> None:
+    run(workspace, "material_evidence", "--id", "input.business_receipt_overlap",
+        "--label", "Business overlap review", "--outcome", "reviewed",
+        "--input", "parse_ledger.json", "--input", BUSINESS_REMITTANCE)
+
+
 def compute(workspace: Path, *, unread_box_2: bool = False) -> None:
     records = parse_sources(workspace, unread_box_2=unread_box_2)
     run(workspace, "capabilities", "--json")
@@ -311,5 +322,6 @@ def compute(workspace: Path, *, unread_box_2: bool = False) -> None:
     if "schedule_c" in result:
         _apply_qbi(workspace, result)
         run(workspace, "return_builder")
+        record_business_overlap(workspace)
     record_deduction(workspace)
     validate(workspace)
