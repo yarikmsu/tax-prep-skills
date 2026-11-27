@@ -4934,3 +4934,118 @@ and #118's backlog edits left to this record.
   and the pre-existing quadratic `others` list.
 - Left open in AA127: substantially identical securities, the post-sale
   window and the effects breakout.
+
+## AA125 — the summed optimization savings removed, first step (#130)
+
+- The tax-compute optimization report added opportunities that exclude each
+  other, such as the AOTC and the lifetime learning credit, into one "Total
+  potential savings" line. Each estimate now stands against the current
+  return, and alternatives and shared expenses are named so they stay apart.
+- Left open in AA125: the household comparison of education credits and 529
+  allocations.
+
+## AA118 — the README's coverage and privacy claims, first step (#131)
+
+- The README said the toolkit works for any filing status and year and that
+  all taxpayer data stays local, beside a SECURITY.md that says agents send
+  tool output to their providers. A coverage section per state now links each
+  contract, and privacy separates local files from what the agent transmits.
+- Review found the persona guide still calling North Carolina's D-400 an
+  estimate and Washington's excise uncomputed, and the first head had dropped
+  the README's only link to it rather than correct it. The guide matches the
+  engine, and the link is back.
+
+## AA136 — the material-evidence record (#132)
+
+- `material_evidence.json` records an outcome per material item, binds
+  closed outcomes to their evidence digests, and is bound by the tie-out to
+  the receipt. Drafts list every open item; the PDF and the filing package
+  refuse final export. Form 8962 is the first required-form item (Q15).
+- Review: the interrupted-run marker cleared only when verify had no reasons,
+  and no gate run closes an item, so every Form 8962 draft led with a false
+  "never finished"; excluded evidence names now compare case-folded; four
+  untested mechanisms gained tests.
+
+## AA128 — W-2 boxes 1 and 2 resolved before export (#133)
+
+- A W-2 holding only withholding passed every gate with line 1a at 0. Boxes 1
+  and 2 are now material items: a number ties to the return, a declared blank
+  compares as zero, an unread box keeps the package a draft.
+- Review: item ids embed a hex digest, and 28% of digests hold nine digits the
+  reader's redaction check refused, which wedged tie-out (the exemption
+  arrived only in AA115's PR, eight merges later). W-2 detection was an exact
+  code, so "Form W-2 (Copy B)" carried no items; it is a word-boundary match
+  now, W-2G excluded. A box 1 blank beside box 2, 3 or 5 amounts stays open.
+
+## AA116 — a recovery path for unreadable amounts (#134)
+
+- A masked or unreadable filing field is named, held open and transcribed
+  from the original into its existing record; a test carries an unread W-2
+  box to line 1a and a final package.
+- The masker change of the first head was withdrawn. Fuzzing found it printed
+  identifiers cut across `Count | amount | Copies` under their own SSN label
+  (841 of 20,000 tables) and through an amount set that outlived later headers
+  (2,535 of 5,000). The false mask stays open in AA116.
+
+## AA112 — intake bound to the bytes parsed (#135)
+
+- Bound extraction parses an in-memory snapshot and records its digest; the
+  tie-out fails a changed source and holds a legacy record open.
+- Review: `source.<digest>` ids hit the same redaction check and wedged nearly
+  every existing workspace; `parse_utils.py digest` binds a skipped,
+  transcribed or `.xls` document; tests hold text, tables and workbooks to the
+  snapshot.
+
+## AA130 — duplicate, overlapping and expected forms (#136)
+
+- Exact copies by digest, checked dispositions for copies and corrections,
+  expected forms by category as a gate, and NEC/K overlap through
+  receipt-level books that set Schedule C line 1 exactly.
+- Review: only byte-identical copies were caught, so related active forms now
+  need distinct series ids; "Corrected 1099-K" reopened the double count; a
+  free-text skip dropped a real second W-2; a correction is taken by name and
+  flag, a W-2 only by a W-2c. tax-amend keeps the original as a linked skip.
+
+## AA132 — federal estimates reconciled to line 26 and Form 2210 (#137)
+
+- Line 26 comes from reviewed dated payments and the carry-in, reused for
+  Form 2210 timing and line 38; early balance-due payments count for timing.
+- Review: the January 31 exception needs the balance paid by that date (the
+  flag alone zeroed the fourth installment); rollover asks before carrying a
+  joint line 36 to a changed status and refuses a negative one; the regular
+  method needs the prior-year tax, since leaving it out only raises line 38.
+
+## AA129 — Schedule C and Schedule SE through Form 1040 (#138)
+
+- Schedule 1 line 3 and line 8 come from reviewed activities; Schedule SE is
+  priced per owner and tied to lines 10 and 23.
+- Review: a line 31 of 0 beside a $40,000 line 1 still passed, so lines 7, 29
+  and 31 now tie to the form's own lines; Form 4361 needs the interview's
+  answer and ministerial earnings; line 8d equals the parsed wages plus listed
+  amounts; a stale Schedule SE is refused.
+
+## AA114 — applicable law before final export (#139)
+
+- Required blocks come from the year, jurisdictions, forms and facts, and each
+  figure needs an authoritative pin, the covered year and its checksum.
+- Review: NIIT was never required and Additional Medicare was required only
+  through its own output, so both now follow the inputs; template constants no
+  longer need fetch provenance; a 14-day window on the retrieval stamp, which
+  re-running `set` cleared with no fetch, was dropped.
+
+## AA113 — completed material inputs before final export (#140)
+
+- Line 12 needs an explicit election checked against the cache or Schedule A,
+  and the credit, AMT, other-tax and payment worksheets need outcomes.
+- Review: the AMT credit key nothing writes, NIIT and Additional Medicare
+  thresholds, excess Social Security, and the age, blindness and dependent
+  facts behind the standard deduction; the worksheet route had accepted the
+  AA113 zero itself, which the test fixtures relied on.
+
+## AA115 — the California filing release test (#141)
+
+- Three TY2025 households run from masked intake to rendered export, with
+  hand-worked federal and California figures and five recovery paths.
+- Review recomputed every expected figure from the IRS and FTB sources; all
+  matched. The recovery tests now re-render the PDF, and the README links the
+  fixed 2025 instructions.

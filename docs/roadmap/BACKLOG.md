@@ -92,14 +92,14 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **0. Before 2026-12-31: small, dated planning fixes** | **AA125** first step — delete the summed savings line. **AA118** first step — the README's privacy and support claims. **AA84** the day FTB's missing inputs publish. | Q18. A 2026 harvest sale or Roth conversion cannot be made after December 31, and TY2026 filing work cannot be used before that year's documents arrive. AA84 is blocked (blocked table). |
-| **1. Filing quality on every return, before TY2026 documents arrive** | **AA136** — one evidence record for material items, which the rest of the tier uses. **AA128** with **AA116** — no dropped or masked amount. **AA112** — a corrected form saved under the same name. **AA130** — duplicate, overlapping and expected forms. **AA132** — estimated payments on line 26. **AA129** — Schedule C through Form 1040. **AA114** — applicable law. **AA113** — completed inputs. **AA115** gains one negative case per fix. | Every return with a W-2 or a 1099 crosses these paths, and they are the CP2000 and math-error paths: an information-return amount dropped, masked, stale or counted twice, and payments the IRS has no record of. Current users have 1099 self-employment income (owner, 2026-11-20), so AA129's dropped Schedule C profit and self-employment tax, AA130's 1099-NEC and 1099-K overlap and AA132's estimates reach them. AA112, AA113, AA114, AA128 and AA130 were reproduced on synthetic workspaces. W-2s arrive by January 31; corrected 1099s often in March. |
+| **0. Before 2026-12-31: small, dated planning fixes** | **AA84** the day FTB's missing inputs publish. | Q18. TY2026 filing work cannot be used before that year's documents arrive. AA125's and AA118's first steps shipped in #130 and #131. AA84 is blocked (blocked table). |
+| **1. Filing quality on every return, before TY2026 documents arrive** | **AA137** — NIIT, Additional Medicare and excess Social Security checked against their sources. **AA138** — estimate dates and a payment entered twice. **AA139** — the evidence behind an overlap or an expected form. **AA115** gains one negative case per fix. | The evidence record and the intake, source, payment, Schedule C, law and input gates shipped in #132-#141. What review left reaches the same filers: high earners with brokerage income (AA137), estimates (AA138, current users make them) and 1099-NEC/1099-K or consolidated-brokerage households (AA139). W-2s arrive by January 31; corrected 1099s often in March. |
 | **2. Filing quality: as FTB and the IRS publish** | **AA83** — the TY2026 Form 540. **AA80** — the TY2026 part-year return. **AA48** — the TY2026 Form 8949 boxes. **Y8** — the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables. | AA83 decides whether any CA resident can file a TY2026 return here. AA48 blocks every TY2026 crypto import. AA80 serves fewer filers. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed, so Y8 is the reminder to fetch it. The blocked table dates each check. |
 | **3. Filing quality for investors and itemizers** | **AA122** — special-rate gains, a capability rule first. **AA124** — Form 1116. **AA133** — charitable substantiation. **AA134** — Form 8938. **AA121** — the federal Tax Table. | REIT and international funds, gifts of appreciated stock and foreign accounts are what a brokerage household holds, and the $40,000 SALT cap brings more CA filers to Schedule A. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
 | **4. Filing quality: mandatory forms with low reach** | **AA120** — Form 8962 and every mandatory form. | P0 for a filer it reaches, but no current user is known to have Marketplace coverage. It is small once AA136 exists, and moves to tier 1 the day such a filer appears. |
 | **5. After-tax outcome** | **AA127** — substantially identical securities, the post-sale window and the effects breakout. AA125 in full. **AA126** — Medicare costs in the single-year ladder. **AA123** — screened refundable credits. | Q16 sets AA123's shape. AA126 reaches filers about 63 and older. |
-| **6. Ease of use** | **AA117** — one document inventory. **AA119** — one finalization command. **AA135** — evidence-based review. | AA117's Windows path defect blocks every Windows tie-out rather than passing a wrong return. |
-| **7. Parser maintenance and other states** | **AA110** — residual identifier layouts. **AA111** — parse cost. **AA79** — TY2026 NY and NC payment forecasts. | AA110 and AA111 measure identifier protection, lost figures and false refusals together. No current user files in New York or North Carolina; AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
+| **6. Ease of use** | **AA118** — setup and the support table from one coverage source. **AA117** — one document inventory. **AA119** — one finalization command. **AA135** — evidence-based review. | AA117's Windows path defect blocks every Windows tie-out rather than passing a wrong return. |
+| **7. Parser maintenance and other states** | **AA116** — the cross-cell false mask, now recoverable by local transcription. **AA110** — residual identifier layouts. **AA111** — parse cost. **AA79** — TY2026 NY and NC payment forecasts. | AA110 and AA111 measure identifier protection, lost figures and false refusals together. No current user files in New York or North Carolina; AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
 | **Owner decision; excluded from the current implementation queue** | **Y1** — enable Discussions on the now-public repository, or demote the distribution goal in writing. | The TY2025 window ended 2026-10-15; the next opens in January 2027. |
 | **Closed** | W7, W8, W9 — declined. Y3 — declined with a re-open trigger. | All three trade a working mechanism for tidiness. |
 
@@ -235,76 +235,25 @@ Trigger and range behavior is documented in
   would avoid it. `_font_resource_chars` also replays the whole content stream for any
   page with one unmapped glyph, though only the unknown glyphs need the font identity.
 
-- **AA112 (P1, M): Bind ledger records to the source bytes parsed.** The ledger
-  records no digest, and the receipt hashes documents only when tie-out runs, after
-  the path-based ledger is built. Reproduced 2026-11-18: a W-2 replaced under the
-  same filename after the ledger was built kept its old withholding and all three
-  gates passed with a validated package. When the file changes after tie-out, the
-  package refuses and names the change, yet re-running tie-out alone, with no
-  re-parse, validates again, and no skill text says to re-parse. A corrected 1099-B
-  saved under the broker's default filename is the common path. Have intake record a
-  digest of the bytes it actually used and verify it against the current document
-  before issuing a final receipt. Cover ordinary parsing, crypto imports and
-  carried-over ledger records; a legacy record without a digest needs a re-parse
-  before final export. Test that unchanged sources pass, a same-path correction
-  blocks until re-parsed, and a change during extraction cannot produce a receipt
-  attesting to the replacement bytes. Found by the 2026-11-18 external review.
+- **AA115 (P1, M): Extend the California filing release test as paths land.** The
+  TY2025 W-2 and brokerage household, two W-2s with a posted estimate and an
+  overlapping-receipts proprietor shipped in #141 with hand-worked federal and
+  California figures, each recovery ending in a fresh export. Still to add, each
+  when its path lands: refundable credits (AA123), Form 1095-A (AA120), special-rate
+  gains (AA122), a Tax Table return (AA121, no scenario reaches it yet), and TY2026
+  after AA83. Each new tier-1 fix adds its negative case. The tests stay runnable
+  without model credentials (Q2). Found by the 2026-11-18 external review.
 
-- **AA113 (P1, M): Require evidence that material inputs were completed.**
-  Reproduced 2026-11-18: a synthetic wage return with `line_12_standard_deduction`
-  at the template's 0 passed every gate and received a validated package, its tax
-  over-stated by the whole deduction. `return_builder.check()` never examines line
-  12, a typed component. Using AA136, track whether each applicable material input
-  is computed, reviewed, not applicable or open, starting with the deduction
-  election (extending Q7) and the required worksheets for credits, other taxes and
-  payments. Test that an untouched zero allows a draft naming the open item, a
-  reviewed zero allows a final package, and a changed input behind a manual
-  worksheet reopens it. The refundable credits are AA123's, under Q16. Found by the
-  2026-11-18 external review.
-
-- **AA114 (P1, M): Bind applicable tax-law readiness to final export.** Reproduced
-  2026-11-18: with the AMT and child-credit figures nulled, the freshness audit
-  reported `INCOMPLETE` and every gate passed with a validated package. No gate
-  reads that verdict, and the audit exits 0 on purpose, because empty exchange rates
-  are correct data for a domestic return. Determine the required law blocks from the
-  tax year, jurisdictions, forms and facts, and require an applicable-law verdict
-  tied to the exact cache consumed, its covered-year sources, and any live freshness
-  review AGENTS.md §2 requires. A cache changed after validation is already refused,
-  because the receipt binds the cache's digest; what is missing is the readiness
-  verdict. Test that an incomplete or unverified required block stops final export,
-  and that a domestic return with a complete applicable cache passes while unused
-  exchange-rate data is missing. Found by the 2026-11-18 external review.
-
-- **AA115 (P1, M): Extend `evals/` into a California filing release test.** V3's
-  harness exists (`evals/`, with the `ca_mfj_2026` and `zero_income_2026` goldens),
-  but the CA builder reviews TY2025 only, so no golden exercises a checked Form 540
-  end to end. Add a TY2025 W-2 and brokerage household with independently worked
-  federal and California figures, run through intake, calculation, validation and
-  package export by their supported commands, and assert that the return, receipt
-  and exported lines agree. Each tier-1 fix adds its negative case: a same-path
-  correction (AA112), an unresolved box (AA128), an open item (AA136), unusable
-  applicable law (AA114), and an interruption followed by a retry; each must leave
-  final export unavailable until resolved. Add households as their paths land:
-  refundable credits (AA123), Form 1095-A (AA120), special-rate gains (AA122), two
-  W-2s with posted estimates (AA128, AA130, AA132), and a sole proprietor with
-  overlapping receipts (AA129, AA130). The deterministic tests stay runnable without
-  model credentials (Q2). Extend to TY2026 after AA83. Found by the 2026-11-18
-  external review.
-
-- **AA116 (P1, M): Preserve filing amounts and ownership during intake.** Cross-cell
-  grouping reads a three-digit figure, a space-grouped amount and a one-digit figure
-  in consecutive cells as one 3/2/4 value and masks the amount, against the rule
-  that thousands grouping is no grouping evidence (16 of 20,000 synthetic
-  identifier-free tables; found by #124's review, moved from AA110). A masked amount
-  never reaches the ledger, so the tie-out cannot see it, the blind spot AA128
-  shares. Preserve both the amount and its association with the correct form field
-  and owner where the layout resolves them. When extraction cannot establish a
-  filing-relevant value, report the specific open field and allow verified local
-  transcription without collecting a full identifier; AGENTS.md §1 governs source
-  handling. Test the known false masks, a nearby identifier and the manual recovery
-  path, measuring lost figures and false refusals before any rule widens. Unresolved
-  intake blocks final export, and a confirmed value reaches the expected return
-  line.
+- **AA116 (P2, M): Stop the cross-cell false mask without unmasking identifiers.**
+  The local recovery path shipped in #134: a masked or unreadable filing field is
+  named, held open and transcribed. The false mask itself remains: a three-digit
+  figure, a space-grouped amount and a one-digit figure in consecutive cells read as
+  one 3/2/4 value (16 of 20,000 identifier-free tables). #134's first head freed the
+  amount under `Count | amount | Copies` and printed identifiers cut the same way:
+  841 of 20,000 fuzzed tables with an SSN label in the row, and 2,535 of 5,000
+  through an amount set that outlived later headers; the narrowest repair tested
+  left about 900. A fix must measure leaks under labels, headers and stale header
+  state together with lost figures before any rule widens. Found by #124's review.
 
 - **AA117 (P2, M): Share one source inventory across intake and validation.**
   Reproduced 2026-11-18: the scanner reads the top level of `documents/` (.pdf,
@@ -318,18 +267,14 @@ Trigger and range behavior is documented in
   and keep source confinement checks in place. Found by the 2026-11-18 external
   review.
 
-- **AA118 (P2, M): Show filing and planning support before document intake.**
-  `README.md` says the toolkit works "for any filing status and any tax year" and
-  that "all taxpayer information stays local", while `SECURITY.md` says agent CLIs
-  send tool results, a parsed W-2 included, to the model provider; the README also
-  still lists rental and part-year returns as blocked, and the persona guide
-  disagrees with it about NC and WA. The reviewed-year refusal arrives only at
-  compute or package time, after intake. First step, before 2026-12-31 (tier 0):
-  correct the README's privacy and support claims (XS). Then drive setup and the
-  public support table from the same state, form-year, residency and workflow
-  coverage, and test that an unreviewed CA year is named before document intake, a
-  supported D-400 shows as computed, and manual worksheets and estimate-only paths
-  are visible. Found by the 2026-11-18 external review.
+- **AA118 (P2, M): Drive setup and the support table from one coverage source.**
+  The README's privacy and support claims and the persona guide's NC and WA scope
+  were corrected in #131. The reviewed-year refusal still arrives only at compute or
+  package time, after intake. Drive setup and the public support table from the
+  same state, form-year, residency and workflow coverage, and test that an
+  unreviewed CA year is named before document intake, a supported D-400 shows as
+  computed, and manual worksheets and estimate-only paths are visible. Found by the
+  2026-11-18 external review.
 
 - **AA119 (P2, L): Publish the validated return and package deterministically.** The
   three gates run as separate processes, each taking the workspace lock for itself,
@@ -355,7 +300,10 @@ Trigger and range behavior is documented in
   capability rule, and AGENTS.md §4's acknowledgment sentence changes with it. Test
   a return with no Marketplace requirement, refusal with only an acknowledgment, and
   final export after a complete reconciliation, including a TY2026 case with excess
-  advance payments under the covered-year repayment rules. Found by the 2026-11-18
+  advance payments under the covered-year repayment rules. Form 8962 is mandatory only
+  when advance credit was paid or the credit is claimed, while AA136 keys the item
+  on `has_marketplace_insurance`: ask about advance payments in the interview, and
+  let a filer with neither reach a final package (#132's review). Found by the 2026-11-18
   external review; confirmed from the code. [IRS Form 8962 instructions,
   TY2025](https://www.irs.gov/pub/irs-prior/i8962--2025.pdf)
 
@@ -429,18 +377,14 @@ Trigger and range behavior is documented in
   Form 1116 instructions, TY2025](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
 
 - **AA125 (P3, M): Compare eligible elections on the full return.** The summed
-  "Total potential savings" line is in
-  `tax-compute/references/international-and-optimization.md`, not in tax-review, and
-  it adds opportunities that exclude each other, such as the AOTC and the lifetime
-  learning credit, over-stating an advisory figure, which Q8 forbids. First step,
-  before 2026-12-31 (tier 0): delete the sum (XS). Federal standard versus itemized
-  is already chosen jointly in `compute_schedule_a`, and California's election is
-  Q7's. Then compare education credits and 529 allocations against one household
-  baseline using distinct eligible expenses, showing federal and California
-  liability, payments, penalties and settlement. Test that a combined benefit comes
-  from recomputing the elections together and that overlapping expenses or exclusive
-  elections cannot inflate it. Found by the 2026-11-18 external review. [FTB Form
-  540 instructions,
+  "Total potential savings" line was removed in #130. Federal standard versus
+  itemized is already chosen jointly in `compute_schedule_a`, and California's
+  election is Q7's. Compare education credits and 529 allocations against one
+  household baseline using distinct eligible expenses, showing federal and
+  California liability, payments, penalties and settlement. Test that a combined
+  benefit comes from recomputing the elections together and that overlapping
+  expenses or exclusive elections cannot inflate it. Found by the 2026-11-18
+  external review. [FTB Form 540 instructions,
   2025](https://www.ftb.ca.gov/forms/2025/2025-540-instructions.html) · [IRS
   Publication 970, TY2025](https://www.irs.gov/pub/irs-prior/p970--2025.pdf)
 
@@ -469,73 +413,6 @@ Trigger and range behavior is documented in
   replacement buy for a filer with equity pay, and an open post-sale window
   against a fully documented case. Found by the 2026-11-18 external review.
   [IRS Publication 550, TY2025](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
-
-- **AA128 (P0, M): Require material W-2 boxes to be resolved before export.**
-  Reproduced 2026-11-18: a W-2 record holding only federal withholding passed every
-  gate with line 1a at 0 and the whole withholding refunded; wages never reached the
-  sum table, and only a second-read advisory fired. `load_ledger` requires only
-  non-empty boxes, and the sum loop visits only the categories present. That
-  falsifies AGENTS.md §4's claim that the dropped-1099 CP2000 scenario cannot pass,
-  and the fix corrects that sentence. Require an AA136 outcome for each applicable
-  material box, starting with federal wages and withholding, distinguishing a
-  verified zero, an applicable blank, and an unread or missing value;
-  `capital_proceeds` is already required when form-backed sales exist. Test that a
-  withholding-only record blocks final export, an explicit supported zero passes,
-  and a resolved wage reaches line 1a. Complements AA116. Found by the 2026-11-18
-  external review. [IRS CP2000
-  guidance](https://www.irs.gov/individuals/understanding-your-cp2000-series-notice)
-
-- **AA129 (P0, S): Tie Schedule C net and self-employment tax to the filed return.**
-  `return_builder` never reads `schedule_c`: its net and `se_tax` reach Form 1040
-  only if typed into line 8, line 23 and the adjustments, and the tie-out checks the
-  net (`schedule_c_net_included`) only when another Schedule 1 workpaper exists. A
-  synthetic $40,000 profit passed every gate with zero Schedule 1 income and zero
-  other taxes. Extend that check to every return with Schedule C, tracing the net
-  profit or loss to Schedule 1 and line 8, and Schedule SE to Schedule 2 and the
-  deductible half to the adjustments. Test a profit, a loss and an exception to
-  self-employment tax; refuse final export when a required flow is dropped or
-  duplicated. Found by the 2026-11-18 external review; confirmed from the code. [IRS
-  Schedule C instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i1040sc--2025.pdf)
-
-- **AA130 (P1, M): Reconcile duplicate, overlapping and expected source forms.**
-  Reproduced 2026-11-18: two byte-identical W-2 files with a record each passed
-  every gate with both counted. `load_ledger` rejects only a repeated file or
-  document id; duplicate detection is skill prose. `missing_expected_payers` matches
-  payer names and ignores whether interest or dividends were expected, so one
-  1099-INT cleared both; it runs only as a tax-parse step, not a gate. One payment
-  reported on both a 1099-NEC and a business 1099-K maps twice to
-  `self_employment_gross`, so the at-least check rejects the true single receipt and
-  accepts the sum, and the workaround, skipping the 1099-K with any reason, drops
-  its figures with nothing verifying the overlap. Reconcile records by payer,
-  recipient, form, year and account or version evidence; recognize exact copies from
-  AA112's digest; keep a recorded disposition for duplicate, superseded and
-  overlapping forms, with the explanation carried into the package. Key
-  expected-form matching on the record's categories, because a consolidated
-  brokerage 1099 legitimately clears interest and dividends from one document. Test
-  two legitimate forms with equal amounts, a copy under a new filename, a corrected
-  form, an expected form not received, a 1099-NEC and 1099-K overlap with books
-  showing one payment, and independent payments of the same amount. Found by the
-  2026-11-18 external review. [IRS Topic 652, information-return
-  matching](https://www.irs.gov/taxtopics/tc652) · [IRS Form 1099-K
-  guidance](https://www.irs.gov/businesses/what-to-do-with-form-1099-k)
-
-- **AA132 (P1, M): Reconcile federal estimated payments and carry-in to Form 1040
-  line 26.** The only line-26 check is a floor on the applied prior-year credit;
-  tie-out, the receipt and the package never read line 26, and Form 2210's payment
-  list is never reconciled to it. Probed 2026-11-18: $15,000 claimed with a $1,000
-  carry-in and no dated payment passed. The IRS adjusts a claim it has no record of
-  and sends an estimated-tax discrepancy notice, and filers with equity pay often make
-  estimates. Derive line 26
-  from reviewed payment records and any applied overpayment, each with tax year,
-  owner, effective date and amount, and reuse them for Form 2210 timing;
-  California's dated, verified payment records are the shape to follow. Test a
-  missing or duplicate payment, a payment applied to the wrong year, spouse
-  allocation where applicable, and a legitimate carry-in, verifying liability,
-  payments, penalties and settlement separately. Found by the 2026-11-18 external
-  review. [IRS Form 1040 instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i1040gi--2025.pdf) · [IRS online account
-  payment history](https://www.irs.gov/payments/online-account-for-individuals)
 
 - **AA133 (P1, M): Hold the final package until each gift is substantiated (Q17).**
   Reproduced 2026-11-18: a noncash gift recorded without its written acknowledgment
@@ -581,19 +458,32 @@ Trigger and range behavior is documented in
   position stays open. Found by the 2026-11-18 external review. [IRS
   audits](https://www.irs.gov/businesses/small-businesses-self-employed/irs-audits)
 
-- **AA136 (P1, M): Record an outcome for each material item before final export.**
-  AA113, AA120, AA123, AA128, AA132, AA133 and AA134 need the same mechanism: a
-  recorded outcome for each material item, computed, reviewed with its evidence, not
-  applicable, or open, and no final package while one is open. Build it once, before
-  them, or seven pull requests build seven schemas. The record cannot be
-  `answers.md`, which the receipt deliberately does not read; it is a workspace file
-  whose digest the receipt binds. A draft lists every open item by name.
-  Acknowledgments feed it under Q15: an acknowledged mandatory form is an open item
-  until its result is entered, while a manual-worksheet rule keeps today's behavior.
-  Test that an open item allows a draft and refuses a final package, that a recorded
-  outcome passes, and that changing an input the outcome depended on reopens it.
-  Found by the 2026-11-18 review of the external review's entries.
+- **AA137 (P2, M): Check NIIT, Additional Medicare and excess Social Security
+  against their sources.** #139 and #140 require the law and a reviewed outcome
+  when a return's inputs reach these taxes, from Form 1040 lines. Still unchecked:
+  Form 8959 Part II has no self-employment fields, so Additional Medicare tax on
+  Schedule SE earnings is never computed or required; the trigger reads line 1a,
+  and Medicare wages (box 5) run above box 1 by the filer's deferrals; the Social
+  Security wage base is required only from its output lines; and Schedule 3 line 11
+  is never compared with W-2 box 4 per person. Test a high-earning proprietor, a
+  W-2 with large deferrals near the threshold, and two employers over the wage base.
+  Found by the reviews of #138-#140.
 
+- **AA138 (P2, S): Bound estimate dates and catch a payment entered twice.** Federal
+  estimates are accepted through December 31 of the following year, so a next-year
+  payment typed with this year credits line 26. One payment recorded as both an
+  estimate and a balance-due row is counted twice for Form 2210, and an extension
+  payment already on Schedule 3 line 10 plus a balance-due row understates the
+  checklist's remaining remittance. Test each. Found by #137's review.
+
+- **AA139 (P2, M): Evidence behind an overlap or an expected form.** The 1099-NEC and
+  1099-K overlap rests on the books' word: two payments linked as one pass with a
+  generic disclosure. A business 1099-K routed as `personal_1099k`, or with a zero
+  business gross, draws an advisory only. Rollover writes no `person` or
+  `account_last4` on expected sources, so one 1099-INT clears two accounts at the
+  same bank. A PDF over 10 pages extracted page by page yields one digest per call
+  with nothing requiring them to agree, and `crypto_transactions.json` is bound to
+  its CSV only through the agent. Found by the reviews of #135 and #136.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -906,6 +796,18 @@ merge.
 | AA99 | #97 | A run governed on neither the original page nor the cleaned one still prints, as on main. A figure whose digits match a run governed on the original page masks wherever it prints, the safe direction. |
 | AA98 | #96 | A value is a label's own only within `_BESIDE` heights of the label or its dot leader. One further along its row leaves the label governing the line under it, which masks an identifier-shaped figure there, the safe direction. The overlay pass still decides which copies to keep as page text reads labels. |
 | AA127 | #128 | OPEN: the first step shipped, so no lot clears §1091 until a `transaction_coverage` statement covers the window, every account the file names and every lot bought inside the window; a missing or partial statement holds every taxable loss back, the under-statement direction, with the reason in the banner. Substantially identical securities, the post-sale window and the effects breakout remain in the Open entry. |
+| AA125 | #130 | OPEN: the summed savings line is gone; comparing exclusive elections on one household baseline remains. |
+| AA118 | #131 | OPEN: the README's privacy and support claims and the persona guide's NC and WA scope are corrected; one coverage source for setup and the support table remains. |
+| AA136 | #132 | `material_evidence.json` binds each material outcome to its evidence and the receipt; deleting it together with the receipt drops items recorded only through the CLI, while required forms, W-2 boxes, sources and filing inputs are re-derived. A Marketplace filer with no advance credit is held to a draft until AA120. |
+| AA128 | #133 | W-2 boxes 1 and 2 by word-boundary form match; a declared blank beside other W-2 amounts stays open. |
+| AA116 | #134 | OPEN: the recovery path shipped; the cross-cell false mask remains, the first fix having printed identifiers. |
+| AA112 | #135 | Per-page digests of a long PDF and the crypto JSON are AA139's. |
+| AA130 | #136 | Related forms need distinct series ids; overlap and expected-form evidence are AA139's. |
+| AA132 | #137 | Estimate date bounds and double entry are AA138's. |
+| AA129 | #138 | Line 13 rounds to the cent by float, one cent from half-up at times; an SE deduction also typed into the remaining adjustments is not detectable; Form 8959 Part II is AA137's. |
+| AA114 | #139 | Freshness against new legislation is the cache-level STALE review and the season-open audit, not a window on each figure; any `.gov` host is accepted for a state pin; the wage base is AA137's. |
+| AA113 | #140 | Medicare wages above box 1 and excess Social Security against box 4 are AA137's. |
+| AA115 | #141 | OPEN: three TY2025 households shipped; the remaining scenarios wait on their filing paths. |
 | AA109 | #124 | A header label reaches a value one cell off its column, past a blank row or under a header wrapped over two rows, and a dependents row one cell off its header masks in CSV and Excel. Whole values bound every crossing run; only routing, account and transit columns keep nine digits, and a comb in any other named column masks. A whole date stays whole only in an owned date column or under a flag label, so a count before a date beside any other label masks both, the safe direction. An unknown PDF glyph is a possible digit at any width, and only an IRS OMB number is metadata. What it left is AA110. |
 | AA106 | #121 | Partially readable identifier fields refuse before extraction returns: overlaid on a label, crossed by letters or rows, or with some digits mapped. No glyph is decoded. An unknown glyph is a possible digit only within the widths of readable digits in its own font, so an unmapped dash or checkbox beside readable figures does not refuse the page. What it left is in AA109. |
 | AA108 | #120 | A header label introduces a comb or dashed value crossing cells on the next row only, and a whole comb past a spacer or another cell on the label's row masks. A filled label stays open for variant spellings below it. A flag beside a whole date keeps both. What it left is AA109. |
