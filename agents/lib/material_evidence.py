@@ -190,7 +190,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     """Applicable inputs, with True when a positive amount is already claimed
     or the return's own inputs make the item apply."""
     from agents.lib.tax_law_fetcher import _get_path
-    from agents.lib.tie_out import filing_medicare_wages
+    from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding
     from agents.lib.yoy_diff import _section_present
 
     flags = profile.get("flags") or {}
@@ -254,7 +254,8 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     has_other_payment = _positive(other_payment)
     dated_payments = (result.get("form_2210") or {}).get("payment_table") is not None
     needs_manual_penalty = not dated_payments and positive_lines("line_38_estimated_tax_penalty")
-    if has_other_payment or needs_manual_penalty or flags_set("filed_extension"):
+    if (has_other_payment or needs_manual_penalty or flags_set("filed_extension")
+            or has_rrta_tier1_withholding(ledger or [])):
         required["input.payments"] = has_other_payment or needs_manual_penalty
     return required
 

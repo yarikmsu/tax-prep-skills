@@ -633,6 +633,58 @@ def test_skipped_records_excluded_from_sums():
     assert check.ledger_total == 100000.0
 
 
+_SOCIAL_SECURITY_LAW = {"federal": {"social_security": {"wage_base": 176100, "employee_rate": .062}}}
+
+
+def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
+    record = _record(doc_id=f"ss-{number}", file=f"documents/ss-{number}.pdf",
+                     payer=payer or f"Employer {number}", person=person,
+                     key_boxes={"wages": wage, "federal_withholding_w2": 0,
+                                "ss_wages": wage, "ss_tax_withheld": withheld, "ss_tips": tips})
+    record["source_form"] = {"tax_year": 2025, "series_id": f"payroll-{number}"}
+    return record
+
+
+def _ss_return(*records, claimed=0):
+    ledger = _ledger(*records)
+    result = _result(wages=sum(r["key_boxes"]["wages"] for r in records), w2_wh=0,
+                     schedule_3_line_11_excess_ss=claimed, line_31_schedule3_part2=claimed)
+    result["meta"] = {"tax_year": 2025, "filing_status": "MFJ"}
+    return T.evaluate(ledger, result, [r.file for r in ledger], tax_law=_SOCIAL_SECURITY_LAW)
+
+
+def test_excess_social_security_credit_matches_w2s_for_one_employee():
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 90000, 6200, tips=10000)
+    # $6,200 + $6,200 minus $176,100 × 6.2% = $1,481.80. The second
+    # employer's tax covers taxable tips as well as Box 3 wages.
+    assert not _ss_return(first, second, claimed=1481.80).failed
+    report = _ss_return(first, second)
+    assert report.failed
+    assert any("Schedule 3 line 11 disagrees" in item for item in report.missing_result_targets)
+    second["key_boxes"].pop("ss_tax_withheld")
+    incomplete = _ss_return(first, second, claimed=1481.80)
+    assert any("W-2 Box 4" in item for item in incomplete.missing_result_targets)
+
+
+def test_excess_social_security_is_never_pooled_between_spouses():
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 100000, 6200, person="spouse")
+    assert not _ss_return(first, second).failed
+    assert _ss_return(first, second, claimed=1481.80).failed
+
+
+def test_one_employer_over_withholding_is_excluded_from_the_credit():
+    employer_error = _ss_w2(1, 176100, 11400)
+    # A single employer's excess over $10,918.20 is corrected by that employer.
+    assert not _ss_return(employer_error).failed
+    assert _ss_return(employer_error, claimed=481.80).failed
+    first = _ss_w2(1, 100000, 6200, payer="Example, Inc.")
+    second = _ss_w2(2, 100000, 6200, payer="example inc")
+    assert not _ss_return(first, second).failed
+    assert _ss_return(first, second, claimed=1481.80).failed
+
+
 def test_missing_mapped_field_in_present_section_fails():
     """Codex P1 round 7: form_1040 present but line_2b_taxable_interest
     absent must read as $0 and MISMATCH the ledger — not demote the dropped

@@ -30,6 +30,11 @@ the correction with the original Form W-2 before recording the effective
 amounts once. Keep the other document's coverage record and explain why its
 amounts were not added again.
 
+Use the same reviewed employer name on multiple W-2s from the same employer.
+Record Tier 1 railroad retirement tax withheld as
+`key_boxes.rrta_tier1_tax_withheld` when present in the covered-year W-2's
+railroad reporting box. The amount triggers a manual Schedule 3 line 11 review.
+
 For local manual recovery, inspect the original Box 1 or 2 and confirm its
 owner against the record's `person`. Transcribe only the verified amount or
 blank into that person's existing source record. Remove an `unread` status

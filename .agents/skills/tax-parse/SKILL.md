@@ -361,7 +361,7 @@ Rules:
   `key_boxes`, or `"skipped": "<reason>"` (duplicate scan, non-tax document,
   informational-only). No file may be silently absent; the builder refuses it.
 - Resolve federal wages and withholding on each W-2 using the
-  [W-2 amount and blank rules](references/form-extraction.md#w-2-extraction).
+  [W-2 amount and blank rules](references/form-extraction.md#w-2-extraction). Preserve reported Tier 1 railroad withholding in `rrta_tier1_tax_withheld`.
   An unread box stays open and prevents final export, even when all amounts
   that reached the ledger tie out.
 - When another filing-relevant amount is masked or unreadable, name the form,

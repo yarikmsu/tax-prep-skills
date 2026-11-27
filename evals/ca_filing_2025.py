@@ -148,6 +148,8 @@ def add_second_w2_and_estimate(workspace: Path) -> None:
     documents = workspace / "documents"
     write_w2(documents / "w2-one.pdf", 81000, 14000, 5100)
     write_w2(documents / "w2-two.pdf", 57000, 10000, 4700)
+    set_figure(YEAR, "federal.social_security", {"wage_base": 176100, "employee_rate": .062},
+               "https://www.ssa.gov/news/en/cola/factsheets/2025.html", str(workspace), applies_to=YEAR)
     path = workspace / "taxpayer_profile.json"
     profile = read_json(path)
     profile["estimated_payments"] = {

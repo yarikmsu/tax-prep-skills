@@ -1207,6 +1207,33 @@ def test_excess_social_security_needs_the_payment_review():
     assert items["input.payments"] is True
 
 
+def test_two_social_security_w2s_for_one_employee_require_the_wage_base():
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    first = tie_out.LedgerRecord("first", "documents/w2-a.pdf", "W-2", "Employer A", "primary",
+                                 (("ss_wages", 1000),), None)
+    other = tie_out.LedgerRecord("second", "documents/w2-b.pdf", "W-2", "Employer B", "primary",
+                                 (("ss_wages", 1000),), None)
+    spouse = tie_out.LedgerRecord("spouse", "documents/w2-c.pdf", "W-2", "Employer C", "spouse",
+                                  (("ss_wages", 1000),), None)
+    result = {"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": {}}
+    law = {"tax_year": 2025}
+    expected = "federal.social_security.wage_base: required covered-year figure is missing."
+    assert expected in filing_issues(result, {}, law, ledger=[first, other])
+    assert expected not in filing_issues(result, {}, law, ledger=[first, spouse])
+
+
+def test_railroad_tax_source_requires_the_manual_combined_payment_review():
+    record = tie_out.LedgerRecord("rrta", "documents/rrta-w2.pdf", "W-2", "Railroad", "primary",
+                                  (("rrta_tier1_tax_withheld", 2000),), None)
+    result = {"meta": {"filing_status": "Single"}, "form_1040": {}}
+    inputs = material_evidence._required_filing_inputs(result, {}, _LAW_2025, ledger=[record])
+    assert inputs["input.payments"] is False   # A reviewed inapplicable credit is legitimate.
+    assert not tie_out._excess_ss_checks(
+        [record], {"form_1040": {"schedule_3_line_11_excess_ss": 400}}, {}, {},
+    )
+
+
 @pytest.mark.parametrize(("profile", "method", "amount", "accepted"), [
     ({}, "standard", 30000, True),
     ({"ca_exemptions": {"primary_blind": True}}, "standard", 30000, False),
