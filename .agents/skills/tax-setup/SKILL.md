@@ -145,9 +145,14 @@ If `archive/{year - 1}/` does not exist, skip silently — fall back to manual c
 **Group 10 — Estimated taxes** (the last interview group; it sits HERE rather
 than in `references/interview.md` because the rollover above pre-fills the
 prior-year overpayment it asks about)**:**
-- Federal estimated tax payments made? Amounts and dates (1040-ES)?
+- Federal estimated tax payments made for this return? Confirm the credited year,
+  dates, amounts and ownership against the IRS account payment history and
+  payment evidence. Set `flags.has_estimated_payments` for federal estimates.
 - State estimated tax payments made? Amounts and dates?
-- Prior year overpayment applied to this year?
+- Prior year overpayment applied to this year? Check the credited amount and
+  any spouse allocation. Record the dated federal payment rows and independent
+  source count and total under `estimated_payments` as described in the
+  taxpayer profile template and `/tax-compute` Step 9.5.
 
 ### 3. Save Taxpayer Profile
 

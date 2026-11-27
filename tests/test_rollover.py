@@ -1157,3 +1157,30 @@ def test_a_zero_bound_cannot_land_and_erase_what_the_profile_holds():
     assert legacy.action_suggested == "ask" and "may remain" in legacy.reason
     assert legacy.prior_value == 2500 == legacy.current_value   # a no-op write
     assert "prior_year.capital_loss_carryforward_short_term" not in changes
+
+
+def test_a_joint_line_36_credit_is_asked_when_the_filing_status_changes():
+    """As California's line 98 is: copying all of a joint credit onto one
+    separate return over-states that return's line 26."""
+    from agents.lib import rollover as R
+    prior = R.PriorReturn(year=2025, result={"meta": {"filing_status": "MFJ"},
+                                             "form_1040": {"line_36_applied_to_next_year": 3000}},
+                          profile={"filing_status": "MFJ"})
+    current = R.CurrentState(result={}, profile={"filing_status": "MFS", "tax_year": 2026}, tax_law={})
+    change = next(c for c in R._diff_carryforwards(prior, current)
+                  if c.json_path == "prior_year.estimated_payments_applied")
+    assert change.action_suggested == "ask" and "joint credit" in change.reason
+    same = R.CurrentState(result={}, profile={"filing_status": "MFJ", "tax_year": 2026}, tax_law={})
+    change = next(c for c in R._diff_carryforwards(prior, same)
+                  if c.json_path == "prior_year.estimated_payments_applied")
+    assert change.action_suggested == "apply" and change.prior_value == 3000
+
+
+def test_a_negative_line_36_is_refused_not_made_positive():
+    from agents.lib import rollover as R
+    prior = R.PriorReturn(year=2025, result={"meta": {"filing_status": "single"},
+                                             "form_1040": {"line_36_applied_to_next_year": -500}},
+                          profile={"filing_status": "single"})
+    current = R.CurrentState(result={}, profile={"filing_status": "single", "tax_year": 2026}, tax_law={})
+    with pytest.raises(R.RolloverError, match="line 36"):
+        R._diff_carryforwards(prior, current)

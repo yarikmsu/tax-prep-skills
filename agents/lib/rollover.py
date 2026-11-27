@@ -127,12 +127,12 @@ FIELD_MAP: dict[str, dict] = {
         #
         # Losing it UNDER-states line 26, which under-states line 33's
         # payments, which OVER-states line 37: the taxpayer is billed for money
-        # they have already paid. `return_builder._check_the_prior_overpayment`
-        # is the other end, and refuses a line 26 smaller than this figure.
+        # they have already paid. The federal payment review reconciles this
+        # opening amount to effective dates and allocations before deriving line 26.
         "source_path": "form_1040.line_36_applied_to_next_year",
         "target_file": "taxpayer_profile.json",
         "target_path": "prior_year.estimated_payments_applied",
-        "transform": "abs",
+        "transform": "federal_applied_payment",
     },
     "ca_prior_overpayment_applied": {
         "category": "carryforwards",
@@ -440,8 +440,21 @@ def _transform_ira_basis(raw):
     return max(_amount(raw), 0)
 
 
+def _transform_federal_applied_payment(raw):
+    """Form 1040 line 36 is never negative. abs() turned a malformed -500 into
+    a $500 credit on next year's line 26."""
+    try:
+        valid = _is_amount(raw)
+    except OverflowError:
+        valid = False
+    if not valid or raw < 0:
+        raise RolloverError("Prior Form 1040 line 36 must be a finite nonnegative amount")
+    return round(float(raw), 2)
+
+
 TRANSFORMS = {
     "abs": _transform_abs,
+    "federal_applied_payment": _transform_federal_applied_payment,
     "ftc_unused": _transform_ftc_unused,
     "ira_basis": _transform_ira_basis,
 }
@@ -798,6 +811,17 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
             if old_status is None or new_status is None or old_status != new_status:
                 action = "ask"
                 reason = "Changed/unknown filing status requires reviewed ownership and spouse allocation of rental basis and suspended losses"
+        if entry.get("transform") == "federal_applied_payment":
+            # As for California's line 98: a joint credit applied forward may
+            # belong to either spouse, and copying all of it to one separate
+            # return over-states that return's line 26.
+            old_status = _status_code(_get_path(prior.result, "meta.filing_status") or prior.profile.get("filing_status"))
+            new_status = _status_code(current.profile.get("filing_status")
+                                      or _get_path(current.result, "meta.filing_status"))
+            if old_status is None or new_status is None or old_status != new_status:
+                action = "ask"
+                reason = ("Form 1040 line 36 opens next year's line 26; filing status changed or is unknown, "
+                          "so never assume the full joint credit belongs to one filer")
         out.append(Change(
             category="carryforwards",
             json_path=entry["target_path"],

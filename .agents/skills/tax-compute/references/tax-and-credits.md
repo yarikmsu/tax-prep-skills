@@ -400,28 +400,20 @@ Line 31: Schedule 3 Part II total. Excess social security withholding is INSIDE
          it — record the audit figure in `schedule_3_line_11_excess_ss` AND
          include it in line 31. The builder refuses an excess larger than the
          total it belongs to.
-Line 26: estimated tax payments AND the amount applied from the prior-year
-         return — ONE line carrying both. The applied half is
-         `taxpayer_profile.json prior_year.estimated_payments_applied`, put
-         there by `/tax-rollover` from last year's line 36, and it is the one
-         payment on this line with no document behind it: no 1099, no ledger
-         record, nothing the tie-out gate can see. ADD it to the quarterly
-         estimates actually paid. Leaving it out under-states line 33 and so
-         OVER-states line 37 — the taxpayer is billed for money already paid,
-         and every total above is correct arithmetic over a component that is
-         simply too small. The builder refuses a line 26 below it.
+Line 26: DERIVED — reviewed federal estimates plus any applied prior-year
+         overpayment. See Step 9.5 for the shared payment records.
 Line 33: DERIVED — total payments = 25d + 26 + 27 + 28 + 29 + 31
 Line 34: DERIVED — overpayment = max(0, 33 - 24)
 Line 35a: DERIVED — refund = 34 - 36
 Line 36: amount APPLIED to next year's estimated tax — yours, and it may not
          exceed line 34. `/tax-rollover` CARRIES it into next year's
          `prior_year.estimated_payments_applied`, and next year's builder
-         refuses a line 26 smaller than it.
+         reconciles it to the reviewed carry-in records.
 Line 37: DERIVED — amount owed = max(0, 24 + 38 - 33). The line 38 penalty IS
          in it; the 1040's line-37 instruction says so and tax software does
          the same, which is what lets /tax-verify compare like for like.
-Line 38: estimated-tax penalty (Step 9.5) — yours. It raises line 37 and cuts
-         line 35a; the builder does both, so do not hand-adjust either.
+Line 38: estimated-tax penalty (Step 9.5). Reviewed federal payments feed
+         Form 2210 and the builder writes line 38 before computing settlement.
 ```
 
 **Excess Social Security withholding (Schedule 3 line 11 → line 31):** Run
@@ -454,10 +446,67 @@ also creditable) and tell the user the helper's figure would understate it.
 
 ### Step 9.5: Estimated-Tax Penalty (Form 2210 → line 38)
 
-Run `compute_form_2210()` **unconditionally** — it is a cheap pure function
-that returns `no_penalty` with the governing reason (under-$1,000 de minimis,
-prior-year-zero exception, withholding meets the safe harbor) when nothing is
-owed, and every conditional trigger misses an edge case.
+Reconcile federal payment sources before the first builder run. Use the
+[IRS account payment history](https://www.irs.gov/payments/online-account-for-individuals),
+payment confirmations, and the prior return for any applied overpayment. Use an
+opaque local `payment_id` that maps to one source payment in private workpapers.
+Store each row in `estimated_payments.federal` with its `tax_year` (the credited
+return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
+`amount` (the confirmed share belonging on this return), and `kind`:
+
+- `estimate` for 1040-ES payments. Reconcile the list to the expected count
+  and total from the payment history and verified receipts. Retain independent
+  payments of the same amount under distinct source references.
+- `carry_in` for a prior-year overpayment applied to this tax year. Reconcile
+  the combined carry-in to `prior_year.estimated_payments_applied` (pre-filled
+  from the prior return by rollover, then confirmed). If the previous return
+  was paid in full before April 15, use April 15 of the current tax year. If
+  the overpayment arose from a payment made after that date, use the date
+  of that payment. Use the covered-year Form 2210 line 11 instructions for
+  the effective date.
+- `balance_due` for a reviewed payment already made with an early-filed balance-due
+  return, using the covered-year Table 1 effective date. It affects Form
+  2210 timing and the remaining remittance in the filing checklist. Extension
+  payments belong on Schedule 3.
+
+For a separate return, include only the taxpayer's own amounts and confirmed
+allocations from joint payments. Record `allocation_confirmed: true` on each
+joint row after reviewing the division. Reconcile the carry-in to the share
+belonging to this return and record how it was allocated in `answers.md`.
+Save `estimated_payments.federal_review` with `tax_year`, `confirmed: true`,
+`estimate_count`, and `estimate_total` from the independent review of posted
+estimates. A legacy line 26 amount or an undated list needs source review.
+With a documented zero estimate total, record count and total zero. A carry-in
+requires review even for a taxpayer who made no estimates.
+
+Save the reviewed Form 2210 inputs in `estimated_payments.federal_2210` and rerun
+`sh agents/lib/run.sh -m agents.lib.return_builder`. Include `method` as
+`regular` when the toolkit's regular, even-withholding method applies, or
+`irs_calculates` when the covered-year Form 2210 instructions allow the IRS to
+figure the penalty and the taxpayer confirms that choice. Review Part II for
+any required form or special method first. For `excluded_current_year_tax`, use
+the amount included in Form 1040 line 24 that covered-year Form 2210 lines 1–2
+exclude. For `schedule_3_refundable_credits`, record the qualifying Schedule 3
+credits on Form 2210 line 3, leaving Schedule 3 line 11 in withholding. Record
+zero for each field only after its review. For `regular`, record
+`prior_year_tax` from the covered-year line 8 instructions, or set
+`no_prior_year_return_confirmed: true` when no 12-month prior-year return was
+filed; without either the penalty would be over-stated, so the builder refuses.
+Confirm `filed_and_paid_by_jan31` for the §6654(h) fourth-installment exception
+only after confirming timely filing and full payment, and record the payment as
+a `balance_due` row: the builder refuses the exception unless those rows, dated
+by January 31 (or the next business day), pay the return in full. The builder
+persists the dated payment workpaper,
+derives line 38, and recalculates settlement. The independent tie-out compares
+the workpaper and both 1040 lines to those inputs before export.
+
+For an older return with no federal payment activity and no federal review,
+the existing `compute_form_2210()` call supplies the regular calculation.
+For a manually built PFIC return, use `reviewed_payments` and
+`form_2210_workpaper` in `agents.lib.tax_computations.federal.payments` with the
+completed 1040 lines and the same reviewed profile and cache. Transfer
+`payments.line_26` to line 26, the workpaper to `form_2210`, and its `line_38`
+to line 38, then run the gates.
 
 Inputs:
 - `current_year_tax`: line 24 **minus ALL refundable credits** — EIC,
@@ -525,27 +574,13 @@ Inputs:
   With no completed base, the calculation degrades to the 90%-of-current test
   — the prior-year harbor could only lower the requirement, so this never
   understates the amount needed for that remaining prong.
-- `estimated_payments`: the FULL Form 2210 Table-1 payment timeline, not
-  just line 26. Ask the user and record in answers.md:
-  - dated 1040-ES payments ("paid evenly on the due dates" → four equal
-    entries on Apr/Jun/Sep 15 and Jan 15). Dates matter: a January payment
-    cannot retroactively cure an April underpayment;
-  - a prior-year overpayment applied to estimates — dated Apr 15 of the tax
-    year when the prior year was PAID IN FULL before that date; if the
-    overpayment arose from a payment made after it, use that payment's date.
-    The Form 2210 line 11 test is when the money went in, NOT when the return
-    was filed: a return on extension whose tax was fully covered by
-    withholding still credits on Apr 15, and dating it to the October filing
-    would overstate every earlier installment's shortfall;
-  - **the balance-due payment with an early-filed return**: when this return
-    is filed and paid before Apr 15, include that payment at its actual date
-    — it stops the Q4 (and any open) accrual early per the 2210 line 11
-    rule (payment date or Apr 15, whichever is earlier). Filing and paying
-    in full by Jan 31 eliminates the Q4 installment entirely (§6654(h) —
-    the function notes this case; adjust manually).
+- The federal payment workpaper supplies the complete dated estimate,
+  carry-in and early balance-due timeline. Withholding is modeled separately
+  and spread evenly across due dates. For the legacy no-payment call, use an
+  empty `estimated_payments` list.
 - `underpayment_rates`: `federal.underpayment_rates` from tax_law JSON.
 
-Act on the result:
+For the legacy no-payment call, act on the result as follows:
 - `no_penalty` → `line_38_estimated_tax_penalty` = 0; omit the `form_2210`
   section; note the reason in answers.md. When the reason is the
   prior-year-zero exception, first CONFIRM its two preconditions with the
