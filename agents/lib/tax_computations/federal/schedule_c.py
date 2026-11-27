@@ -18,10 +18,37 @@ def schedule_c_net(result: dict, profile: dict) -> float | None:
         "line_31_net", "line_31_net_profit", "line_31_net_loss", "se_tax", "activities"))
     if not active and (profile.get("flags") or {}).get("has_self_employment") is not True:
         return None
-    return round(_amount(section.get("line_31_net"), "Schedule C line 31", allow_negative=True), 2)
+    return _tied_line_31(section)
 
 
-def _schedule_c_owners(result: dict, net: float, owners: tuple[str, ...]) -> tuple[dict[str, float], set[str]]:
+def _tied_line_31(section: dict) -> float:
+    """Line 31 from the form's own arithmetic. The tie-out reaches line 1, so a
+    typed line 31 of 0 beside a $40,000 line 1 passed every gate with no
+    Schedule 1 income and no SE tax: AA129's symptom, through another line."""
+    def line(field, *, signed=False, absent_zero=False):
+        value = section.get(field)
+        if value is None and absent_zero:
+            return 0.0
+        return _amount(value, f"Schedule C {field}", allow_negative=signed)
+
+    gross = round(line("line_1_gross_receipts") - line("line_2_returns_allowances", absent_zero=True)
+                  - line("line_4_cost_of_goods_sold", absent_zero=True)
+                  + line("line_6_other_income", absent_zero=True), 2)
+    line_7 = round(line("line_7_gross_income", signed=True), 2)
+    if line_7 != gross:
+        raise ValueError("Schedule C line 7 must equal line 1 less lines 2 and 4 plus line 6")
+    line_29 = round(line_7 - line("line_28_total_expenses"), 2)
+    if section.get("line_29_tentative_profit") is not None and round(
+            line("line_29_tentative_profit", signed=True), 2) != line_29:
+        raise ValueError("Schedule C line 29 must equal line 7 less line 28")
+    net = round(line("line_31_net", signed=True), 2)
+    if net != round(line_29 - line("line_30_home_office", absent_zero=True), 2):
+        raise ValueError("Schedule C line 31 must equal line 29 less line 30")
+    return net
+
+
+def _schedule_c_owners(result: dict, net: float, owners: tuple[str, ...],
+                       profile: dict) -> tuple[dict[str, float], set[str]]:
     rows = result["schedule_c"].get("activities")
     if not isinstance(rows, list) or not rows:
         raise ValueError("Record each reviewed Schedule C activity with its owner, line 31 and SE treatment")
@@ -43,18 +70,33 @@ def _schedule_c_owners(result: dict, net: float, owners: tuple[str, ...]) -> tup
         taxable.setdefault(owner, 0.0)
         if row.get("se_treatment") == "regular":
             taxable[owner] += share
-        elif row.get("se_treatment") == "approved_form_4361" and row.get("approval_confirmed") is True:
+        elif (row.get("se_treatment") == "approved_form_4361" and row.get("approval_confirmed") is True
+              and row.get("ministerial_services") is True
+              and (profile.get("flags") or {}).get("has_form_4361_exemption") is True):
+            # Form 4361 exempts only a minister's earnings from ministerial
+            # services, and the approval is the taxpayer's to state in the
+            # interview. Two result.json booleans exempted any business.
             exemptions.add(owner)
         else:
-            raise ValueError(f"{where} requires regular SE treatment or reviewed IRS Form 4361 approval")
+            raise ValueError(f"{where} requires regular SE treatment, or an approved Form 4361 for ministerial "
+                             "services stated in the interview (has_form_4361_exemption)")
     if round(total, 2) != net:
         raise ValueError("The reviewed Schedule C activities must add up to Schedule C line 31")
     return taxable, exemptions
 
 
+_OTHER_SE_WAGES = ("rrta_compensation", "line_8b_form_4137", "line_8c_form_8919")
+
+
 def _covered_wage_floor(ledger: Iterable, owner: str) -> float:
     return sum(dict(record.key_boxes).get("ss_wages", 0) + dict(record.key_boxes).get("ss_tips", 0)
                for record in ledger if record.person == owner and record.skipped is None)
+
+
+def _unowned_ss_wages(ledger: Iterable, owners: tuple[str, ...]) -> bool:
+    """A W-2 recorded as joint belongs to no Schedule SE line 8a."""
+    return any(record.skipped is None and record.person not in owners
+               and {"ss_wages", "ss_tips"} & dict(record.key_boxes).keys() for record in ledger)
 
 
 def _rates(tax_law: dict) -> dict[str, float]:
@@ -77,6 +119,12 @@ def schedule_se_workpaper(result: dict, profile: dict, ledger: Iterable, tax_law
                           *, require_other_taxes: bool) -> dict | None:
     net = schedule_c_net(result, profile)
     if net is None:
+        stale = result.get("schedule_se")
+        if isinstance(stale, dict) and (stale.get("by_owner") or stale.get("schedule_2_line_4_se_tax")
+                                        or stale.get("computed_tax_year") is not None):
+            # A Schedule SE left behind after Schedule C was removed kept its
+            # tax on line 23 and its form in the package, with every gate green.
+            raise ValueError("Schedule SE remains without an active Schedule C; remove it or restore Schedule C")
         return None
     meta = result.get("meta") or {}
     year = meta.get("tax_year") or profile.get("tax_year")
@@ -86,7 +134,7 @@ def schedule_se_workpaper(result: dict, profile: dict, ledger: Iterable, tax_law
     if profile.get("filing_status") and _normalize_filing_status(profile["filing_status"]) != status:
         raise ValueError("Schedule SE ownership requires agreement on the filing status")
     owners = ("primary", "spouse") if status == "MFJ" else ("primary",)
-    taxable, exemptions = _schedule_c_owners(result, net, owners)
+    taxable, exemptions = _schedule_c_owners(result, net, owners, profile)
     workpaper = result.get("schedule_se")
     inputs = workpaper.get("inputs") if isinstance(workpaper, dict) else None
     if not isinstance(inputs, dict) or type(inputs.get("tax_year")) is not int or inputs["tax_year"] != year:
@@ -100,6 +148,8 @@ def _settle(inputs, owners, taxable, exemptions, ledger, tax_law, year, net, req
     by_owner = inputs.get("by_owner")
     if not isinstance(by_owner, dict) or set(by_owner) - set(owners) or set(taxable) - set(by_owner):
         raise ValueError("Review Schedule SE wages and other SE earnings for each owner")
+    if _unowned_ss_wages(ledger, owners):
+        raise ValueError("Record the employee (primary or spouse) on each W-2 before Schedule SE line 8a")
     if inputs.get("adjustments_exclude_se_deduction") is not True:
         raise ValueError("Confirm remaining Schedule 1 adjustments excluding the Schedule SE deduction")
     adjustments = _amount(inputs.get("remaining_adjustments"), "remaining Schedule 1 adjustments")
@@ -119,8 +169,13 @@ def _settle(inputs, owners, taxable, exemptions, ledger, tax_law, year, net, req
         if not isinstance(item, dict) or item.get("confirmed") is not True:
             raise ValueError(f"Confirm Schedule SE wages and additional earnings for the {owner}")
         wages = _amount(item.get("ss_wages"), f"{owner} Schedule SE line 8d")
-        if wages < round(_covered_wage_floor(ledger, owner), 2):
-            raise ValueError(f"{owner} Schedule SE line 8d is below the parsed Social Security wages and tips")
+        # Line 8d is W-2 boxes 3 and 7 plus RRTA, Form 4137 and Form 8919.
+        # Only a lower bound let one spouse carry the household's box 3, which
+        # used up the wage base and dropped that owner's SE tax.
+        extra = sum(_amount(item.get(field, 0), f"{owner} Schedule SE {field}") for field in _OTHER_SE_WAGES)
+        if wages != round(_covered_wage_floor(ledger, owner) + extra, 2):
+            raise ValueError(f"{owner} Schedule SE line 8d must equal the parsed Social Security wages and "
+                             "tips plus any listed RRTA, Form 4137 and Form 8919 amounts")
         supplemental = _amount(item.get("other_net_profit"), f"{owner} other Schedule SE profit or loss", allow_negative=True)
         business_net = taxable.get(owner, 0.0)
         net_subject = round(business_net + supplemental, 2)

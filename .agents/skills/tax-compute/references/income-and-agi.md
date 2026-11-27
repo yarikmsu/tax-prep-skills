@@ -114,11 +114,19 @@ in business receipts. Refresh affected worksheets after an income change.
 **Schedule C and Schedule SE:** record every reviewed Schedule C in
 `schedule_c.activities` with `activity_id` (a unique local worksheet reference),
 `person` (`primary` or `spouse`), signed
-`line_31_net`, and `se_treatment` (`regular` or `approved_form_4361`). For the
-latter, record `approval_confirmed: true` after reviewing IRS approval for
-that activity. Sum signed line 31 amounts in `schedule_c.line_31_net`. Assign
-each profit or loss to its owner, including on a joint return. Keep receipts
-and expenses in their own Schedule C workpapers.
+`line_31_net`, and `se_treatment` (`regular` or `approved_form_4361`). The
+latter applies only to a minister's earnings from ministerial services: record
+`approval_confirmed: true` after reviewing the IRS approval and
+`ministerial_services: true` for that activity, and the interview must have set
+`has_form_4361_exemption`. Sum signed line 31 amounts in
+`schedule_c.line_31_net`. Assign each profit or loss to its owner, including on
+a joint return. Keep receipts and expenses in their own Schedule C workpapers,
+and record the form's summary lines: `line_1_gross_receipts`,
+`line_2_returns_allowances`, `line_4_cost_of_goods_sold`, `line_6_other_income`,
+`line_7_gross_income`, `line_28_total_expenses`, `line_29_tentative_profit` and
+`line_30_home_office`. The builder refuses unless line 7 is line 1 less lines 2
+and 4 plus line 6, line 29 is line 7 less line 28, and line 31 is line 29 less
+line 30.
 
 Set `schedule_1_other_income.remaining_income` to the verified signed income
 apart from Schedule C and other separately derived Schedule 1 sources. Set
@@ -129,8 +137,11 @@ once to Schedule 1 line 3 and Form 1040 line 8. It supplies the resulting
 non-benefit income to the government-benefits worksheet when both apply.
 
 Under `schedule_se.inputs`, enter the covered `tax_year` and the confirmed
-`by_owner` inputs. Each owner has `ss_wages` from Schedule SE line 8d (including
-W-2 boxes 3 and 7, and other amounts on that line when applicable), signed
+`by_owner` inputs. Each owner has `ss_wages` from Schedule SE line 8d: the
+parsed W-2 boxes 3 and 7 for that person, plus any `rrta_compensation`,
+`line_8b_form_4137` and `line_8c_form_8919` amounts, which are recorded beside it.
+The builder refuses a line 8d that differs from that sum, and a W-2 recorded as
+`joint`. Signed
 `other_net_profit` from qualifying non-Schedule-C sources, and `confirmed:
 true`. Record zero amounts when they have been checked. Include every spouse
 with income or loss that belongs on an individual Schedule SE. The builder

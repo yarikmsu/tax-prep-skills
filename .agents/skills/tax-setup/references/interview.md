@@ -741,6 +741,10 @@ federal credit is computed by the engine.
     False (no floor → no over-claim), so leaving it unset silently forgoes an
     otherwise-applicable floor and OVERSTATES tax for a small active business.
     Ask explicitly whenever `has_self_employment` or `has_k1_income` is set.
+  - **If yes:** Are you a minister, member of a religious order or Christian
+    Science practitioner whose IRS-approved Form 4361 exempts your earnings from
+    ministerial services from self-employment tax? → `has_form_4361_exemption`.
+    Only those earnings are exempt; every other business still owes it.
 - Do you have rental real estate, including a no-rent year with continuing
   activity, or suspended losses? → `has_rental_income`. Review the
   [residential contract](../../../../docs/contributing/rental-income.md) before

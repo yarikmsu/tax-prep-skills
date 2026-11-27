@@ -75,7 +75,8 @@ def test_reviewed_source_subamounts_do_not_increase_income_or_withholding(tmp_pa
         ws = _schedule_c_workspace(tmp_path, net=40000, other_taxes=0)
         assert B._main(['--workspace', str(ws)]) == 0
         computed, _, _, tax_law, _ = B.load(ws)
-        computed['schedule_c']['line_1_gross_receipts'] = 40000
+        computed['schedule_c'].update(line_1_gross_receipts=40000, line_7_gross_income=40000,
+                                      line_28_total_expenses=0)
         computed['form_1040'].update(result['form_1040'])
         result = computed
     report = T.evaluate(ledger, result, ['documents/source.pdf'], tax_law=tax_law)
