@@ -17,6 +17,7 @@ The JSON file (tax_law_<year>.json) is the cache. If missing, skills re-fetch.
 """
 
 import copy
+import hashlib
 import json
 import math
 import re
@@ -1431,6 +1432,23 @@ def _populated_leaves(node, prefix: str) -> list:
             found.extend(_populated_leaves(value, f"{prefix}.{key}" if prefix else key))
         return found
     return [] if node is None or node == [] else [prefix]
+
+
+def _figure_digest(value) -> list[int]:
+    """A SHA-256 fingerprint as bytes so it is typed as data on audit export."""
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return list(hashlib.sha256(encoded).digest())
+
+
+def _figure_leaves(node, path: str) -> list[str]:
+    if isinstance(node, dict) and node:
+        return [leaf for key, value in node.items() for leaf in _figure_leaves(value, f"{path}.{key}")]
+    return [path]
+
+
+def _figure_digests(data: dict, path: str) -> dict[str, list[int]]:
+    return {leaf: _figure_digest(_get_path(data, leaf))
+            for leaf in _figure_leaves(_get_path(data, path), path)}
 
 
 def check_freshness(year: int, workspace: str = ".") -> dict:
@@ -3005,7 +3023,8 @@ def set_figure(year: int, dotted: str, value, source: str, workspace: str = ".",
     for superseded in [k for k in provenance if k != key and (
             k == dotted or k.startswith(f"{dotted}.") or k.startswith(f"{key}."))]:
         del provenance[superseded]
-    provenance[key] = {"retrieved": when, "applies_to": period, "source": source}
+    provenance[key] = {"retrieved": when, "applies_to": period, "source": source,
+                       "figure_digests": _figure_digests(data, dotted)}
     data["_provenance"] = provenance
     save_tax_law(year, data, workspace, stamp_fetched=False)
     return {"dotted": dotted, "pin": pin, "retrieved": when, "applies_to": period}

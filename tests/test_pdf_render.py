@@ -22,6 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import pdf_render, receipt  # noqa: E402
 from tests.skill_text import skill_text  # noqa: E402
+from tests.filing_law import write_synthetic_filing_law  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = json.loads((REPO / "agents" / "templates" / "result_template.json").read_text())
@@ -218,6 +219,7 @@ class TestTheCli:
         (tmp_path / "parse_ledger.json").write_text("{}")
         (tmp_path / "result.json").write_text(json.dumps(_result()))
         if validated:
+            write_synthetic_filing_law(tmp_path)
             for gate in receipt.REQUIRED_GATES:
                 receipt.record(tmp_path, gate, receipt.PASS)
         return tmp_path
@@ -233,6 +235,19 @@ class TestTheCli:
         out = self._run(self._workspace(tmp_path, validated=True))
         assert out.returncode == 0, out.stderr
         assert (tmp_path / "Tax_Return_2026_Summary.pdf").is_file()
+
+    def test_applicable_unverified_law_refuses_final_pdf(self, tmp_path):
+        self._workspace(tmp_path, validated=True)
+        path = tmp_path / "tax_law_2026.json"
+        law = json.loads(path.read_text(encoding="utf-8"))
+        law["_provenance"].clear()
+        path.write_text(json.dumps(law), encoding="utf-8")
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(tmp_path, gate, receipt.PASS)
+        out = self._run(tmp_path)
+        assert out.returncode == 2
+        assert "covered-year live source provenance" in out.stderr
+        assert not (tmp_path / "Tax_Return_2026_Summary.pdf").exists()
 
     def test_an_unvalidated_return_is_refused_and_writes_nothing(self, tmp_path):
         """Generation and validation consume the same input generation, or the

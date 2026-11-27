@@ -195,7 +195,12 @@ sh agents/lib/run.sh agents/lib/tax_law_fetcher.py set <dotted.path> '<value>' -
 
 `set` validates the path and value against the schema, refuses a
 non-authoritative source, pins it under `_sources` and dates the block under
-`_provenance`; a refusal is a misread figure to fix, not a file to open.
+`_provenance` with a checksum of the recorded figure.
+For final export, every applicable fetched figure needs an authoritative
+covered-year source and the provenance `set` records, with its checksum.
+Statutory constants the template ships complete need none. Older provenance
+without a figure checksum needs a `set` from the covered-year source before
+final export.
 
 To fetch tax rates for the specified year from authoritative sources, search the web (live results required — tax figures change annually; if your agent's web access is unavailable or cached-only, STOP and ask the user to paste the current figures with their source URL):
 

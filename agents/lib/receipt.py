@@ -38,7 +38,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.rollover import RolloverError, _validate_subpath  # noqa: E402
-from agents.lib.secure_fs import atomic_write, redact  # noqa: E402
+from agents.lib.secure_fs import atomic_write, is_reparse_point, redact  # noqa: E402
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     abandoned_run,
@@ -510,8 +510,46 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
     return captured, reasons + material_evidence.open_items(workspace, items, required_forms)
 
 
-def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *,
-           material: bool = True) -> VerifyReport:
+def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
+                           result_bytes: bytes | None) -> list[str]:
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_name = "result.json"
+    try:
+        raw = result_bytes
+        if raw is None:
+            raw = _validate_subpath(workspace / result_name, workspace).read_bytes()
+        captured[result_name] = raw
+        result = json.loads(raw)
+        profile_raw = captured.get("taxpayer_profile.json")
+        if profile_raw is None:
+            return ["Applicable tax law requires taxpayer_profile.json. Run /tax-setup."]
+        profile = json.loads(profile_raw)
+        meta = result.get("meta") if isinstance(result, dict) else None
+        if not isinstance(profile, dict) or not isinstance(meta, dict):
+            return ["Could not determine the applicable tax law from the return and profile."]
+        year = meta.get("tax_year") or profile.get("tax_year")
+        if type(year) is not int or not 2000 <= year <= 2099:
+            return ["The return needs a covered tax year before checking applicable law."]
+        name = f"tax_law_{year}.json"
+        path = workspace / name
+        if not path.is_file():
+            captured[name] = None
+            return [f"Applicable tax law requires {name}. Run /tax-setup."]
+        if is_reparse_point(path):
+            return [f"Applicable tax law requires a local regular {name} file."]
+        law_raw = _validate_subpath(path, workspace).read_bytes()
+        captured[name] = law_raw
+        law = json.loads(law_raw)
+        if not isinstance(law, dict):
+            return [f"Could not validate applicable law in {name}."]
+        return filing_issues(result, profile, law)
+    except (OSError, ValueError, RolloverError):
+        return ["Could not read the return inputs for the applicable tax-law check."]
+
+
+def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material: bool = True,
+           for_filing: bool = False, result_bytes: bytes | None = None) -> VerifyReport:
     """Re-read what each gate read and report every way the receipt is stale.
 
     Every reason is stated, not just the first: an agent handed one drift at a
@@ -524,12 +562,18 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *,
 
     `material=False` leaves out open material items, for a caller asking only
     whether the gates verify.
+
+    Final export also checks applicable covered-year law. The captured cache
+    bytes are compared with both gate receipts, so the readiness verdict and
+    the computation must describe the same snapshot.
     """
     workspace = Path(workspace).resolve()
     # Material outcomes belong to tie-out. A caller verifying only another
     # gate is asking whether that gate checked its own inputs.
     captured, material_reasons = (_material_checks(workspace)
                                   if material and "tie_out" in required else ({}, []))
+    if for_filing:
+        material_reasons += _applicable_law_checks(workspace, captured, result_bytes)
     data = _read(workspace)
     if not data:
         return VerifyReport(False, [
@@ -651,10 +695,10 @@ def covers_result(workspace, result_path, *, contents: "bytes | None" = None) ->
 _USAGE = """usage:
   receipt.py record --workspace DIR --gate GATE --outcome PASS
     GATE is one of: capabilities, return_builder, tie_out
-  receipt.py verify --workspace DIR [--json]
+  receipt.py verify --workspace DIR [--json] [--for-filing]
 
-`verify` exits 0 when a filing package may be assembled, 2 when the receipt is
-missing or stale (every reason printed), and 1 when it could not run at all."""
+`verify` exits 0 when the inputs pass the selected checks, 2 when the receipt
+or a filing requirement is unresolved, and 1 when verification could not run."""
 
 
 def _main(argv: list) -> int:
@@ -671,6 +715,7 @@ def _main(argv: list) -> int:
     check = sub.add_parser("verify")
     add_workspace_argument(check)
     check.add_argument("--json", action="store_true")
+    check.add_argument("--for-filing", action="store_true", help="also check applicable covered-year law")
     args = parser.parse_args(argv)
     try:
         if args.command == "record":
@@ -680,7 +725,7 @@ def _main(argv: list) -> int:
             path = record(workspace, args.gate, args.outcome)
             print(f"recorded {args.gate}={args.outcome} in {redact(path)}")
             return 0
-        report = verify(resolve_workspace(args.workspace))
+        report = verify(resolve_workspace(args.workspace), for_filing=args.for_filing)
         if args.json:
             print(json.dumps(report.to_dict(), indent=2))
         elif report.valid:

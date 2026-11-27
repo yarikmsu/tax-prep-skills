@@ -661,7 +661,7 @@ def _main(argv: list) -> int:
         # silent: a refusal with no way through is one an agent routes around by
         # not running this command at all, and a draft nobody can tell from a
         # final package is worse than either.
-        checked = receipt.verify(workspace)
+        checked = receipt.verify(workspace, for_filing=True, result_bytes=raw)
         # ...and the file being PACKAGED has to be the file the tie-out gate
         # validated. `--result` takes any path inside the workspace, so a
         # receipt covering `result.json` would otherwise certify a package

@@ -34,6 +34,7 @@ from agents.lib import parse_records as PR  # noqa: E402
 from agents.lib import receipt as RC  # noqa: E402
 from agents.lib import return_builder as RB  # noqa: E402
 from agents.lib import tie_out as T  # noqa: E402
+from tests.filing_law import write_synthetic_filing_law  # noqa: E402
 
 GOLDEN_DIR = REPO / "evals" / "goldens" / "ca_mfj_2026"
 
@@ -1553,6 +1554,7 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
     config = {"method": "regular", "schedule_3_refundable_credits": 0, "excluded_current_year_tax": 0,
               "prior_year_tax": 5000, "prior_year_agi": 30000}
     _set_federal_payments(ws, rows, 2, 1000, carry=1000, config=config)
+    write_synthetic_filing_law(ws)
     args = ["--workspace", str(ws)]
     assert RB._main(args) == 0
     result_path = ws / "result.json"
@@ -1687,6 +1689,7 @@ def test_schedule_c_dropped_or_duplicated_flows_block_export(tmp_path):
     from agents.lib import filing_package
 
     ws = _schedule_c_workspace(tmp_path)
+    write_synthetic_filing_law(ws)
     args = ["--workspace", str(ws)]
     package_args = [*args, "--result", "result.json"]
     assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
