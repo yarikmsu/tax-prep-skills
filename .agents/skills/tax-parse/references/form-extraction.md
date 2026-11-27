@@ -17,6 +17,13 @@ without verified blank evidence stays open too. A Box 1 `"blank"` stays open
 when the same W-2 reports Box 2, 3 or 5: read Box 1 again, and record a
 verified zero as the amount `0`.
 
+Record the employee's Social Security tax withheld from Box 4 as
+`key_boxes.ss_tax_withheld` and Medicare tax withheld from Box 6 as
+`key_boxes.medicare_tax_withheld`. Preserve the full Box 6 amount, including
+any Additional Medicare Tax, for Form 8959. These amounts stay with this
+employee and employer. Record zero when verified and leave unread amounts
+absent. Federal income tax withholding comes from Box 2.
+
 A blank on Form W-2c, however the form type is spelled, can mean the original
 amount was unchanged, and the tie-out refuses it. Reconcile
 the correction with the original Form W-2 before recording the effective

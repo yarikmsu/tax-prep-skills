@@ -138,6 +138,7 @@ _SIGNED_CATEGORIES = {"ss_benefits"}
 # ss_tips. The deduction is capped and MAGI-phased, so the ledger figure won't
 # equal any result line; the record just makes the raw amount traceable.
 _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
+                  "ss_tax_withheld", "medicare_tax_withheld",
                   # Components already included in the federal aggregates.
                   # The reviewed CA derivation below checks their use.
                   "state_refund_1099g", "personal_1099k",
@@ -717,9 +718,10 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
 # than C is a different form: W-2G is gambling, W-2GU/W-2AS/W-2VI territorial.
 # An exact-code match let every longer spelling through with no box items.
 _W2_FORM = re.compile(r"(?<![A-Z0-9])W[\s\-‐‑–—]*2(?:[\s\-‐‑–—]*(C))?(?![A-Z0-9])")
-# Boxes 3, 5 and 7 appear on a W-2 and on no other source, so a record holding
+# Boxes 3–7 appear on a W-2 and on no other source, so a record holding
 # only them is still a W-2 whose boxes 1 and 2 need an outcome.
-_W2_SIGNALS = ("wages", "federal_withholding_w2", "ss_wages", "medicare_wages", "ss_tips")
+_W2_SIGNALS = ("wages", "federal_withholding_w2", "ss_wages", "medicare_wages", "ss_tips",
+               "ss_tax_withheld", "medicare_tax_withheld")
 
 
 def _w2_form(form_type: str) -> "re.Match | None":
