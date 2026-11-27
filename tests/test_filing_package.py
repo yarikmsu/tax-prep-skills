@@ -1207,6 +1207,81 @@ def test_excess_social_security_needs_the_payment_review():
     assert items["input.payments"] is True
 
 
+def test_two_social_security_w2s_for_one_employee_require_the_wage_base():
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    first = tie_out.LedgerRecord("first", "documents/w2-a.pdf", "W-2", "Employer A", "primary",
+                                 (("ss_wages", 1000),), None)
+    other = tie_out.LedgerRecord("second", "documents/w2-b.pdf", "W-2", "Employer B", "primary",
+                                 (("ss_wages", 1000),), None)
+    spouse = tie_out.LedgerRecord("spouse", "documents/w2-c.pdf", "W-2", "Employer C", "spouse",
+                                  (("ss_wages", 1000),), None)
+    result = {"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": {}}
+    law = {"tax_year": 2025}
+    expected = "federal.social_security.wage_base: required covered-year figure is missing."
+    assert expected in filing_issues(result, {}, law, ledger=[first, other])
+    assert expected not in filing_issues(result, {}, law, ledger=[first, spouse])
+
+
+def test_railroad_tax_source_requires_the_manual_combined_payment_review():
+    record = tie_out.LedgerRecord("rrta", "documents/rrta-w2.pdf", "W-2", "Railroad", "primary",
+                                  (("rrta_tier1_tax_withheld", 2000),), None)
+    result = {"meta": {"filing_status": "Single"}, "form_1040": {}}
+    inputs = material_evidence._required_filing_inputs(result, {}, _LAW_2025, ledger=[record])
+    assert inputs["input.payments"] is False   # A reviewed inapplicable credit is legitimate.
+    law = {"federal": {"social_security": {"wage_base": 176100, "employee_rate": 0.062}}}
+
+    def checked(records, claimed):
+        return tie_out._excess_ss_checks(
+            records, {"form_1040": {"schedule_3_line_11_excess_ss": claimed}}, {}, law)
+    # Tier 1 tax shares the Social Security base and rate: $2,000 withheld
+    # leaves no combined excess, so a claimed $400 is refused.
+    assert checked([record], 400)
+    # A second railroad employer: $12,000 withheld less the $10,918.20 maximum.
+    second = tie_out.LedgerRecord("rrta-2", "documents/rrta-w2-2.pdf", "W-2", "Short Line", "primary",
+                                  (("rrta_tier1_tax_withheld", 10000),), None)
+    assert not checked([record, second], 1081.80)
+    assert checked([record, second], 1081.81)
+
+
+_SS_LAW = {"federal": {"social_security": {"wage_base": 176100, "employee_rate": 0.062}}}
+
+
+def _ss_w2(doc_id, payer, person, wages, withheld, **extra):
+    return tie_out.LedgerRecord(doc_id, f"documents/{doc_id}.pdf", "W-2", payer, person,
+                                (("ss_wages", wages), ("ss_tax_withheld", withheld),
+                                 *extra.items()), None)
+
+
+def _line_11(records, claimed, status="MFJ", profile=None):
+    return tie_out._excess_ss_checks(
+        records, {"meta": {"filing_status": status},
+                  "form_1040": {"schedule_3_line_11_excess_ss": claimed}}, profile or {}, _SS_LAW)
+
+
+def test_a_spouses_railroad_tax_leaves_the_other_spouses_credit_checked():
+    # Two employers for the primary: $12,400 withheld less $10,918.20.
+    primary = [_ss_w2("a", "Alpha", "primary", 100000, 6200), _ss_w2("b", "Beta", "primary", 100000, 6200)]
+    railroad = tie_out.LedgerRecord("rr", "documents/rr.pdf", "W-2", "Railroad", "spouse",
+                                    (("rrta_tier1_tax_withheld", 2000),), None)
+    assert not _line_11([*primary, railroad], 1481.80)
+    assert _line_11([*primary, railroad], 5000)
+
+
+def test_one_employer_under_two_names_is_one_employer():
+    # A payroll change: "Acme" and "Acme Inc" are one employer, whose own
+    # over-withholding the employer refunds. No credit.
+    forms = [_ss_w2("a", "Acme", "primary", 150000, 9300), _ss_w2("b", "Acme Inc", "primary", 50000, 3100)]
+    assert not _line_11(forms, 0, status="Single")
+    assert _line_11(forms, 1481.80, status="Single")
+
+
+@pytest.mark.parametrize("status,profile", [("MFS", {}), (None, {}), ("MFJ", {"filing_status": "MFS"})])
+def test_a_spouses_w2s_support_no_credit_off_a_joint_return(status, profile):
+    forms = [_ss_w2("a", "Alpha", "spouse", 100000, 6200), _ss_w2("b", "Beta", "spouse", 100000, 6200)]
+    assert _line_11(forms, 1481.80, status=status, profile=profile)
+
+
 @pytest.mark.parametrize(("profile", "method", "amount", "accepted"), [
     ({}, "standard", 30000, True),
     ({"ca_exemptions": {"primary_blind": True}}, "standard", 30000, False),
@@ -1265,3 +1340,13 @@ def test_a_separate_return_whose_spouse_itemizes_cannot_take_the_standard_deduct
               "schedule_a": {"inputs": {"mfs_spouse_itemizes": True}}}
     law = {"federal": {"filing_statuses": {"mfs": {"standard_deduction": 15000}}}}
     assert "spouse itemizes" in material_evidence._deduction_problem(result, {"filing_status": "MFS"}, law, "standard")
+
+
+def test_railroad_tax_counts_only_on_an_active_w2():
+    primary = [_ss_w2("a", "Alpha", "primary", 100000, 6200), _ss_w2("b", "Beta", "primary", 100000, 6200)]
+    stray = tie_out.LedgerRecord("int", "documents/int.pdf", "1099-INT", "Bank", "primary",
+                                 (("taxable_interest", 10), ("rrta_tier1_tax_withheld", 0.01)), None)
+    # Checked exactly, not only bounded: the stray amount is no railroad W-2.
+    assert _line_11([*primary, stray], 1000)
+    assert _line_11([*primary, stray], 5000)
+    assert not _line_11([*primary, stray], 1481.80)

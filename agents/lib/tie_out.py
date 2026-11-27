@@ -156,6 +156,7 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "other_local_withholding"}
 _INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
 _INFORMATIONAL.add(source_reconciliation.BOOK_GROSS)
+_INFORMATIONAL.add("rrta_tier1_tax_withheld")
 
 # Informational categories that are POTENTIALLY taxable — never silently
 # skipped: their presence in the ledger emits a loud advisory (not a
@@ -2145,6 +2146,153 @@ def filing_medicare_wages(ledger: list[LedgerRecord], fallback) -> float:
     return total
 
 
+def _ss_wages(boxes: dict) -> float:
+    return boxes.get("ss_wages", 0.0) + boxes.get("ss_tips", 0.0)
+
+
+def _social_security_w2s(ledger: list[LedgerRecord]) -> dict[str, list[tuple[LedgerRecord, dict]]]:
+    employees: dict[str, list[tuple[LedgerRecord, dict]]] = {}
+    for record in ledger:
+        boxes = dict(record.key_boxes)
+        if record.skipped is None and _is_w2(record.form_type, boxes):
+            if _ss_wages(boxes) > 0 or boxes.get("ss_tax_withheld", 0) > 0:
+                employees.setdefault(record.person, []).append((record, boxes))
+    return employees
+
+
+def has_multiple_ss_wage_forms(ledger: list[LedgerRecord]) -> bool:
+    """The wage-base check applies once one employee has multiple reported W-2s."""
+    return any(sum(_ss_wages(boxes) > 0 for _, boxes in forms) >= 2
+               for forms in _social_security_w2s(ledger).values())
+
+
+def _rrta_people(ledger: list[LedgerRecord]) -> set[str]:
+    """Employees whose active W-2s report Tier 1 railroad retirement tax."""
+    return {record.person for record in ledger
+            if record.skipped is None and _is_w2(record.form_type, dict(record.key_boxes))
+            and dict(record.key_boxes).get("rrta_tier1_tax_withheld", 0) > 0}
+
+
+def has_rrta_tier1_withholding(ledger: list[LedgerRecord]) -> bool:
+    return bool(_rrta_people(ledger))
+
+
+def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]:
+    """One employer per related payer name, as source reconciliation reads them.
+
+    Exact name tokens split "Acme" from "Acme Inc", so one employer's own
+    over-withholding read as a second employer's and was credited. Merging
+    related names can only lower the credit, the direction that is safe.
+    """
+    tokens = [_payer_tokens(record.payer) for record, _ in forms]
+    if not all(tokens):
+        raise ValueError("Review the employer name on each Social Security W-2.")
+    groups = list(range(len(forms)))
+
+    def root(index: int) -> int:
+        while groups[index] != index:
+            index = groups[index]
+        return index
+
+    for i in range(len(forms)):
+        for j in range(i + 1, len(forms)):
+            if tokens[i] <= tokens[j] or tokens[j] <= tokens[i]:
+                groups[root(j)] = root(i)
+    members: dict[int, list[dict]] = {}
+    for index, (_, boxes) in enumerate(forms):
+        members.setdefault(root(index), []).append(boxes)
+    return list(members.values())
+
+
+def _person_excess(forms: list[tuple[LedgerRecord, dict]], base: float, rate: float) -> float:
+    from agents.lib.tax_computations import compute_excess_ss_withholding
+
+    employers = _employer_groups(forms)
+    wages = [sum(_ss_wages(boxes) for boxes in group) for group in employers]
+    if len(wages) < 2:
+        return 0.0
+    if any(_ss_wages(boxes) == 0 and boxes.get("ss_tax_withheld", 0) > 0 for _, boxes in forms):
+        raise ValueError("Review W-2 Boxes 3 and 7 for the reported Social Security withholding.")
+    if sum(wages) <= base:
+        # Even if an employer withheld too much, wages below the
+        # per-person cap cannot establish a return credit.
+        return 0.0
+    if any("ss_tax_withheld" not in boxes for _, boxes in forms):
+        raise ValueError("Review W-2 Box 4 for every employer before claiming the excess.")
+    withheld = [sum(boxes["ss_tax_withheld"] for boxes in group) for group in employers]
+    return compute_excess_ss_withholding(withheld, wages, base, rate)["excess_credit"]
+
+
+def _rrta_bound(ledger: list[LedgerRecord], person: str, base: float, rate: float) -> float:
+    """The most Topic 608 credits a railroad employee: Social Security and
+    Tier 1 tax withheld together, less one year's maximum at the shared base."""
+    withheld = sum(dict(record.key_boxes).get(category, 0)
+                   for record in ledger
+                   if record.skipped is None and record.person == person
+                   and _is_w2(record.form_type, dict(record.key_boxes))
+                   for category in ("ss_tax_withheld", "rrta_tier1_tax_withheld"))
+    return max(0.0, round(withheld - base * rate, 2))
+
+
+def _wage_base_and_rate(tax_law: dict) -> tuple[float, float]:
+    from agents.lib.tax_computations._shared import _amount
+
+    law = (tax_law.get("federal") or {}).get("social_security") or {}
+    base = _amount(law.get("wage_base"), "cached Social Security wage base")
+    if base <= 0:
+        raise ValueError("Review the covered-year Social Security wage base.")
+    rate = _amount(law.get("employee_rate"), "cached Social Security employee rate")
+    if not 0 < rate < 1:
+        raise ValueError("Review the covered-year Social Security employee rate.")
+    return base, rate
+
+
+def _joint_return(result: dict, profile: dict) -> bool:
+    from agents.lib.tax_computations._shared import _normalize_filing_status
+
+    # Both sources must say joint; a missing or disagreeing one is not joint.
+    statuses = {_normalize_filing_status(status) for status in
+                ((result.get("meta") or {}).get("filing_status"), profile.get("filing_status"))
+                if isinstance(status, str) and status.strip()}
+    return statuses == {"MFJ"}
+
+
+def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
+                      tax_law: dict) -> list[str]:
+    from agents.lib.tax_computations._shared import _amount
+
+    form = result.get("form_1040") or {}
+    try:
+        claimed = _amount(form.get("schedule_3_line_11_excess_ss", 0), "Schedule 3 line 11")
+        employees = _social_security_w2s(ledger)
+        joint = employees.get("joint", [])
+        # Checked before anything is skipped: a spouse's W-2s on a separate
+        # return, or W-2s with no employee, cannot support a credit at all.
+        if ((joint and (claimed or sum(map(len, employees.values())) > 1))
+                or (employees.get("spouse") and not _joint_return(result, profile))):
+            return ["Schedule 3 line 11 needs the employee on each Social Security W-2 for this return."]
+        railroad = _rrta_people(ledger)
+        if not claimed and not any(len(forms) > 1 for forms in employees.values()):
+            return []
+        base, rate = _wage_base_and_rate(tax_law)
+        credit = round(sum(_person_excess(forms, base, rate)
+                           for person, forms in employees.items() if person not in railroad), 2)
+        if railroad:
+            # The combined Social Security and Tier 1 worksheet is the payments
+            # review's; the ledger still bounds it, and the other spouse's
+            # figure is checked as usual.
+            bound = round(credit + sum(_rrta_bound(ledger, person, base, rate) for person in railroad), 2)
+            if claimed > bound:
+                return ["Schedule 3 line 11 exceeds the Social Security and Tier 1 railroad tax the "
+                        "W-2s report withheld above one year's maximum."]
+        elif credit != round(claimed, 2):
+            return ["Schedule 3 line 11 disagrees with the excess Social Security withholding "
+                    "supported by each employee's W-2s."]
+    except (ValueError, TypeError, OverflowError) as exc:
+        return [f"Schedule 3 line 11: {redact(exc)}"]
+    return []
+
+
 # New York's localities that withhold income tax, by name with its spacing
 # and punctuation dropped: a row pairing one with another state's code would
 # otherwise hide it from a computed New York return.
@@ -2949,6 +3097,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
+    missing_targets.extend(_excess_ss_checks(ledger, result, profile or {}, tax_law or {}))
     try:
         business_tax, medicare = schedule_c.business_tax_workpapers(
             result, profile or {}, ledger, tax_law or {}, require_other_taxes=True)

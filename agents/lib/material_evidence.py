@@ -190,7 +190,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     """Applicable inputs, with True when a positive amount is already claimed
     or the return's own inputs make the item apply."""
     from agents.lib.tax_law_fetcher import _get_path
-    from agents.lib.tie_out import filing_medicare_wages
+    from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding
     from agents.lib.yoy_diff import _section_present
 
     flags = profile.get("flags") or {}
@@ -248,13 +248,15 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
             "has_hsa", "has_1099r") or _section_present(result, "form_8959_additional_medicare"):
         required["input.other_taxes"] = remainder or niit_applies or medicare_applies
 
-    # Excess Social Security withholding is part of line 31 and no gate
-    # compares it with W-2 box 4, so it needs the payment review like the rest.
+    # Excess Social Security withholding is part of line 31. The tie-out
+    # checks it against W-2 boxes 3, 4 and 7, but a railroad employee's
+    # combined Tier 1 worksheet only the payment review can check.
     other_payment = form.get("line_31_schedule3_part2", 0)
     has_other_payment = _positive(other_payment)
     dated_payments = (result.get("form_2210") or {}).get("payment_table") is not None
     needs_manual_penalty = not dated_payments and positive_lines("line_38_estimated_tax_penalty")
-    if has_other_payment or needs_manual_penalty or flags_set("filed_extension"):
+    if (has_other_payment or needs_manual_penalty or flags_set("filed_extension")
+            or has_rrta_tier1_withholding(ledger or [])):
         required["input.payments"] = has_other_payment or needs_manual_penalty
     return required
 

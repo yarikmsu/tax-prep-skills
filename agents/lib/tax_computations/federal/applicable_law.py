@@ -219,7 +219,7 @@ def _provenance_problem(path: str, law: dict, year: int, now: datetime, pin_path
 def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | None = None,
                   ledger: list | None = None) -> list[str]:
     """Refuse required omissions and unverified provenance, ignoring unused blocks."""
-    from agents.lib.tie_out import filing_medicare_wages
+    from agents.lib.tie_out import filing_medicare_wages, has_multiple_ss_wage_forms
 
     meta = result.get("meta") or {}
     year = meta.get("tax_year") or profile.get("tax_year")
@@ -238,6 +238,8 @@ def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | Non
         state_fields, issues = _state_figures(result, profile, law, year, status)
     except (ValueError, TypeError, AttributeError, capabilities.CapabilityError):
         return ["Could not determine the applicable law from the return and profile."]
+    if has_multiple_ss_wage_forms(ledger or []):
+        fields.update({"federal.social_security.wage_base", "federal.social_security.employee_rate"})
 
     pin_paths = cache.source_pins(law)
     timestamp = cache._naive(now) if now is not None else datetime.now()

@@ -252,3 +252,20 @@ def test_interrupted_compute_blocks_final_until_validated_retry(workspace):
     assert not (workspace / ABANDONED_NAME).exists()
     _assert_ready(workspace)
     _assert_lines(release.read_json(workspace / "result.json")["form_1040"], FEDERAL)
+
+
+def test_dropped_excess_social_security_credit_blocks_release(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    _assert_ready(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    for record in ledger["records"]:
+        if record["form_type"] == "W-2":
+            record["key_boxes"].update(ss_wages=100000, ss_tax_withheld=6200)
+            record["payer"] = record["doc_id"]  # Distinct synthetic employers.
+    release.write_json(ledger_path, ledger)
+    release.run(workspace, "return_builder", "--check")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Schedule 3 line 11 disagrees" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
