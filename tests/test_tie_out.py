@@ -243,10 +243,11 @@ def test_missing_expected_payer_surfaces():
 
 
 def test_expected_payer_token_subset_matching_both_directions():
-    recs = _ledger(_record(payer="Fidelity Brokerage Services LLC"))
+    recs = _ledger(_record(payer="Fidelity Brokerage Services LLC", form_type="1099-B",
+                           key_boxes={"capital_proceeds": 100}))
     assert T.missing_expected_payers(
         recs, {"brokerages": ["Fidelity"]}) == []
-    short = _ledger(_record(payer="Fidelity"))
+    short = _ledger(_record(payer="Fidelity", form_type="1099-B", key_boxes={"capital_proceeds": 100}))
     assert T.missing_expected_payers(
         short, {"brokerages": ["Fidelity Brokerage Services LLC"]}) == []
 
@@ -288,6 +289,189 @@ def test_expected_sources_validation():
     assert T.missing_expected_payers(recs, {}) == []
 
 
+def test_expected_forms_use_categories_and_block_when_one_is_missing():
+    record = _record(payer="Example broker", form_type="1099-INT", key_boxes={"taxable_interest": 30})
+    expected = {"interest_payers": ["Example broker"], "dividend_payers": ["Example broker"]}
+    result = {"form_1040": {"line_2b_taxable_interest": 30, "line_3b_ordinary_dividends": 0}}
+    report = T.evaluate(_ledger(record), result, [record["file"]], profile={"expected_sources": expected})
+    assert report.failed and report.source_issues == (
+        "Expected dividend reporting item #1 is missing from the reported intake.",)
+    record["form_type"] = "Consolidated 1099"
+    record["key_boxes"]["ordinary_dividends"] = 40
+    result["form_1040"]["line_3b_ordinary_dividends"] = 40
+    assert not T.evaluate(_ledger(record), result, [record["file"]],
+                          profile={"expected_sources": expected}).failed
+    expected["dividend_payers"] = [{"name": "Different issuer", "resolution": "issuer_confirmed_no_form"}]
+    assert not T.evaluate(_ledger(record), result, [record["file"]],
+                          profile={"expected_sources": expected}).failed
+
+
+def test_source_copy_and_correction_need_evidence_and_equal_independent_forms_pass():
+    original = dict(_record(person="primary"), source_sha256="a" * 64,
+                    source_form={"tax_year": 2025, "series_id": "job"})
+    same = dict(original, doc_id="copy", file="documents/copy.pdf")
+    result = {"meta": {"tax_year": 2025}, "form_1040": {
+        "line_1a_wages": 200000, "line_25a_w2_withholding": 24000}}
+    files = [original["file"], same["file"]]
+    counted = T.evaluate(_ledger(original, same), result, files)
+    assert counted.failed and "Exact duplicate" in counted.source_issues[0]
+    independent = dict(same, source_sha256="b" * 64,
+                       source_form={"tax_year": 2025, "series_id": "other-job"})
+    assert not T.evaluate(_ledger(original, independent), result, files).failed
+
+    result["form_1040"] = {"line_1a_wages": 100000, "line_25a_w2_withholding": 12000}
+    copy = dict(same, skipped="duplicate copy", key_boxes={})
+    assert T.evaluate(_ledger(original, copy), result, files).failed
+    copy["source_form"] = {"duplicate_of": original["doc_id"]}
+    reviewed = T.evaluate(_ledger(original, copy), result, files)
+    assert not reviewed.failed and "exact copy" in reviewed.source_disclosures[0]
+
+    old = dict(original, skipped="superseded", key_boxes={},
+               source_form={"tax_year": 2025, "series_id": "job", "superseded_by": "copy"})
+    current = dict(independent, form_type="Form W-2c",
+                   source_form={"tax_year": 2025, "series_id": "job", "corrected": True})
+    corrected = T.evaluate(_ledger(old, current), result, files)
+    assert not corrected.failed and "replaced superseded" in corrected.source_disclosures[0]
+    current["source_form"]["series_id"] = "other-job"
+    assert T.evaluate(_ledger(old, current), result, files).failed
+
+
+def _form(doc_id, form_type, payer, digest, person="primary", series=None, **boxes):
+    record = dict(_record(doc_id=doc_id, file=f"documents/{doc_id}.pdf", form_type=form_type,
+                          payer=payer, person=person, key_boxes=boxes or None), source_sha256=digest)
+    if series:
+        record["source_form"] = {"tax_year": 2025, "series_id": series}
+    return record
+
+
+def _issues(*records, result=None):
+    report = T.evaluate(_ledger(*records), result or {"meta": {"tax_year": 2025}},
+                        [r["file"] for r in records])
+    return report.source_issues, report.source_disclosures
+
+
+@pytest.mark.parametrize("second", [
+    ("W-2", "Acme", {}),                                   # downloaded twice, new bytes
+    ("1099-DIV", "Example Fund Inc", {"ordinary_dividends": 40}),
+    ("Consolidated 1099", "Example Fund", {"ordinary_dividends": 40}),
+])
+def test_byte_different_copies_of_one_statement_are_not_both_counted(second):
+    """Only byte-identical copies were caught. A re-download, a longer payer
+    name or a consolidated form beside its standalone part counted twice."""
+    form_type, payer, boxes = second
+    if form_type == "W-2":
+        first = _form("first", "W-2", "Acme", "a" * 64)
+        other = _form("second", "W-2", payer, "b" * 64)
+    else:
+        first = _form("first", "1099-DIV", "Example Fund", "a" * 64, ordinary_dividends=40)
+        other = _form("second", form_type, payer, "b" * 64, **boxes)
+    issues, _ = _issues(first, other)
+    assert any("share a payer, recipient and form" in issue for issue in issues), issues
+    first["source_form"] = {"tax_year": 2025, "series_id": "account-1"}
+    other["source_form"] = {"tax_year": 2025, "series_id": "account-2"}
+    assert not any("share a payer" in issue for issue in _issues(first, other)[0])
+
+
+def test_equal_forms_for_two_recipients_stay_two():
+    issues, _ = _issues(_form("primary", "W-2", "Acme", "a" * 64),
+                        _form("spouse", "W-2", "Acme", "b" * 64, person="spouse"))
+    assert not issues
+
+
+def test_a_corrected_prefix_keeps_the_1099_k_rules():
+    """"Corrected 1099-K" matched no business rule, so one payment on a
+    1099-NEC and a corrected 1099-K counted twice with no books."""
+    nec = _form("nec", "1099-NEC", "Client", "a" * 64, self_employment_gross=120)
+    k = _form("k", "Corrected Form 1099-K", "Processor", "b" * 64, self_employment_gross=120)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 240}}
+    issues, _ = _issues(nec, k, result=result)
+    assert any("receipt-level book" in issue for issue in issues), issues
+    skipped = dict(k, skipped="overlap", key_boxes={})
+    assert any("skipped Form 1099-K" in issue for issue in _issues(nec, skipped, result=result)[0])
+
+
+def test_a_skip_beside_an_active_form_must_name_its_disposition():
+    """A reason alone dropped a real second W-2: wages under-stated, refund
+    over-stated. The link is what gets checked."""
+    kept = _form("kept", "W-2", "Acme", "a" * 64, series="job")
+    second = dict(_form("second", "W-2", "Acme", "b" * 64), skipped="duplicate copy", key_boxes={})
+    assert any("skipped beside an active form" in issue for issue in _issues(kept, second)[0])
+    second["source_form"] = {"duplicate_of": "kept"}  # but the bytes differ
+    assert any("no matching evidence" in issue for issue in _issues(kept, second)[0])
+
+
+def test_a_standalone_form_inside_a_consolidated_one_is_included_once():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         ordinary_dividends=40, capital_proceeds=1000)
+    standalone = dict(_form("standalone", "1099-B", "Broker", "b" * 64), skipped="in consolidated",
+                      key_boxes={}, source_form={"included_in": "consolidated"})
+    result = {"meta": {"tax_year": 2025}}
+    issues, disclosures = _issues(consolidated, standalone, result=result)
+    assert not [i for i in issues if "standalone" in i or "#2" in i], issues
+    assert "Document #2 is reported within consolidated document #1." in disclosures
+    w2 = dict(_form("w2", "W-2", "Broker", "c" * 64), skipped="inside", key_boxes={},
+              source_form={"included_in": "consolidated"})
+    assert any("no matching evidence" in issue for issue in _issues(consolidated, w2, result=result)[0])
+    # Only a consolidated form contains another; a standalone 1099-DIV does not.
+    single = _form("single", "1099-DIV", "Broker", "d" * 64, ordinary_dividends=40)
+    inside_single = dict(standalone, source_form={"included_in": "single"})
+    assert any("no matching evidence" in issue for issue in _issues(single, inside_single, result=result)[0])
+
+
+@pytest.mark.parametrize("kept_type, flag, accepted", [
+    ("Form W-2c", True, True), ("W-2", True, False),            # a W-2 is corrected only by a W-2c
+    ("1099-INT Corrected", True, True), ("1099-INT", True, False), ("Corrected 1099-INT", False, False),
+])
+def test_a_superseding_form_must_be_marked_corrected(kept_type, flag, accepted):
+    form = "W-2" if "W-2" in kept_type else "1099-INT"
+    boxes = {} if form == "W-2" else {"taxable_interest": 30}
+    old = dict(_form("old", form, "Acme", "a" * 64, **boxes), skipped="superseded", key_boxes={},
+               source_form={"tax_year": 2025, "series_id": "s", "superseded_by": "new"})
+    new = _form("new", kept_type, "Acme", "b" * 64, series="s", **boxes)
+    new["source_form"]["corrected"] = flag
+    _, disclosures = _issues(old, new)
+    assert any("replaced superseded" in d for d in disclosures) is accepted
+
+
+def test_a_superseded_form_from_another_year_is_refused():
+    """Both forms agree with each other and not with the return's year."""
+    old = dict(_form("old", "W-2", "Acme", "a" * 64), skipped="superseded", key_boxes={},
+               source_form={"tax_year": 2024, "series_id": "s", "superseded_by": "new"})
+    new = _form("new", "Form W-2c", "Acme", "b" * 64, series="s")
+    new["source_form"].update(tax_year=2024, corrected=True)
+    issues, disclosures = _issues(old, new)
+    assert not disclosures and any("no matching evidence" in issue for issue in issues)
+
+
+@pytest.mark.parametrize("overlap", [True, False])
+def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(overlap):
+    nec = dict(_record(doc_id="nec", file="documents/nec.pdf", form_type="1099-NEC", person="primary",
+                       key_boxes={"self_employment_gross": 120}), source_sha256="a" * 64)
+    k = dict(_record(doc_id="k", file="documents/k.pdf", form_type="1099-K", person="primary",
+                     key_boxes={"self_employment_gross": 120}), source_sha256="b" * 64)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 240}}
+    files = [nec["file"], k["file"]]
+    assert T.evaluate(_ledger(nec, k), result, files).failed
+    assert T.evaluate(_ledger(nec, dict(k, skipped="overlap", key_boxes={})), result, files).failed
+    unclassified = T.evaluate(_ledger(nec, dict(k, key_boxes={"federal_withholding_1099": 0})), result, files)
+    assert any("needs the routed gross from Form 1099-K" in issue for issue in unclassified.source_issues)
+
+    rows = ([{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec", "k"]}] if overlap else
+            [{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec"]},
+             {"payment_id": "payment-b", "amount": 120, "reported_by": ["k"]}])
+    gross = 120 if overlap else 240
+    book = dict(_record(doc_id="books", file="documents/books.csv", form_type="business books", person="primary",
+                        key_boxes={"self_employment_book_gross": gross}),
+                business_receipts=rows, source_form={"tax_year": 2025}, source_sha256="c" * 64)
+    ledger = _ledger(nec, k, book)
+    files.append(book["file"])
+    assert T.evaluate(ledger, result, files).failed is overlap
+    result["schedule_c"]["line_1_gross_receipts"] = gross
+    report = T.evaluate(ledger, result, files)
+    assert not report.failed
+    assert bool(report.source_disclosures) is overlap
+
+
 # --------------------------------------------------------------------------
 # Check A — coverage
 # --------------------------------------------------------------------------
@@ -315,9 +499,11 @@ def test_full_coverage_passes():
 
 
 def test_skipped_record_counts_as_coverage():
+    # A non-tax notice: a skipped W-2 beside an active one from the same
+    # payer must now name the record it duplicates (AA130), tested below.
     recs = _ledger(_record(),
-                   _record(doc_id="dup", file="documents/dup.pdf",
-                           key_boxes={}, skipped="duplicate scan"))
+                   _record(doc_id="dup", file="documents/dup.pdf", form_type="Benefits notice",
+                           key_boxes={}, skipped="not a tax form"))
     report = T.evaluate(recs, _result(),
                         ["documents/W2_Acme.pdf", "documents/dup.pdf"])
     assert not report.failed

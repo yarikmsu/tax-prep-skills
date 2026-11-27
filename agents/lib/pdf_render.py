@@ -766,7 +766,7 @@ def _main(argv: list) -> int:
         # this return; one that does not is named on page 1 instead (AA46).
         yoy, stale = saved_yoy_report(workspace, result)
         render(result, out, draft_reasons=reasons if args.draft else None,
-               notes=checked.notes + ([stale] if stale else []), yoy=yoy)
+               notes=checked.notes + checked.disclosures + ([stale] if stale else []), yoy=yoy)
         print(f"wrote {redact(out)}")
         return 0
     except (WorkspaceError, PdfRenderError, RolloverError, receipt.ReceiptError, OSError,

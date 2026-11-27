@@ -400,7 +400,7 @@ Rules:
   | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949). Box 11c (first-sale NFT proceeds, kept out of 1f) → `nft_first_sale_proceeds`, which BLOCKS the tie-out gate |
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
-  | 1099-NEC box 1 (TY2025) / box 1a (TY2026, already includes 1b/1d) / reviewed 1099-MISC business box 3 and boxes 5/6 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below) |
+  | 1099-NEC box 1 (TY2025) / box 1a (TY2026, already includes 1b/1d) / reviewed 1099-MISC business box 3 and boxes 5/6 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below; EXACT to the receipt-level books when both a 1099-NEC and a business 1099-K are present, see [source reconciliation](references/source-reconciliation.md)) |
   | 1099-K box 1a (personal-item sales / reimbursements) | `personal_1099k` (informational — NOT Schedule C: gains go to Form 8949, losses non-deductible; ASK the taxpayer which it is and record the answer in answers.md — the gate emits a verify advisory) |
   | 1099-SA box 1 | `hsa_distributions` |
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
@@ -480,10 +480,9 @@ missing = missing_expected_payers(ledger, profile.get('expected_sources') or {})
 print('\n'.join(missing) or '(all expected payers accounted for)')"
 ```
 
-Every payer printed must already have an answers.md resolution from step
-2.5 ("account closed at Chase in March", "1099 not yet issued — will amend").
-If one doesn't, STOP and resolve it now — do not hand an unexplained missing
-payer to `/tax-compute`.
+Resolve missing form types, copies, corrections and overlap with the
+[source reconciliation rules](references/source-reconciliation.md).
+Tie-out checks these dispositions again before final export.
 
 ### 7. Summary
 
