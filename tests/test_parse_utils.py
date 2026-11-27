@@ -1132,6 +1132,45 @@ def test_digest_binds_a_document_no_extractor_reads(tmp_path):
     assert json.loads(result.stdout) == {"source_sha256": sha256(legacy.read_bytes()).hexdigest()}
 
 
+def test_long_pdf_page_extract_refuses_a_different_source_snapshot(tmp_path):
+    from reportlab.pdfgen import canvas
+
+    path = tmp_path / "statement.pdf"
+
+    def write_pdf(label):
+        document = canvas.Canvas(str(path))
+        for page in range(11):
+            document.drawString(72, 720, f"{label} page {page + 1}")
+            document.showPage()
+        document.save()
+
+    def command(*args):
+        return subprocess.run([sys.executable, "-m", "agents.lib.parse_utils",
+                               "--workspace", str(tmp_path), *args],
+                              text=True, capture_output=True)
+
+    write_pdf("Original")
+    digest_result = command("digest", path.name)
+    assert digest_result.returncode == 0, digest_result.stderr
+    digest = json.loads(digest_result.stdout)["source_sha256"]
+    flags = ("--with-source-digest", "--expected-source-digest", digest)
+    first = command("extract", path.name, "0", *flags)
+    assert first.returncode == 0, first.stderr
+    payload = json.loads(first.stdout)
+    assert payload["source_sha256"] == digest and "Original page 1" in payload["data"]["0"]
+
+    write_pdf("Replacement")
+    second = command("extract", path.name, "1", *flags)
+    assert second.returncode == 1 and not second.stdout
+    assert "Source changed during extraction" in second.stderr
+    # A misspelled flag is a stray argument, which must not extract unchecked.
+    for stray in (("--expected-source-digst", digest), (digest,)):
+        typo = command("extract", path.name, "1", *stray, "--with-source-digest")
+        assert typo.returncode == 1 and not typo.stdout
+        assert "unexpected arguments" in typo.stderr
+    assert command("digest", path.name, "extra").returncode == 1
+
+
 def _raw_pdf(path):
     """The UNMASKED pdfplumber read of the fixture."""
     import pdfplumber

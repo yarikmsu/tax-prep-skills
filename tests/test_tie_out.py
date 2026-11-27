@@ -651,16 +651,39 @@ def test_resolved_crypto_skip_passes():
     """/tax-parse-crypto's upsert replaces the pending placeholder with a
     documented skip pointing at its FIFO reconciliation — that passes."""
     recs = _ledger(_record(),
-                   _record(doc_id="cb", file="documents/coinbase_2025.csv",
+                   dict(_record(doc_id="cb", file="documents/coinbase_2025.csv",
                            form_type="crypto-csv", payer="Coinbase",
                            key_boxes={},
                            skipped="crypto exchange CSV — ingested by "
                                    "/tax-parse-crypto; amounts flow to Form "
-                                   "8949/Schedule D via crypto_summary"))
-    report = T.evaluate(recs, _result(),
-                        ["documents/W2_Acme.pdf", "documents/coinbase_2025.csv"])
+                                   "8949/Schedule D via crypto_summary"), source_sha256="c" * 64))
+    files = ["documents/W2_Acme.pdf", "documents/coinbase_2025.csv"]
+    report = T.evaluate(recs, _result(), files, crypto_source={"transactions": [],
+                                                               "csv_source_digests": ["c" * 64]})
     assert not report.failed
     assert report.pending_skips == ()
+    assert not T.evaluate(recs, _result(), files, crypto_source={"source_sha256": "c" * 64}).failed
+    for source in (None, {"csv_source_digests": ["d" * 64]}, {"csv_source_digests": ["c" * 64] * 2}):
+        blocked = T.evaluate(recs, _result(), files, crypto_source=source)
+        assert blocked.failed
+        assert any("Crypto CSV source digests" in item for item in blocked.missing_result_targets)
+
+
+def test_a_second_download_of_an_imported_crypto_csv_is_one_import():
+    reason = "crypto exchange CSV — ingested by /tax-parse-crypto; amounts flow via crypto_summary"
+    imported = dict(_record(doc_id="cb", file="documents/coinbase.csv", form_type="crypto-csv",
+                            payer="Coinbase", key_boxes={}, skipped=reason), source_sha256="c" * 64)
+    copy = dict(imported, doc_id="cb-copy", file="documents/coinbase (1).csv")
+    files = ["documents/W2_Acme.pdf", imported["file"], copy["file"]]
+    source = {"transactions": [], "csv_source_digests": ["c" * 64]}
+    # Unlinked, the copy reads as a second import the JSON does not hold.
+    assert T.evaluate(_ledger(_record(), imported, copy), _result(), files, crypto_source=source).failed
+    copy["source_form"] = {"duplicate_of": "cb"}
+    report = T.evaluate(_ledger(_record(), imported, copy), _result(), files, crypto_source=source)
+    assert not report.failed, (report.source_issues, report.missing_result_targets)
+    # Different bytes are a different export, not a copy.
+    other = dict(copy, source_sha256="d" * 64)
+    assert T.evaluate(_ledger(_record(), imported, other), _result(), files, crypto_source=source).failed
 
 
 # --------------------------------------------------------------------------

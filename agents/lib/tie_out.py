@@ -1355,6 +1355,29 @@ def _form_backed_sales(result: dict) -> bool:
     return False
 
 
+def _crypto_csv_source_checks(ledger: list[LedgerRecord], source: object) -> list[str]:
+    records = [
+        record for record in ledger
+        if source_reconciliation.form_code(record.form_type) == "CRYPTOCSV"
+        and not (record.skipped or "").strip().lower().startswith("pending")
+        and not {"duplicate_of", "superseded_by", "included_in"} & (record.source_form or {}).keys()
+    ]
+    if not records and (not isinstance(source, dict)
+                        or not {"source_sha256", "csv_source_digests"} & source.keys()):
+        return []
+    from agents.lib.crypto_importer import CryptoImportError, crypto_csv_source_digests
+
+    try:
+        digests = crypto_csv_source_digests(source)
+    except CryptoImportError as exc:
+        return [str(exc)]
+    expected = sorted(record.source_sha256 for record in records if record.source_sha256)
+    if len(expected) != len(records) or sorted(digests) != expected:
+        return ["Crypto CSV source digests in crypto_transactions.json disagree with the parse ledger. "
+                "Re-import the affected exports and rebuild the ledger from the same snapshots."]
+    return []
+
+
 def _crypto_option_checks(result, source, answer, profile=None):
     """An acknowledgement is not evidence that option premiums were priced.
 
@@ -3193,6 +3216,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     if 'capital_proceeds' not in sums and _form_backed_sales(result):
         missing_targets.append('Form-backed Schedule D rows (1099-B, or a digital row with broker_proceeds) '
                                'require ledgered capital_proceeds, including a reported zero')
+    missing_targets.extend(_crypto_csv_source_checks(ledger, crypto_source))
     missing_targets.extend(_crypto_option_checks(result, crypto_source, option_exercise_answer, profile))
     if any(row.get("employer_stock") is True for _, row in digital_rows):
         missing_targets.append("schedule_d digital-asset row flagged employer_stock: a crypto adjustment "
@@ -4047,6 +4071,11 @@ def _main(argv: list) -> int:
         result_path = _validate_subpath((workspace / "result.json").resolve(), workspace)
         ledger_raw, ledger_data = _read_json_snapshot(ledger_path, "parse_ledger.json")
         ledger = load_ledger(ledger_data)
+        crypto_name = "crypto_transactions.json"
+        crypto_path = _validate_subpath(workspace / crypto_name, workspace)
+        crypto_raw, crypto_source = (
+            _read_json_snapshot(crypto_path, crypto_name) if crypto_path.exists() else (None, None)
+        )
         # BEFORE anything is read: the digests this gate's verdict will be
         # bound to. Hashing after the verdict would bind a PASS to a document
         # that arrived while the report was being written — a gate certifying a
@@ -4054,6 +4083,7 @@ def _main(argv: list) -> int:
         gate_inputs = receipt.gate_inputs(workspace, "tie_out", contents={
             material_evidence.FILENAME: None,
             "parse_ledger.json": ledger_raw,
+            crypto_name: crypto_raw,
         })
         source_items, changed_sources = _source_outcomes(ledger, gate_inputs)
         material_evidence.sync_group(workspace, material_evidence.SOURCE_PREFIX, source_items)
@@ -4069,8 +4099,6 @@ def _main(argv: list) -> int:
             name = material_evidence.FILENAME
             gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}
         result = _read_json(result_path, "result.json")
-        crypto_path = _validate_subpath((workspace / 'crypto_transactions.json').resolve(), workspace)
-        crypto_source = _read_json(crypto_path, 'crypto_transactions.json') if crypto_path.exists() else None
         # A PFIC taxable event acknowledged in the profile REQUIRES a computed
         # §1291 result — read the flag so the gate can fail an event that reached
         # compute (gate acknowledged) but produced no fund. Also count the

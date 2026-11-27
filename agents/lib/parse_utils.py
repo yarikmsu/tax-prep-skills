@@ -2389,15 +2389,33 @@ if __name__ == "__main__":
         print(f"Error: {redact(e)}", file=sys.stderr)
         sys.exit(1)
 
+    expected_digest = None
+    if len(argv) >= 2 and argv[-2] == "--expected-source-digest":
+        expected_digest = argv[-1]
+        del argv[-2:]
     bind_source = bool(argv and argv[-1] == "--with-source-digest")
     if bind_source:
         argv.pop()
+    if (any(arg in ("--expected-source-digest", "--with-source-digest")
+            or arg.startswith("--expected-source-digest=") for arg in argv)
+            or (expected_digest is not None and
+                (not bind_source or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)))):
+        print("Error: use --with-source-digest followed by --expected-source-digest and a SHA-256 digest",
+              file=sys.stderr)
+        sys.exit(1)
     if len(argv) < 2:
         print("Usage: python parse_utils.py [--workspace DIR] "
-              "<scan|classify|extract|tables|csv|excel|digest> <path> [page|sheet] [--with-source-digest]")
+              "<scan|classify|extract|tables|csv|excel|digest> <path> [page|sheet] "
+              "[--with-source-digest [--expected-source-digest SHA256]]")
         sys.exit(1)
 
     cmd, path = argv[0], argv[1]
+    # A misspelled flag reads as a stray argument, and a stray argument was
+    # ignored, so `--expected-source-digst` extracted with no digest check.
+    if len(argv) > (3 if cmd in ("extract", "tables", "excel") else 2):
+        print("Error: unexpected arguments after the path; check the spelling of each flag",
+              file=sys.stderr)
+        sys.exit(1)
     # A RELATIVE path means a file in the WORKSPACE. `documents/w2.pdf` is how
     # every skill spells it, and that used to be the same directory the command
     # ran from — which under $TAX_WORKSPACE is the checkout (Y4). Resolving the
@@ -2430,14 +2448,18 @@ if __name__ == "__main__":
 
     try:
         source = None
+        source_digest = None
         if bind_source:
             suffix = {"extract": ".pdf", "tables": ".pdf", "csv": ".csv", "excel": ".xlsx"}.get(cmd)
             if suffix is None:
                 raise ValueError("--with-source-digest requires extract, tables, csv or excel")
             source = read_source_snapshot(path, {suffix}, workspace)
+            source_digest = sha256(source).hexdigest()
+            if expected_digest is not None and source_digest != expected_digest:
+                raise ValueError("Source changed during extraction. Discard its partial output and restart intake.")
 
         def emit(data):
-            _print_json(data if source is None else {"source_sha256": sha256(source).hexdigest(), "data": data})
+            _print_json(data if source_digest is None else {"source_sha256": source_digest, "data": data})
 
         if cmd == "digest":
             _print_json({"source_sha256": sha256(read_source_snapshot(

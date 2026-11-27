@@ -3003,6 +3003,26 @@ def _read_csv(path: str) -> 'list[list[str]]':
     return extract_csv(path)
 
 
+def crypto_csv_source_digests(data: object) -> list[str]:
+    """Read digests from normalized input, including older single exports."""
+    if not isinstance(data, dict):
+        return []
+    if "csv_source_digests" in data:
+        digests = data["csv_source_digests"]
+        if "source_sha256" in data and digests != [data["source_sha256"]]:
+            raise CryptoImportError("Single-export and combined crypto source digests disagree. In a "
+                                    "merged file keep csv_source_digests and remove the top-level "
+                                    "source_sha256.")
+    elif "source_sha256" in data:
+        digests = [data["source_sha256"]]
+    else:
+        return []
+    if not isinstance(digests, list) or any(
+            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in digests):
+        raise CryptoImportError("Crypto CSV source digests must be a list of SHA-256 digests.")
+    return digests
+
+
 def _flag_value(argv: 'list[str]', flag: str) -> str:
     """Return the operand following `flag`, or raise a clean CryptoImportError if it is
     missing (flag is last) or is itself another flag — so a malformed command fails with a
@@ -3063,7 +3083,8 @@ def _cli_adapt(argv: 'list[str]') -> int:
             txn['txn_id'] = f'{source}:{i}'
     output: dict = {"transactions": txns}
     if source_bytes is not None:
-        output["source_sha256"] = sha256(source_bytes).hexdigest()
+        digest = sha256(source_bytes).hexdigest()
+        output.update(source_sha256=digest, csv_source_digests=[digest])
     print(json.dumps(output, indent=2))
     return 0
 
@@ -3084,6 +3105,7 @@ def _cli_compute(argv: 'list[str]') -> int:
         # main() only catches CryptoImportError; re-raise so a user-edited empty/malformed
         # normalized file produces the promised clean ERROR, not a raw traceback. (Codex P2.)
         raise CryptoImportError(f"{redact(path)} is not valid JSON: {redact(e)}")
+    crypto_csv_source_digests(data)
     txns = data.get("transactions", data) if isinstance(data, dict) else data
     if isinstance(data, dict) and {'source_corrections', 'tax_calendar_review', 'option_exercise_review'} & set(data):
         raise CryptoImportError('Put source_corrections, tax_calendar_review and option_exercise_review inside broker_reporting; top-level fields are not applied')

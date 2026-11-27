@@ -224,8 +224,8 @@ SSN/ITIN at the moment of extraction and refuses any path outside the workspace.
 **Both modes, the prompt templates, the banner and the grouping rules:
 `references/parse-task-delegation.md`.** Read it now if you are on Step 3.
 
-**Large PDFs (>10 pages):** extract page by page — a bound on the extractor's
-memory, not on context. In ENFORCED mode you have read every page yourself.
+**Large PDFs (>10 pages):** pin one source digest before extracting page by
+page. Use the checked extraction commands in the delegation reference above.
 
 ### 4. Handle Foreign Documents
 

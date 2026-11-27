@@ -291,6 +291,33 @@ def test_unverified_applicable_law_blocks_even_after_gates_are_refreshed(workspa
     _assert_ready(workspace)
 
 
+def test_crypto_csv_mismatch_blocks_final_until_reimported(workspace):
+    release.compute(workspace)
+    relative = "documents/crypto-export.csv"
+    source = workspace / relative
+    release.write_secure(source, "Transaction Type,Asset\n")
+    digest = sha256(source.read_bytes()).hexdigest()
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    ledger["records"].append({
+        "doc_id": "crypto-export", "file": relative, "form_type": "crypto-csv",
+        "payer": "Synthetic exchange", "person": "primary", "key_boxes": {},
+        "skipped": "crypto exchange CSV — ingested by /tax-parse-crypto",
+        "source_sha256": digest,
+    })
+    release.write_json(ledger_path, ledger)
+    normalized = workspace / "crypto_transactions.json"
+    release.write_json(normalized, {"transactions": [], "csv_source_digests": ["f" * 64]})
+    release.run(workspace, "return_builder", "--check")
+    report = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Crypto CSV source digests" in report
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    release.write_json(normalized, {"transactions": [], "csv_source_digests": [digest]})
+    release.validate(workspace)
+    _assert_ready(workspace)
+
+
 def test_interrupted_compute_blocks_final_until_validated_retry(workspace):
     release.compute(workspace)
     _assert_ready(workspace)
