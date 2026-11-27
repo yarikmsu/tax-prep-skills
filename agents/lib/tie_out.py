@@ -2123,6 +2123,23 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
+def filing_medicare_wages(ledger: list[LedgerRecord], fallback) -> float:
+    """Use Box 5 where reviewed; preserve the wage screen for older ledgers."""
+    w2s = []
+    for record in ledger:
+        boxes = dict(record.key_boxes)
+        if record.skipped is None and _is_w2(record.form_type, boxes):
+            w2s.append(boxes)
+    known = round(sum(boxes.get("medicare_wages", 0) for boxes in w2s), 2)
+    if w2s and all("medicare_wages" in boxes for boxes in w2s):
+        return known
+    # A partial intake can establish a higher minimum, but cannot rule out
+    # the tax by treating every missing Box 5 as zero.
+    if isinstance(fallback, (int, float)) and not isinstance(fallback, bool) and math.isfinite(fallback):
+        return max(known, fallback)
+    return known
+
+
 # New York's localities that withhold income tax, by name with its spacing
 # and punctuation dropped: a row pairing one with another state's code would
 # otherwise hide it from a computed New York return.

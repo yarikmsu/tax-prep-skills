@@ -484,7 +484,8 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
     from agents.lib import capabilities, material_evidence
 
     captured: dict[str, bytes | None] = {MATERIAL_EVIDENCE_NAME: None,
-                                         "taxpayer_profile.json": None}
+                                         "taxpayer_profile.json": None,
+                                         "parse_ledger.json": None}
     reasons = []
     profile_name = "taxpayer_profile.json"
     required_forms = {}
@@ -502,6 +503,16 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
     except (OSError, ValueError, RolloverError, capabilities.CapabilityError):
         reasons.append("Could not check required forms in taxpayer_profile.json.")
 
+    try:
+        candidate = workspace / "parse_ledger.json"
+        ledger_path = _validate_subpath(candidate, workspace)
+        if is_reparse_point(candidate) or (ledger_path.exists() and not ledger_path.is_file()):
+            raise ValueError("ledger must be a local regular file")
+        if ledger_path.is_file():
+            captured["parse_ledger.json"] = ledger_path.read_bytes()
+    except (OSError, ValueError, RolloverError):
+        reasons.append("Could not read parse_ledger.json for filing evidence.")
+
     items: dict = {}
     try:
         captured[MATERIAL_EVIDENCE_NAME], items = material_evidence.read(workspace)
@@ -511,7 +522,7 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
 
 
 def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
-                           result_bytes: bytes | None) -> list[str]:
+                           result_bytes: bytes | None, ledger: list) -> list[str]:
     from agents.lib.tax_computations.federal.applicable_law import filing_issues
 
     result_name = "result.json"
@@ -543,7 +554,7 @@ def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
         law = json.loads(law_raw)
         if not isinstance(law, dict):
             return [f"Could not validate applicable law in {name}."]
-        return filing_issues(result, profile, law)
+        return filing_issues(result, profile, law, ledger=ledger)
     except (OSError, ValueError, RolloverError):
         return ["Could not read the return inputs for the applicable tax-law check."]
 
@@ -574,8 +585,16 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
                                   if material and "tie_out" in required else ({}, []))
     if for_filing:
         from agents.lib.material_evidence import filing_input_issues
-        material_reasons += _applicable_law_checks(workspace, captured, result_bytes)
-        material_reasons += filing_input_issues(captured)
+        from agents.lib.tie_out import TieOutError, load_ledger
+        ledger = []
+        try:
+            raw_ledger = captured.get("parse_ledger.json")
+            if raw_ledger is not None:
+                ledger = load_ledger(json.loads(raw_ledger))
+        except (ValueError, TieOutError):
+            material_reasons.append("Could not validate parse_ledger.json for filing evidence.")
+        material_reasons += _applicable_law_checks(workspace, captured, result_bytes, ledger)
+        material_reasons += filing_input_issues(captured, ledger=ledger)
         material_reasons = list(dict.fromkeys(material_reasons))
     data = _read(workspace)
     if not data:

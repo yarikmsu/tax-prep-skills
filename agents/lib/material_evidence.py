@@ -174,9 +174,9 @@ def _positive(value) -> bool:
 
 
 def _status_key(result: dict, profile: dict) -> str:
-    from agents.lib.projection import _full_status_key
+    from agents.lib.projection import _canonical_status
     status = (result.get("meta") or {}).get("filing_status") or profile.get("filing_status")
-    return _full_status_key(status, "material filing inputs")
+    return _canonical_status(status, "material filing inputs").lower()
 
 
 def _above(value, threshold) -> bool:
@@ -185,10 +185,12 @@ def _above(value, threshold) -> bool:
     return not _is_number(threshold) or (_is_number(value) and value > threshold)
 
 
-def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None) -> dict[str, bool]:
+def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None, *,
+                            ledger: list | None = None) -> dict[str, bool]:
     """Applicable inputs, with True when a positive amount is already claimed
     or the return's own inputs make the item apply."""
     from agents.lib.tax_law_fetcher import _get_path
+    from agents.lib.tie_out import filing_medicare_wages
     from agents.lib.yoy_diff import _section_present
 
     flags = profile.get("flags") or {}
@@ -218,20 +220,22 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     # NIIT and Additional Medicare tax apply from the return's own inputs. A
     # line 23 at 0, or equal to the SE tax alone, left a $390,000 joint return
     # with $30,000 of investment income validated with neither tax.
-    key = {"mfj": "mfj", "qss": "mfj", "mfs": "mfs"}.get(_status_key(result, profile), "single")
+    status = _status_key(result, profile)
+    key = {"mfj": "mfj", "qss": "mfj", "mfs": "mfs"}.get(status, "single")
     law = law or {}
     investment = positive_lines("line_2b_taxable_interest", "line_3b_ordinary_dividends",
                                 "line_7_capital_gain") or _section_present(result, "schedule_e_rentals")
     niit_applies = investment and _positive(form.get("line_11_agi")) and _above(
         form.get("line_11_agi"), _get_path(law, f"federal.niit.threshold.{key}"))
     business = (result.get("schedule_c") or {}).get("line_31_net")
-    wages = form.get("line_1a_wages")
+    wages = filing_medicare_wages(ledger or [], form.get("line_1a_wages"))
     earnings = 0.0
     for value in (wages, business):
         if isinstance(value, (int, float)) and _positive(value):
             earnings += value
+    medicare_key = "single" if status == "qss" else key
     medicare_applies = _positive(earnings) and _above(
-        earnings, _get_path(law, f"federal.additional_medicare_tax.threshold.{key}"))
+        earnings, _get_path(law, f"federal.additional_medicare_tax.threshold.{medicare_key}"))
     if remainder or niit_applies or medicare_applies or flags_set(
             "has_unreported_or_allocated_tips", "has_household_employees", "has_dependent_unearned_income",
             "has_hsa", "has_1099r") or _section_present(result, "form_8959_additional_medicare"):
@@ -301,7 +305,7 @@ def _deduction_problem(result: dict, profile: dict, law: dict, method: str | Non
     return ""
 
 
-def filing_input_issues(captured: dict[str, bytes | None]) -> list[str]:
+def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | None = None) -> list[str]:
     """Check required outcomes against the snapshots being used at export."""
     from agents.lib.projection import ProjectionError
 
@@ -316,7 +320,7 @@ def filing_input_issues(captured: dict[str, bytes | None]) -> list[str]:
         law = json.loads(captured.get(law_name) or b"{}")
         mandatory = {"result.json", "taxpayer_profile.json", law_name}
         reasons = []
-        for item_id, positive in _required_filing_inputs(result, profile, law).items():
+        for item_id, positive in _required_filing_inputs(result, profile, law, ledger=ledger).items():
             item = items.get(item_id) or {}
             outcome = item.get("outcome")
             inputs = item.get("inputs") or {}

@@ -72,6 +72,10 @@ def _state_figures(result: dict, profile: dict, law: dict, year: int, status: st
     return fields, issues
 
 
+def _medicare_figures(key: str) -> set[str]:
+    return {"federal.additional_medicare_tax.rate", f"federal.additional_medicare_tax.threshold.{key}"}
+
+
 def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: str) -> set[str]:
     from agents.lib.tax_computations.federal.schedule_c import medicare_status_key, schedule_c_net
 
@@ -109,8 +113,7 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
     medicare_key = medicare_status_key(status)
     if (_section_present(result, "form_8959_additional_medicare") or _positive(form.get("line_1a_wages"))
             or _positive(business_income)):
-        fields.update({"federal.additional_medicare_tax.rate",
-                       f"federal.additional_medicare_tax.threshold.{medicare_key}"})
+        fields.update(_medicare_figures(medicare_key))
     # NIIT was never required: with its threshold null compute_niit returned 0
     # and a $70,000 investment return reached a final package.
     if (_section_present(result, "form_8960_niit") or _section_present(result, "schedule_e_rentals")
@@ -209,8 +212,11 @@ def _provenance_problem(path: str, law: dict, year: int, now: datetime, pin_path
     return None
 
 
-def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | None = None) -> list[str]:
+def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | None = None,
+                  ledger: list | None = None) -> list[str]:
     """Refuse required omissions and unverified provenance, ignoring unused blocks."""
+    from agents.lib.tie_out import filing_medicare_wages
+
     meta = result.get("meta") or {}
     year = meta.get("tax_year") or profile.get("tax_year")
     profile_year = profile.get("tax_year", year)
@@ -223,6 +229,8 @@ def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | Non
         key = _full_status_key(raw_status, "filing law")
         status = "qss" if isinstance(raw_status, str) and raw_status.strip().upper() == "QSS" else key
         fields = _federal_figures(result, profile, law, year, status)
+        if _positive(filing_medicare_wages(ledger or [], None)):
+            fields.update(_medicare_figures({"mfj": "mfj", "mfs": "mfs"}.get(status, "single")))
         state_fields, issues = _state_figures(result, profile, law, year, status)
     except (ValueError, TypeError, AttributeError, capabilities.CapabilityError):
         return ["Could not determine the applicable law from the return and profile."]

@@ -335,7 +335,7 @@ def test_the_package_is_refused_when_the_gates_did_not_run(tmp_path):
 def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     from agents.lib import receipt
     (tmp_path / "taxpayer_profile.json").write_text("{}")
-    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text('{"records": []}')
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     _prepare_export(tmp_path)
     for gate in receipt.REQUIRED_GATES:
@@ -896,7 +896,7 @@ def test_a_package_needs_the_derived_lines_gate_too(tmp_path):
     because six of its category sums now produce the lines they compare."""
     from agents.lib import receipt
     (tmp_path / "taxpayer_profile.json").write_text("{}")
-    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text('{"records": []}')
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     receipt.record(tmp_path, "capabilities", receipt.PASS)
     receipt.record(tmp_path, "tie_out", receipt.PASS)
@@ -912,7 +912,7 @@ def test_a_gate_with_no_verdict_stamps_the_package_but_does_not_refuse_it(tmp_pa
     says on page 1 that one gate verified nothing."""
     from agents.lib import receipt
     (tmp_path / "taxpayer_profile.json").write_text("{}")
-    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text('{"records": []}')
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     _prepare_export(tmp_path)
     receipt.record(tmp_path, "capabilities", receipt.PASS)
@@ -931,7 +931,7 @@ def test_a_document_that_arrives_after_the_tie_out_refuses_the_package(tmp_path)
     bound its verdict to that set until the receipt did."""
     from agents.lib import receipt
     (tmp_path / "taxpayer_profile.json").write_text("{}")
-    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text('{"records": []}')
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
     _prepare_export(tmp_path)
     (tmp_path / "documents").mkdir()
@@ -961,7 +961,7 @@ def test_a_valid_receipt_does_not_certify_another_result_file(tmp_path):
     is a valid receipt on a return no gate has seen."""
     from agents.lib import receipt
     (tmp_path / "taxpayer_profile.json").write_text("{}")
-    (tmp_path / "parse_ledger.json").write_text("{}")
+    (tmp_path / "parse_ledger.json").write_text('{"records": []}')
     result = json.dumps(_result(schedule_d={"line_16": 5000}))
     (tmp_path / "result.json").write_text(result)
     for gate in receipt.REQUIRED_GATES:
@@ -1108,6 +1108,43 @@ def test_niit_and_additional_medicare_ask_for_the_other_tax_review(form, require
     assert ("input.other_taxes" in items) is required
     if required:
         assert items["input.other_taxes"] is True  # not_applicable is refused
+
+
+def test_box_5_wage_evidence_reaches_the_material_and_law_checks():
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    record = tie_out.LedgerRecord(
+        "w2", "documents/w2.pdf", "W-2", "synthetic", "primary",
+        (("wages", 195000), ("medicare_wages", 205000)), None,
+    )
+    result = {"meta": {"tax_year": 2025, "filing_status": "Single"},
+              "form_1040": {"line_1a_wages": 195000}}
+    assert "input.other_taxes" not in material_evidence._required_filing_inputs(result, {}, _LAW_2025)
+    with_box_5 = material_evidence._required_filing_inputs(result, {}, _LAW_2025, ledger=[record])
+    assert with_box_5["input.other_taxes"] is True
+    # Applicability already requests the Medicare cache for positive box 1.
+    # A return with no box 1 wages must also require it when box 5 is positive.
+    result["form_1040"]["line_1a_wages"] = 0
+    law = {"tax_year": 2025}
+    without_box_5 = set(filing_issues(result, {}, law))
+    with_box_5_law = set(filing_issues(result, {}, law, ledger=[record]))
+    assert with_box_5_law - without_box_5 == {
+        f"federal.additional_medicare_tax.{key}: required covered-year figure is missing."
+        for key in ("threshold.single", "rate")
+    }
+
+
+def test_complete_box_5_wages_can_be_lower_than_box_1():
+    record = tie_out.LedgerRecord(
+        "w2", "documents/w2.pdf", "W-2", "synthetic", "primary",
+        (("wages", 210000), ("medicare_wages", 195000)), None,
+    )
+    assert tie_out.filing_medicare_wages([record], 210000) == 195000
+    legacy = tie_out.LedgerRecord(
+        "legacy", "documents/second-w2.pdf", "W-2", "synthetic", "primary",
+        (("wages", 20000),), None,
+    )
+    assert tie_out.filing_medicare_wages([record, legacy], 230000) == 230000
 
 
 def test_excess_social_security_needs_the_payment_review():
