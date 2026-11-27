@@ -180,9 +180,11 @@ writer reserves required-form ids for their filing workflows. Completing Form
 Existing manual-worksheet advice remains part of the limitations manifest.
 
 The tie-out derives separate evidence items for W-2 boxes 1 and 2 from the
-validated ledger. A numeric amount, including zero, is reviewed. A declared
-blank is not applicable and compares as zero. An unread or missing amount
-stays open. The ledger inputs preserve the source record and owner, and the
+validated ledger, for any record whose form type names a W-2 (not a W-2G or
+a territorial form) or that carries a W-2-only box. A numeric amount,
+including zero, is reviewed. A declared blank is not applicable and
+compares as zero, except a Box 1 blank beside Box 2, 3 or 5 amounts, which
+stays open. An unread or missing amount stays open. The ledger inputs preserve the source record and owner, and the
 items stay draft-only until the ledger is repaired and checked again.
 
 ## Pipeline and optional branches

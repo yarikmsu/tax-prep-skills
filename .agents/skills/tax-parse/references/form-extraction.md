@@ -13,9 +13,12 @@ For a box that is visibly blank, record `"blank"` under its number in
 `w2_box_status`, for example `"w2_box_status": {"2": "blank"}`. An unread or
 masked box uses `"unread"` and leaves the amount absent. If both amounts are
 unread, use empty `key_boxes` with both statuses recorded. A missing amount
-without verified blank evidence stays open too.
+without verified blank evidence stays open too. A Box 1 `"blank"` stays open
+when the same W-2 reports Box 2, 3 or 5: read Box 1 again, and record a
+verified zero as the amount `0`.
 
-A blank on Form W-2c can mean the original amount was unchanged. Reconcile
+A blank on Form W-2c, however the form type is spelled, can mean the original
+amount was unchanged, and the tie-out refuses it. Reconcile
 the correction with the original Form W-2 before recording the effective
 amounts once. Keep the other document's coverage record and explain why its
 amounts were not added again.

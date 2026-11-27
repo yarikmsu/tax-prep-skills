@@ -445,6 +445,78 @@ def test_w2_blank_and_verified_zero_are_distinct_and_cannot_conflict():
         tie_out.load_ledger({"records": [raw]})
 
 
+def _w2(form_type="W-2", **boxes):
+    return {"doc_id": "w2", "file": "documents/w2.pdf", "form_type": form_type,
+            "payer": "Example employer", "key_boxes": boxes}
+
+
+def _w2_items(*records):
+    ledger = tie_out.load_ledger({"records": list(records)})
+    return [(item["label"], item["outcome"])
+            for item in tie_out._w2_outcomes(ledger, "a" * 64).values()]
+
+
+def test_w2_item_ids_survive_the_reader_for_any_doc_id(tmp_path):
+    """The id embeds a hex digest, and about one digest in four holds a run of
+    nine decimal digits that `redact` reads as an identifier. The reader
+    refused those ids, so tie-out failed for an ordinary W-2 and stayed
+    wedged: the next sync read the bad file before it could replace it."""
+    from agents.lib.secure_fs import redact
+    doc_id = next(f"w2-{n}" for n in range(1000)
+                  if redact(receipt._entry_key(f"w2-{n}")) != receipt._entry_key(f"w2-{n}"))
+    ledger = tie_out.load_ledger({"records": [dict(_w2(wages=38000, federal_withholding_w2=500),
+                                                   doc_id=doc_id)]})
+    items = tie_out._w2_outcomes(ledger, "a" * 64)
+    material_evidence.sync_group(tmp_path, material_evidence.W2_PREFIX, items)
+    assert material_evidence.read(tmp_path)[1] == items
+
+
+def test_the_writer_refuses_a_record_its_reader_would_refuse(tmp_path):
+    bad = {"note." + "1" * 9: {"label": "Form 1040 line 1", "outcome": "open", "inputs": {}}}
+    with pytest.raises(material_evidence.MaterialEvidenceError, match="invalid material item"):
+        material_evidence.sync_group(tmp_path, "note.", bad)
+    assert not (tmp_path / material_evidence.FILENAME).exists()
+
+
+def test_w2_ids_cannot_be_recorded_by_hand(tmp_path):
+    with pytest.raises(material_evidence.MaterialEvidenceError, match="parse ledger"):
+        material_evidence.record(tmp_path, "w2." + "a" * 64 + ".1", "W-2 Box 1", "open", [])
+
+
+@pytest.mark.parametrize("form_type", ["Form W-2 (Copy B)", "W-2 2025", "IRS Form W-2",
+                                       "W-2 Wage and Tax Statement", "Wage and Tax Statement"])
+def test_a_w2_withholding_only_record_is_open_whatever_its_spelling(form_type):
+    """An exact "W2" code let every longer spelling through with no items, so
+    the AA128 record (withholding, no wages) reached a final package."""
+    items = _w2_items(_w2(form_type, federal_withholding_w2=500, ss_wages=38000))
+    assert items[0] == ("W-2 #1 Box 1 (wages)", "open")
+
+
+@pytest.mark.parametrize("form_type", ["W-2G", "W2-G", "Form W-2G", "W-2GU", "1099-INT"])
+def test_other_forms_carry_no_w2_items(form_type):
+    assert not tie_out._is_w2(form_type, {"taxable_interest": 10})
+
+
+@pytest.mark.parametrize("form_type", ["Form W-2c (Corrected)", "Corrected W-2", "W-2C"])
+def test_a_corrected_w2_cannot_declare_a_blank_whatever_its_spelling(form_type):
+    """A blank on a W-2c means "no change", not zero: read the original."""
+    raw = dict(_w2(form_type, federal_withholding_w2=600), w2_box_status={"1": "blank"})
+    with pytest.raises(tie_out.TieOutError, match="reconcile Form W-2c blanks"):
+        tie_out.load_ledger({"records": [raw]})
+
+
+@pytest.mark.parametrize("boxes, outcome", [({"federal_withholding_w2": 500}, "open"),
+                                            ({"ss_wages": 38000}, "open"),
+                                            ({}, "not_applicable")])
+def test_a_blank_box_1_beside_other_w2_amounts_stays_open(boxes, outcome):
+    """The AA128 shape again, declared rather than dropped. A verified zero is
+    the amount 0 and stays the route for a genuine one."""
+    raw = dict(_w2("W-2", **boxes), w2_box_status={"1": "blank"})
+    assert _w2_items(raw)[0][1] == outcome
+    zero = _w2("W-2", wages=0, **boxes)
+    assert _w2_items(zero)[0][1] == "reviewed"
+
+
 def test_a_package_needs_the_derived_lines_gate_too(tmp_path):
     """Step 12.6 is a REQUIRED gate. Before it was receipted an agent could
     skip it — or pass it and then edit line 24 — and nothing downstream could

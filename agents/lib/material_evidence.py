@@ -29,6 +29,11 @@ _EXCLUDED_INPUTS = {FILENAME, receipt.RECEIPT_NAME, "answers.md"}
 _EXCLUDED_FOLDED = {name.casefold() for name in _EXCLUDED_INPUTS}
 _ID = re.compile(r"[a-z][a-z0-9_.-]{0,95}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# Ids the tie-out derives from a digest. A hex digest holds a run of nine
+# decimal digits about one time in four, which `redact` reads as an
+# identifier, so these ids skip that check. The writer refuses manual
+# entries under the prefix.
+_LEDGER_ID = re.compile(r"w2\.[0-9a-f]{64}\.[12]")
 
 
 class MaterialEvidenceError(Exception):
@@ -84,8 +89,15 @@ def read(workspace: Path) -> tuple[bytes | None, dict]:
     if (not isinstance(data, dict) or type(data.get("version")) is not int
             or data["version"] != 1 or not isinstance(data.get("items"), dict)):
         raise MaterialEvidenceError(f"{FILENAME} must be a version 1 material evidence record")
-    for item_id, item in data["items"].items():
-        if (not _ID.fullmatch(item_id) or redact(item_id) != item_id or not isinstance(item, dict)
+    _check_items(data["items"])
+    return raw, data["items"]
+
+
+def _check_items(items: dict) -> None:
+    for item_id, item in items.items():
+        if (not _ID.fullmatch(item_id)
+                or (not _LEDGER_ID.fullmatch(item_id) and redact(item_id) != item_id)
+                or not isinstance(item, dict)
                 or not _label(item.get("label")) or item.get("outcome") not in OUTCOMES):
             raise MaterialEvidenceError(f"{FILENAME} contains an invalid material item")
         inputs = item.get("inputs")
@@ -96,10 +108,12 @@ def read(workspace: Path) -> tuple[bytes | None, dict]:
             _source_path(name)
             if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
                 raise MaterialEvidenceError(f"{FILENAME} contains an invalid source digest")
-    return raw, data["items"]
 
 
 def _write(workspace: Path, items: dict) -> None:
+    # The reader's checks, before anything reaches disk: a record its own
+    # reader refuses would wedge every later gate on this workspace.
+    _check_items(items)
     with atomic_write(workspace / FILENAME) as handle:
         json.dump({"version": 1, "items": items}, handle, indent=2, sort_keys=True)
         handle.write("\n")

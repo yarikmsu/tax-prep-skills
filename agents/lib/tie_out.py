@@ -703,13 +703,28 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
                                   'keys of a state code and the form\'s locality name, as in "OH:COLUMBUS"')
 
 
-def _w2_code(form_type: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]", "", form_type).upper().removeprefix("FORM")
+# "W-2", "Form W-2 (Copy B)", "W-2 2025", "W-2c". A letter after the 2 other
+# than C is a different form: W-2G is gambling, W-2GU/W-2AS/W-2VI territorial.
+# An exact-code match let every longer spelling through with no box items.
+_W2_FORM = re.compile(r"(?<![A-Z0-9])W[\s\-‐‑–—]*2(?:[\s\-‐‑–—]*(C))?(?![A-Z0-9])")
+# Boxes 3, 5 and 7 appear on a W-2 and on no other source, so a record holding
+# only them is still a W-2 whose boxes 1 and 2 need an outcome.
+_W2_SIGNALS = ("wages", "federal_withholding_w2", "ss_wages", "medicare_wages", "ss_tips")
+
+
+def _w2_form(form_type: str) -> "re.Match | None":
+    if is_w2g_form(form_type):  # "W2-G" puts a separator before the G
+        return None
+    return _W2_FORM.search(form_type.upper())
 
 
 def _is_w2(form_type: str, boxes: dict) -> bool:
-    return (_w2_code(form_type) in {"W2", "W2C"}
-            or any(category in boxes for category, _ in _W2_BOXES.values()))
+    return _w2_form(form_type) is not None or any(category in boxes for category in _W2_SIGNALS)
+
+
+def _is_w2c(form_type: str) -> bool:
+    match = _w2_form(form_type)
+    return match is not None and (match.group(1) is not None or "CORRECTED" in form_type.upper())
 
 
 def _w2_box_status(status: object, boxes: dict, is_w2: bool, where: str) -> dict[str, str]:
@@ -762,7 +777,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         form_type = _require_str(rec.get("form_type"), f"{where}.form_type")
         w2_status = _w2_box_status(rec.get("w2_box_status"), boxes,
                                    skipped is None and _is_w2(form_type, boxes), where)
-        if _w2_code(form_type) == "W2C" and "blank" in w2_status.values():
+        if _is_w2c(form_type) and "blank" in w2_status.values():
             raise TieOutError(f"{where}: reconcile Form W-2c blanks with the original W-2")
         if skipped is None and not boxes and not w2_status:
             raise TieOutError(
@@ -3674,8 +3689,16 @@ def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
     for number, record in enumerate(records, 1):
         boxes = dict(record.key_boxes)
         status = record.w2_box_status or {}
+        # The AA128 shape, declared instead of dropped: box 1 "blank" while the
+        # same form reports withholding or Social Security/Medicare wages. A
+        # verified zero is recorded as the amount 0, never as a blank.
+        reported = any(value > 0 for category, value in record.key_boxes
+                       if category in ("federal_withholding_w2", "ss_wages", "medicare_wages"))
         for box, (category, meaning) in _W2_BOXES.items():
-            if status.get(box) == "blank":
+            if status.get(box) == "blank" and box == "1" and reported:
+                outcome = "open"
+                meaning = "wages; recorded blank beside other W-2 amounts"
+            elif status.get(box) == "blank":
                 outcome = "not_applicable"
             elif category in boxes:
                 outcome = "reviewed"
