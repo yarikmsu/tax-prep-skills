@@ -750,8 +750,8 @@ def _main(argv: list) -> int:
                   file=sys.stderr)
             for reason in reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
-                  "receipt), or pass --draft for a NOT VALIDATED copy.",
+            print("\nResolve open items and re-run /tax-compute, or pass "
+                  "--draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2
         meta = result.get("meta")

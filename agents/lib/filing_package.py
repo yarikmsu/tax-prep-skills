@@ -599,12 +599,11 @@ def _draft_banner(checked) -> str:
         lines += ["", "---", ""]
         return "\n".join(lines)
     lines = ["# NOT VALIDATED — DRAFT ONLY", "",
-             "This package was assembled with `--draft`. It does NOT describe "
-             "the workspace as it stands:", ""]
+             "This package was assembled with `--draft`. The following items "
+             "prevent final filing:", ""]
     lines += [f"- {reason}" for reason in checked.reasons]
-    lines += ["", "Re-run /tax-compute — its Step 0.7, 12.6 and 12.7 gates "
-                  "rewrite the validation receipt — and assemble again before "
-                  "anything here is filed.", "", "---", ""]
+    lines += ["", "Resolve open items and re-run /tax-compute before assembling "
+                  "the final package.", "", "---", ""]
     return "\n".join(lines)
 
 
@@ -645,12 +644,11 @@ def _main(argv: list) -> int:
             checked = receipt.VerifyReport(False, checked.reasons + [packaged],
                                            checked.notes)
         if not checked.valid and not args.draft:
-            print("REFUSED: the filing package would not describe this "
-                  "workspace.", file=sys.stderr)
+            print("REFUSED: the return is not ready for final filing.", file=sys.stderr)
             for reason in checked.reasons:
                 print(f"  - {reason}", file=sys.stderr)
-            print("\nRe-run /tax-compute (Step 0.7, 12.6 and 12.7 rewrite the "
-                  "receipt), or pass --draft for a NOT VALIDATED copy.",
+            print("\nResolve open items and re-run /tax-compute, or pass "
+                  "--draft for a NOT VALIDATED copy.",
                   file=sys.stderr)
             return 2
         if args.json:
