@@ -248,8 +248,9 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
             "has_hsa", "has_1099r") or _section_present(result, "form_8959_additional_medicare"):
         required["input.other_taxes"] = remainder or niit_applies or medicare_applies
 
-    # Excess Social Security withholding is part of line 31 and no gate
-    # compares it with W-2 box 4, so it needs the payment review like the rest.
+    # Excess Social Security withholding is part of line 31. The tie-out
+    # checks it against W-2 boxes 3, 4 and 7, but a railroad employee's
+    # combined Tier 1 worksheet only the payment review can check.
     other_payment = form.get("line_31_schedule3_part2", 0)
     has_other_payment = _positive(other_payment)
     dated_payments = (result.get("form_2210") or {}).get("payment_table") is not None

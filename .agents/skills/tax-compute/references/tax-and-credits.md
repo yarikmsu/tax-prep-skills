@@ -469,8 +469,11 @@ any employer withheld Tier 1 RRTA, compute Schedule 3 line 11 by hand per
 Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
 also creditable) and tell the user the helper's figure would understate it.
 The tie-out compares the Social Security credit to the ledger's W-2 Boxes 3,
-4 and 7 by employee and employer. When the ledger records Tier 1 RRTA
-withholding, attach the combined worksheet to the payments review.
+4 and 7 by employee and employer, reading related names ("Acme", "Acme Inc") as
+one employer. When an employee's W-2 records Tier 1 RRTA withholding, attach
+the combined worksheet to the payments review: the tie-out then only bounds
+that employee's share by the Social Security and Tier 1 tax withheld above one
+year's maximum, and still checks the other spouse exactly.
 
 ### Step 9.5: Estimated-Tax Penalty (Form 2210 → line 38)
 
