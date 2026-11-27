@@ -69,9 +69,10 @@ validated — then the household's after-tax outcome, then ease of use. A small
 planning fix whose value ends on a fixed date, such as a December 31 decision,
 goes ahead of filing work that cannot be used before that date.
 
-**Next for implementation (owner, 2026-11-26):** AA127 step 2, then AA138, AA137 and
-AA139, each a pull request of its own. Their entries name the code, the behavior,
-the tests and when the item is done; a step marked as such is one pull request.
+**Shipped from the owner's 2026-11-26 queue:** AA127 step 2 (#146), AA138 (#147),
+AA137 (#148-#151) and AA139 (#152-#155), each fixed in review before merge. What
+review left is AA127's tier-0 paragraph and AA140; the next queue is the owner's
+to set.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
@@ -96,8 +97,8 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **0. Before 2026-12-31: small, dated planning fixes** | **AA127** step 2 — no harvest loss clears while an in-window buy of another ticker is unclassified. **AA84** the day FTB's missing inputs publish. | Q18. A 2026 harvest sale cannot be made after December 31, and exact-ticker matching over-states the savings a filer acts on today; the owner put it ahead of tier 1 on 2026-11-26 although it is not small. TY2026 filing work cannot be used before that year's documents arrive. AA84 is blocked (blocked table). |
-| **1. Filing quality on every return, before TY2026 documents arrive** | **AA138** — estimate dates and a payment entered twice. **AA137** — NIIT, Additional Medicare and excess Social Security against their sources. **AA139** — the evidence behind an overlap or an expected form. **AA115** gains one negative case per fix. | In this order (owner, 2026-11-26). The evidence record and the intake, source, payment, Schedule C, law and input gates shipped in #132-#141; what review left reaches the same filers: estimates (AA138, current users make them), high earners with brokerage income (AA137), and 1099-NEC/1099-K or consolidated-brokerage households (AA139). W-2s arrive by January 31; corrected 1099s often in March. |
+| **0. Before 2026-12-31: small, dated planning fixes** | **AA127** — what step 2's review left: an unflagged tax-advantaged lot, a spouse's lots on a separate return, a quantity-less purchase beside a gain lot, and same-day lots. **AA84** the day FTB's missing inputs publish. | Q18. A 2026 harvest sale cannot be made after December 31, and each gap over-states the savings a filer acts on. TY2026 filing work cannot be used before that year's documents arrive. AA84 is blocked (blocked table). |
+| **1. Filing quality on every return, before TY2026 documents arrive** | **AA140** — employer identity for excess Social Security, a 1099 inside a consolidated statement, and near-duplicate payments. **AA115** gains one negative case per fix. | AA137, AA138 and AA139 shipped in #147-#155; AA140 is what their review left that can over-state a filed return. W-2s arrive by January 31; corrected 1099s often in March. |
 | **2. Filing quality: as FTB and the IRS publish** | **AA83** — the TY2026 Form 540. **AA80** — the TY2026 part-year return. **AA48** — the TY2026 Form 8949 boxes. **Y8** — the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables. | AA83 decides whether any CA resident can file a TY2026 return here. AA48 blocks every TY2026 crypto import. AA80 serves fewer filers. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed, so Y8 is the reminder to fetch it. The blocked table dates each check. |
 | **3. Filing quality for investors and itemizers** | **AA122** — special-rate gains, a capability rule first. **AA124** — Form 1116. **AA133** — charitable substantiation. **AA134** — Form 8938. **AA121** — the federal Tax Table. | REIT and international funds, gifts of appreciated stock and foreign accounts are what a brokerage household holds, and the $40,000 SALT cap brings more CA filers to Schedule A. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
 | **4. Filing quality: mandatory forms with low reach** | **AA120** — Form 8962 and every mandatory form. | P0 for a filer it reaches, but no current user is known to have Marketplace coverage. It is small once AA136 exists, and moves to tier 1 the day such a filer appears. |
@@ -407,27 +408,20 @@ Trigger and range behavior is documented in
 
 - **AA127 (P1, M): Require transaction coverage for harvest recommendations.**
   Step 1 shipped in #128: no lot clears §1091 until a `transaction_coverage`
-  statement covers the whole file.
-  **Step 2, before 2026-12-31 (tier 0):** `check_wash_sale` and
-  `_apply_wash_sale_prorate` in `agents/lib/loss_harvest.py` pool only same-ticker
-  buys, so an in-window VTI buy leaves a VTSAX loss clear and the savings
-  over-state what a filer can take (AGENTS.md §4's hard-error direction). §1091
-  turns on "substantially identical" stock or securities, which neither a ticker
-  nor a fund family settles, so the engine must not guess. For each losing lot,
-  every in-window buy of a different ticker needs a reviewed classification in
-  `holdings.json`: `identical` (it joins the lot's replacement pool and disallows
-  pro rata, as a same-ticker buy does), `not_identical` (ignored), or no entry, which
-  holds the lot's allowed loss in `unverified_loss` with the reason, the existing
-  under-statement path. A malformed classification is refused. The report names each
-  held lot and the buys that need a decision. Tests: a VTSAX loss with an
-  unclassified in-window VTI buy (held), the same buy classified `not_identical`
-  (clear) and `identical` (disallowed pro rata), a buy outside the window (ignored),
-  and an RSU vest of the employer's stock in a plan account inside the window
-  (same ticker, already disallows; keep it pinned). Done when each rule turns a
-  test red when reverted and `tax-harvest` SKILL.md describes the field.
+  statement covers the whole file. Step 2 shipped in #146: a purchase of another
+  ticker inside the window needs a reviewed `wash_sale_classifications`
+  decision, and a lot whose replacement purchase another lot also matched is
+  held when that lot is fully blocked, held back or a different ticker.
+  **What step 2's review left, each over-stating the plan (tier 0):** a lot in a
+  tax-advantaged account recorded without `tax_advantaged` is harvested, and its
+  account's same-day buy stops counting as a replacement; on a separate return a
+  spouse's lots count as the filer's, since a lot has no owner; a quantity-less
+  purchase at a losing lot's date and account is taken to be that lot alone, so a
+  gain lot bought with it frees an older lot; and lots acquired the same day are
+  matched in file order. Test each, holding or refusing rather than guessing.
   **Step 3 (tier 5):** name the date the post-sale window closes, and break out
   current-year, carryforward and replacement-basis effects.
-  Found by the 2026-11-18 external review.
+  Found by the 2026-11-18 external review and #146's review.
   [IRS Publication 550, TY2025](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
 
 - **AA133 (P1, M): Hold the final package until each gift is substantiated (Q17).**
@@ -474,89 +468,24 @@ Trigger and range behavior is documented in
   position stays open. Found by the 2026-11-18 external review. [IRS
   audits](https://www.irs.gov/businesses/small-businesses-self-employed/irs-audits)
 
-- **AA137 (P2, M): Check NIIT, Additional Medicare and excess Social Security
-  against their sources.** #139 and #140 require the law and a reviewed outcome
-  when Form 1040 lines reach these taxes; four gaps remain, each one pull request.
-  **Step 1, Form 8959 Part II.** `form_8959_additional_medicare` in
-  `agents/templates/result_template.json` has no self-employment lines, so the
-  tax on Schedule SE earnings above the threshold less Medicare wages (§1401(b)(2))
-  is never computed on the filed return. Add lines 8-13, derive them in
-  `return_builder` from the Schedule SE workpaper's per-owner `net_earnings`
-  (combined on a joint return) and Form 8959 line 4 wages with
-  `compute_additional_medicare`, and refuse a return whose SE earnings plus
-  Medicare wages exceed the cached threshold without them. Test a single filer with
-  $100,000 of Medicare wages and a $300,000 Schedule C, by hand from the Form 8959
-  instructions: line 8 $277,050 (Schedule SE line 6), line 11 $200,000 - $100,000,
-  line 12 $177,050, line 13 0.9% of it, $1,593.45; Part I is zero.
-  **Step 2, Medicare wages.** The triggers in `material_evidence._required_filing_inputs`
-  and `applicable_law._federal_figures` read line 1a, and W-2 box 5 runs above box 1
-  by pre-tax deferrals. Read box 5 (`medicare_wages`) from the parse ledger, which
-  `receipt._material_checks` must then capture with the other bytes. Test a W-2 with
-  box 1 under and box 5 over the threshold.
-  **Step 3, boxes 4 and 6.** The ledger records no Social Security or Medicare
-  withholding. Add `ss_tax_withheld` (box 4) and `medicare_tax_withheld` (box 6) to
-  W-2 extraction (`tax-parse/references/form-extraction.md`) as informational
-  categories in `tie_out._INFORMATIONAL`.
-  **Step 4, excess Social Security.** Compare Schedule 3 line 11 in the tie-out
-  with `compute_excess_ss_withholding` per person over the ledger's boxes 3 and 4,
-  and require `federal.social_security.wage_base` (in `applicable_law`) whenever
-  one person has two or more W-2s with Social Security wages. Test two employers
-  over the wage base, one spouse each, and a single employer that over-withheld
-  (no credit; the employer refunds it).
-  Each step is done when its rule turns a test red when reverted. Found by the
-  reviews of #138-#140. [IRS Form 8959 instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i8959--2025.pdf)
-
-- **AA138 (P2, S): Bound estimate dates and catch a payment entered twice.** One
-  pull request. In `agents/lib/tax_computations/federal/payments.py`,
-  `_payment_row` accepts an `estimate` dated anywhere from January 1 of the return
-  year to December 31 of the next, so a next-year payment typed with this year's
-  `tax_year` raises line 26. Refuse an estimate dated after April 15 of the
-  following year unless the row carries `late_credit_confirmed: true` (the IRS
-  account shows it credited to this year). In `reviewed_payments`, refuse a
-  `balance_due` row with the same date and amount as an `estimate` row unless it
-  carries `distinct_payment_confirmed: true`; Form 2210 otherwise counts the one
-  remittance twice. In `filing_package.attachment_checklist` (the "remains to be
-  paid" line), a `balance_due` total is subtracted from line 37 even when that
-  remittance is the extension payment already on Schedule 3 line 10: refuse
-  `balance_due` rows while Schedule 3 line 10 is positive unless
-  `not_extension_payment_confirmed: true`, and never let the credited amount
-  exceed line 37 before it. Tests: a next-year Q1 payment (refused), a January 15
-  fourth installment (accepted), a late estimate with and without confirmation, the
-  double entry with and without confirmation, an extension payment beside a
-  balance-due row, and the checklist's remaining amount. Done when each refusal
-  turns a test red when reverted, and `tax-compute/references/tax-and-credits.md`
-  and the profile template's `_comment_federal` describe the three fields. Found by
-  #137's review.
-
-- **AA139 (P2, M): Evidence behind an overlap or an expected form.** Four gaps, each
-  one pull request, in order of reach.
-  **Step 1, business 1099-K routing.** A business 1099-K recorded as
-  `personal_1099k` draws only the advisory in `tie_out._INFORMATIONAL_ADVISORIES`,
-  and one recorded with `self_employment_gross: 0` passes because
-  `source_reconciliation._book_total` counts a form only above zero. Refuse a
-  1099-K with a positive box 1a whose routed amounts are all zero, and for a filer
-  with `has_self_employment` require a reviewed AA136 outcome (an `input.` item in
-  `material_evidence`) before a 1099-K is treated as personal. Test both.
-  **Step 2, the overlap's evidence.** In `_book_total`, a book row naming two
-  reporters makes two forms one payment on the books' word alone. Require the
-  row to name an evidence file (the processor's transaction report or the client's
-  remittance) bound by digest as an AA136 input, and name in the package
-  disclosure how many receipts and what total were counted once. Test two
-  payments linked as one without evidence (refused) and with it (passes).
-  **Step 3, expected sources.** `rollover._diff_expected_sources` carries names only,
-  so one 1099-INT clears two expected accounts at the same bank. Carry each prior
-  record's `person` and `source_form.account_last4`, and match on them in
-  `tie_out.missing_expected_forms` when present. Test two accounts at one bank with
-  one form received.
-  **Step 4, page-by-page and crypto digests.** A PDF over 10 pages extracted one
-  page per call yields a digest per call with nothing requiring them to agree; take
-  `parse_utils.py digest` once and refuse a page whose `--with-source-digest` differs,
-  recording the digest once on the record. Bind `crypto_transactions.json` to its
-  CSV: `crypto_importer` writes the source digest into the JSON, and the tie-out
-  compares it with the CSV record's `source_sha256`.
-  Each step is done when its rule turns a test red when reverted. Found by the
-  reviews of #135 and #136.
+- **AA140 (P2, M): Close what the reviews of #147-#155 left that over-states a
+  return.** Each gap one pull request, in order of reach.
+  **Employer identity for excess Social Security.** The tie-out groups W-2s by
+  related payer names, so one employer's "Acme Corp" and "Acme Corporation"
+  W-2s read as two employers, and that employer's own over-withholding, which
+  the employer refunds, is accepted on Schedule 3 line 11. Record the employer's
+  EIN (W-2 box b) on each W-2 and group by it, refusing a positive credit
+  without it. An excess typed into line 31 without line 11 is not compared.
+  **A 1099 inside a consolidated statement.** A skipped 1099-K or 1099-NEC
+  `included_in` a consolidated 1099 whose record carries none of its amounts
+  leaves Schedule C line 1 without it; require the container to carry the
+  included form's business gross.
+  **Payments.** A balance-due row one day or one cent from an estimate is still
+  read as a separate remittance, so Form 2210 can count one payment twice, and a
+  joint Form 4868 payment typed into line 10 of a separate return has no
+  allocation check.
+  Each gap is done when its rule turns a test red when reverted. Found by the
+  reviews of #147, #151 and #152.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -868,7 +797,7 @@ merge.
 | AA96 | #94 | Split runs are positional targets only, never a sign that a label's value is there. Still printing: an unlabelled split. On a tilted page the overlay pass drops a split under a label whole, as on main, so its last four is lost. A split-shaped figure a label governs by position masks as an SSN, and one after a heading wrapped onto "number" makes the heading a label, which then masks nine-digit figures down its column, the safe direction. Two governed runs sharing digits mask whole, their neighbour's digits included. |
 | AA99 | #97 | A run governed on neither the original page nor the cleaned one still prints, as on main. A figure whose digits match a run governed on the original page masks wherever it prints, the safe direction. |
 | AA98 | #96 | A value is a label's own only within `_BESIDE` heights of the label or its dot leader. One further along its row leaves the label governing the line under it, which masks an identifier-shaped figure there, the safe direction. The overlay pass still decides which copies to keep as page text reads labels. |
-| AA127 | #128 | OPEN: the first step shipped, so no lot clears §1091 until a `transaction_coverage` statement covers the window, every account the file names and every lot bought inside the window; a missing or partial statement holds every taxable loss back, the under-statement direction, with the reason in the banner. Substantially identical securities, the post-sale window and the effects breakout remain in the Open entry. |
+| AA127 | #128, #146 | OPEN: no lot clears §1091 until `transaction_coverage` covers the window (#128), and a purchase of another ticker in the window needs a reviewed decision (#146); a lot whose purchase another lot also matched is held when that lot is not in the plan, held back or a different ticker. Step 2's residuals and step 3 remain in the Open entry. |
 | AA125 | #130 | OPEN: the summed savings line is gone; comparing exclusive elections on one household baseline remains. |
 | AA118 | #131 | OPEN: the README's privacy and support claims and the persona guide's NC and WA scope are corrected; one coverage source for setup and the support table remains. |
 | AA136 | #132 | `material_evidence.json` binds each material outcome to its evidence and the receipt; deleting it together with the receipt drops items recorded only through the CLI, while required forms, W-2 boxes, sources and filing inputs are re-derived. A Marketplace filer with no advance credit is held to a draft until AA120. |
@@ -881,6 +810,9 @@ merge.
 | AA114 | #139 | Freshness against new legislation is the cache-level STALE review and the season-open audit, not a window on each figure; any `.gov` host is accepted for a state pin; the wage base is AA137's. |
 | AA113 | #140 | Medicare wages above box 1 and excess Social Security against box 4 are AA137's. |
 | AA115 | #141 | OPEN: three TY2025 households shipped; the remaining scenarios wait on their filing paths. |
+| AA138 | #147 | An estimate after the fourth installment needs `late_credit_confirmed`, a payment matching another needs separate remittances, and line 10 sits inside line 31. A one-day or one-cent near miss and a separate return's line 10 allocation are AA140's; a typed 0 on line 10 is the user's statement; Form 2210 does not date an early Form 4868 payment; the evals score a recorded 0 against a golden null. |
+| AA137 | #148, #149, #150, #151 | Form 8959 Part II from Schedule SE with sourced floors under lines 2, 3, 4 and 17; the Medicare screens read box 5, never below line 1a; boxes 4 and 6 are informational; excess Social Security is checked per person and employer, a railroad employee's share bounded. Part I with no Schedule SE earnings is the reviewed other-taxes outcome's, as on a wage-only return; Form 8959 tax also left in `remaining_other_taxes` beside the confirmation is not detectable; the projection still screens Medicare on line 1a; employer identity and an excess typed into line 31 alone are AA140's. |
+| AA139 | #152, #153, #154, #155 | Every dollar of Box 1a is routed, with a reviewed personal routing on any business return; an overlap needs a separate bound evidence file; each received form clears one expected entry; a long PDF and each crypto CSV bind to one digest. A rental 1099-K has no route, books are required only for the NEC and K pair across the household, and the intake prompt lists a missing payer once; a 1099 inside a consolidated statement is AA140's; the crypto JSON's digests are self-reported. |
 | AA109 | #124 | A header label reaches a value one cell off its column, past a blank row or under a header wrapped over two rows, and a dependents row one cell off its header masks in CSV and Excel. Whole values bound every crossing run; only routing, account and transit columns keep nine digits, and a comb in any other named column masks. A whole date stays whole only in an owned date column or under a flag label, so a count before a date beside any other label masks both, the safe direction. An unknown PDF glyph is a possible digit at any width, and only an IRS OMB number is metadata. What it left is AA110. |
 | AA106 | #121 | Partially readable identifier fields refuse before extraction returns: overlaid on a label, crossed by letters or rows, or with some digits mapped. No glyph is decoded. An unknown glyph is a possible digit only within the widths of readable digits in its own font, so an unmapped dash or checkbox beside readable figures does not refuse the page. What it left is in AA109. |
 | AA108 | #120 | A header label introduces a comb or dashed value crossing cells on the next row only, and a whole comb past a spacer or another cell on the label's row masks. A filled label stays open for variant spellings below it. A flag beside a whole date keeps both. What it left is AA109. |

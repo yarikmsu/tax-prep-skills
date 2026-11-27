@@ -5049,3 +5049,117 @@ and #118's backlog edits left to this record.
 - Review recomputed every expected figure from the IRS and FTB sources; all
   matched. The recovery tests now re-render the PDF, and the README links the
   fixed 2025 instructions.
+
+## AA127 — a reviewed decision for every other ticker in the window, second step (#146)
+
+- A purchase of a different ticker inside the ±30-day window now needs a
+  reviewed `wash_sale_classifications` decision: `identical` joins the lot's
+  replacement pool, `not_identical` is ignored, and no entry holds the lot's
+  remaining loss in `unverified_loss`. Malformed or duplicate pairs stop the
+  scan, and the report names each held lot and the purchases it waits on.
+- Review: matching assumes every losing lot is sold, oldest first, so a
+  purchase an older VTSAX lot absorbed left a newer VTI lot clear. Reviewing
+  the pair as identical could then raise the harvestable loss, 25-fold in one
+  case, and the result changed with the order of purchases in the file. A
+  fully blocked lot, never in the plan, still used up its replacement shares
+  on main too. A lot whose purchase another lot also matched is now held when
+  that lot is fully blocked, held back, or a different ticker. Unknown
+  transaction kinds (a `reinvest` row was skipped as a non-buy) and
+  non-finite lot numbers are refused; each banner states its own amount; the
+  skill tells the agent to ask the user for every classification.
+- Left open in AA127: the post-sale window and the effects breakout (step 3),
+  and what step 2's review found that reaches the same plan.
+
+## AA138 — estimate dates and a payment entered twice (#147)
+
+- An estimate dated after April 15 of the following year needed
+  `late_credit_confirmed`; a balance-due row with an estimate's date and
+  amount needed `distinct_payment_confirmed`; a balance-due row beside a
+  positive Schedule 3 line 10 needed `not_extension_payment_confirmed`.
+- Review: the next year's first installment is due April 15 itself, so an
+  on-time next-year voucher still raised line 26. The bound is now the fourth
+  installment's due date (January 15, or the next business day). A Form 4868
+  payment typed both as an estimate and on line 10 was counted twice; an
+  estimate in the following year matching line 10 now needs separate
+  remittances. The builder checks line 10 against line 31 on every return,
+  and Form 2210's refundable credits exclude the extension payment.
+
+## AA137 — Form 8959 Part II on Schedule SE earnings, first step (#148)
+
+- The builder derives Form 8959 lines 8-13 from each owner's Schedule SE
+  earnings and line 4 wages and carries line 18 to Form 1040 line 23, with the
+  hand-worked $1,593.45 case.
+- Review: a reviewed line 4 had to cover only the box 5 amounts the ledger
+  held, so a W-2 without box 5 counted as zero and a line 4 of 0 left $900 off
+  line 23. Line 4's floor now adds boxes 3 and 7 of such a W-2; lines 2, 3 and
+  17 must cover the Form 4137, Form 8919 and RRTA amounts Schedule SE holds;
+  and a computed Form 8959 the builder no longer derives is refused.
+
+## AA137 — Medicare wages from the ledger, second step (#149)
+
+- The Additional Medicare screens in material evidence and applicable law
+  read W-2 box 5 from the parse ledger, which the receipt now captures.
+- Review: with every W-2 carrying box 5, a misread box 5 below line 1a
+  cleared the review line 1a required; the screen is now never below line 1a,
+  and a W-2 without box 5 counts the larger of box 1 and boxes 3 and 7. The
+  screen also reads Schedule SE earnings per owner, a surviving spouse uses
+  the single threshold, and a symlinked ledger no longer reads as deleted.
+
+## AA137 — W-2 boxes 4 and 6 in the ledger, third step (#150)
+
+- Social Security and Medicare tax withheld are informational ledger
+  categories and mark a record as a W-2.
+- Review: the rule that keeps a blank box 1 open beside other W-2 amounts
+  now reads boxes 4 to 7 as well.
+
+## AA137 — excess Social Security against the W-2s, fourth step (#151)
+
+- The tie-out recomputes Schedule 3 line 11 per person and per employer from
+  boxes 3, 4 and 7, and two Social Security W-2s for one person require the
+  covered-year wage base.
+- Review: one employer's W-2s under related names read as two employers, so
+  that employer's own over-withholding was credited; employers are now grouped
+  as source reconciliation groups payers. Any railroad amount anywhere skipped
+  the whole check; it now bounds only that employee's share and checks the
+  other spouse exactly.
+
+## AA139 — 1099-K routing on a business return, first step (#152)
+
+- A positive Box 1a routed to nothing is refused, and personal routing on a
+  business return needs a reviewed outcome bound to the form and the ledger.
+- Review: routing $12,000 of a $20,000 Box 1a passed and validated the
+  package; the routes must now add up to Box 1a to the cent. The review
+  follows an active Schedule C or business receipts as well as the interview
+  flag, and a 1099-K is found by containment, so "Substitute 1099-K" is read.
+
+## AA139 — evidence for an overlap, second step (#153)
+
+- A book row naming two reporters needs an evidence file bound as a reviewed
+  input, and the disclosure counts the receipts and the total counted once.
+- Review: a superseded copy of the 1099-K, a W-2 or the parser's summary of
+  the form was accepted as that evidence; no ledger document or summary file
+  qualifies now.
+
+## AA139 — expected forms by owner and account, third step (#154)
+
+- Rollover carries each prior form's owner and account last four from the
+  archived ledger.
+- Review: the tie-out already matched on both (#136). What let one form
+  clear two accounts was that one received form cleared every entry naming
+  its bank, and rollover collapsed forms told apart only by `series_id`. Each
+  received form now clears one entry, by a maximum matching. Reading the
+  archive with today's ledger rules had stopped rollover, the year-over-year
+  diff and the projection for older archives; an unreadable ledger now falls
+  back to the payer lists and asks. Owner and last four are carried only where
+  two forms share a payer, so a lone form's defaults no longer block it.
+
+## AA139 — page and crypto source digests, fourth step (#155)
+
+- A long PDF is extracted against one pinned digest, and
+  `crypto_transactions.json` records the digest of each imported CSV for the
+  tie-out to compare with the ledger.
+- Review: a byte-identical second download of a crypto CSV could not be
+  linked as a copy, which blocked a correct workspace main passed; and a
+  misspelled `--expected-source-digest` was ignored, extracting unchecked.
+  A crypto CSV may now name its exact copy, and the parse CLI refuses stray
+  arguments.
