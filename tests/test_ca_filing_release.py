@@ -134,6 +134,28 @@ def test_overlapping_business_receipts_release(workspace):
             "Line 35a — refund $1,440.68", "Line 115 $1,128.22"} <= lines
 
 
+def test_missing_form_8959_part_ii_blocks_release(workspace):
+    release.add_overlapping_business(workspace)
+    release.write_w2(workspace / "documents" / "w2-one.pdf", 138000, 27500, 11000, medicare=193001)
+    records = release.parse_sources(workspace)
+    release.run(workspace, "capabilities", "--json")
+    release.prepare_return(workspace, records)
+    path = workspace / "result.json"
+    result = release.read_json(path)
+    result["schedule_se"]["inputs"]["other_taxes_exclude_additional_medicare"] = True
+    release.write_json(path, result)
+    release.run(workspace, "return_builder")
+    result = release.read_json(path)
+    # $9,235 of Schedule SE earnings use the last $6,999 of the threshold.
+    assert result["form_8959_additional_medicare"]["line_13_se_additional_tax"] == 20.12
+    del result["form_8959_additional_medicare"]
+    release.write_json(path, result)
+    builder = release.run(workspace, "return_builder", "--check", expected=2)
+    tie_out = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Form 8959 Part II" in builder and "Form 8959 Part II" in tie_out
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
 def test_same_path_correction_requires_new_intake(workspace):
     release.compute(workspace)
     _assert_ready(workspace)

@@ -27,6 +27,7 @@ W2_FIELDS = {
     "Box 1 Wages": "wages",
     "Box 2 Federal income tax withheld": "federal_withholding_w2",
     "Box 3 Social Security wages": "ss_wages",
+    "Box 5 Medicare wages": "medicare_wages",
     "Box 17 CA income tax withheld": "state_withholding_ca",
 }
 
@@ -135,10 +136,11 @@ def make_workspace(workspace: Path) -> None:
     ])
 
 
-def write_w2(path: Path, wages: int, federal: int, california: int) -> None:
+def write_w2(path: Path, wages: int, federal: int, california: int, *, medicare: int | None = None) -> None:
+    medicare_wages = wages if medicare is None else medicare
     _document(path, "Synthetic Form W-2", [
         (label, f"{amount:,.2f}")
-        for label, amount in zip(W2_FIELDS, (wages, federal, wages, california), strict=True)
+        for label, amount in zip(W2_FIELDS, (wages, federal, wages, medicare_wages, california), strict=True)
     ])
 
 

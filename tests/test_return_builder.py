@@ -1744,13 +1744,15 @@ def _schedule_c_lines(net, gross=50000):
 def _schedule_c_workspace(tmp_path, net=40000, *, exempt=False, other_taxes=250, records=()):
     law = _law()
     law["federal"].update({"social_security": {"wage_base": 175000, "employee_rate": 0.062},
-                           "se_tax": {"rate": 0.153, "net_earnings_factor": 0.9235}})
+                           "se_tax": {"rate": 0.153, "net_earnings_factor": 0.9235},
+                           "additional_medicare_tax": {"rate": .009,
+                                                      "threshold": {"mfj": 250000, "single": 200000}}})
     activity = {"activity_id": "business-a", "person": "primary", "line_31_net": net, "se_treatment": "regular"}
     if exempt:
         activity.update(se_treatment="approved_form_4361", approval_confirmed=True, ministerial_services=True)
     ws = _workspace(tmp_path, law=law, records=records, extra={
         "meta": {"tax_year": 2026, "filing_status": "MFJ", "limitations": ["Synthetic return"]},
-        "schedule_c": {**_schedule_c_lines(net), "activities": [activity]},
+        "schedule_c": {**_schedule_c_lines(net, gross=max(50000, net)), "activities": [activity]},
         "schedule_1_other_income": {"remaining_income": 500, "remaining_income_confirmed": True,
                                     "schedule_c_excluded_from_remaining": True},
         "schedule_se": {"inputs": {"tax_year": 2026,
@@ -1764,6 +1766,116 @@ def _schedule_c_workspace(tmp_path, net=40000, *, exempt=False, other_taxes=250,
         profile["flags"] = {"has_form_4361_exemption": True}
         path.write_text(json.dumps(profile), encoding="utf-8")
     return ws
+
+
+def test_form_8959_part_ii_comes_from_schedule_se_and_medicare_wages(tmp_path):
+    ws = _schedule_c_workspace(tmp_path, net=300000, other_taxes=0, records=(
+        {"wages": 100000, "ss_wages": 100000, "medicare_wages": 100000},
+    ))
+    result_path = ws / "result.json"
+    result = json.loads(result_path.read_text())
+    result["meta"]["filing_status"] = "Single"
+    inputs = result["schedule_se"]["inputs"]
+    inputs["by_owner"]["primary"]["ss_wages"] = 100000
+    result_path.write_text(json.dumps(result))
+    profile_path = ws / "taxpayer_profile.json"
+    profile = json.loads(profile_path.read_text())
+    profile["filing_status"] = "Single"
+    profile_path.write_text(json.dumps(profile))
+    law_path = ws / "tax_law_2026.json"
+    law = json.loads(law_path.read_text())
+    for values in (law["federal"]["filing_statuses"], *law["federal"]["capital_gains_rates"].values()):
+        values["single"] = values["mfj"]
+    law_path.write_text(json.dumps(law))
+    args = ["--workspace", str(ws)]
+    assert RB._main(args) == 2
+    inputs["other_taxes_exclude_additional_medicare"] = True
+    result_path.write_text(json.dumps(result))
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    built = json.loads(result_path.read_text())
+    form = built["form_8959_additional_medicare"]
+    # Schedule SE line 6 is $300,000 x .9235. Form 8959 line 11 is
+    # $200,000 - $100,000. Line 13 is .009 x ($277,050 - $100,000).
+    assert form == {"computed_tax_year": 2026,
+                    "line_1_medicare_wages": 100000, "line_4_total_medicare_wages": 100000,
+                    "line_5_mfj_threshold": 200000, "line_7_additional_tax": 0,
+                    "line_8_se_income": 277050, "line_9_threshold": 200000,
+                    "line_10_medicare_wages": 100000, "line_11_remaining_threshold": 100000,
+                    "line_12_taxable_se_income": 177050, "line_13_se_additional_tax": 1593.45,
+                    "line_18_total_additional_tax": 1593.45}
+    # Regular SE tax is $75,000 x .124 + $277,050 x .029 = $17,334.45.
+    assert built["form_1040"]["line_23_other_taxes"] == 18927.90
+    del built["form_8959_additional_medicare"]
+    result_path.write_text(json.dumps(built))
+    assert RB._main(args + ["--check"]) == T._main(args) == 2
+    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+
+
+def _medicare_inputs(tmp_path, net=300000, records=(), **owner):
+    ws = _schedule_c_workspace(tmp_path, net=net, other_taxes=0, records=records)
+    result, profile, ledger, tax_law, _ = RB.load(ws)
+    inputs = result["schedule_se"]["inputs"]
+    inputs["by_owner"]["primary"].update(owner)
+    inputs["other_taxes_exclude_additional_medicare"] = True
+
+    def settle():
+        return RB.schedule_c.business_tax_workpapers(result, profile, ledger, tax_law,
+                                                     require_other_taxes=True)
+    return result, settle
+
+
+def test_a_w2_without_box_5_sets_a_floor_under_form_8959_line_4(tmp_path):
+    # Box 5 is never below box 3, so a reviewed line 4 of zero would drop
+    # $100,000 of wages and raise line 11 by as much.
+    result, settle = _medicare_inputs(tmp_path, records=({"wages": 100000, "ss_wages": 100000},),
+                                      ss_wages=100000)
+    result["form_8959_additional_medicare"] = {"line_4_total_medicare_wages": 0}
+    with pytest.raises(ValueError, match="line 4 disagrees"):
+        settle()
+    result["form_8959_additional_medicare"]["line_4_total_medicare_wages"] = 100000
+    assert settle()[1]["line_10_medicare_wages"] == 100000
+
+
+@pytest.mark.parametrize("field,line", [("line_8b_form_4137", "line_2_unreported_tips"),
+                                        ("line_8c_form_8919", "line_3_form_8919_wages")])
+def test_form_8959_lines_2_and_3_include_the_schedule_se_wages(tmp_path, field, line):
+    result, settle = _medicare_inputs(
+        tmp_path, records=({"wages": 100000, "ss_wages": 100000, "medicare_wages": 100000},),
+        ss_wages=110000, **{field: 10000})
+    with pytest.raises(ValueError, match="lines 2 and 3"):
+        settle()
+    result["form_8959_additional_medicare"] = {line: 10000}
+    assert settle()[1]["line_4_total_medicare_wages"] == 110000
+
+
+def test_form_8959_line_17_includes_the_rrta_tax_on_listed_compensation(tmp_path):
+    result, settle = _medicare_inputs(tmp_path, net=10000, ss_wages=300000,
+                                      rrta_compensation=300000)
+    with pytest.raises(ValueError, match="line 17"):
+        settle()
+    # .009 x ($300,000 - the $250,000 joint threshold)
+    result["form_8959_additional_medicare"] = {"line_17_rrta_additional_tax": 450}
+    assert settle()[1]["line_18_total_additional_tax"] == 450
+
+
+def test_a_computed_form_8959_left_behind_is_refused(tmp_path):
+    # Under the threshold and unconfirmed, the builder derives no Form 8959.
+    result, settle = _medicare_inputs(tmp_path, net=40000)
+    result["schedule_se"]["inputs"]["other_taxes_exclude_additional_medicare"] = False
+    assert settle()[1] is None
+    # A computed Part I left behind (the confirmation withdrawn) still read $450.
+    result["form_8959_additional_medicare"] = {"computed_tax_year": 2026,
+                                               "line_7_additional_tax": 450,
+                                               "line_18_total_additional_tax": 450}
+    with pytest.raises(ValueError, match="computed Form 8959 remains"):
+        settle()
+    # A typed wage-only Form 8959 is the user's, not a computed one.
+    result["form_8959_additional_medicare"] = {"line_7_additional_tax": 90}
+    assert settle()[1] is None
+    del result["schedule_c"], result["schedule_se"]
+    result["form_8959_additional_medicare"] = {"computed_tax_year": 2026, "line_8_se_income": 277050}
+    with pytest.raises(ValueError, match="computed Form 8959 remains"):
+        settle()
 
 
 @pytest.mark.parametrize(("net", "exempt", "tax", "deduction"), [
@@ -1834,7 +1946,7 @@ def test_build_before_other_taxes_are_reviewed_does_not_clear_final_gates(tmp_pa
 
 
 def test_schedule_se_prices_each_spouse_against_their_own_wage_cap(tmp_path):
-    ws = _schedule_c_workspace(tmp_path, records=({"ss_wages": 175000},))
+    ws = _schedule_c_workspace(tmp_path, records=({"ss_wages": 175000, "medicare_wages": 175000},))
     result, profile, ledger, tax_law, _ = RB.load(ws)
     business = result["schedule_c"]
     business.update(_schedule_c_lines(48000))
@@ -1847,6 +1959,18 @@ def test_schedule_se_prices_each_spouse_against_their_own_wage_cap(tmp_path):
     # Primary: only Medicare on 36,940 net earnings. Spouse: both taxes on 7,388.
     assert derived["line_23_other_taxes"] == 250 + 1071.26 + 1130.36
     assert derived["line_10_adjustments"] == 200 + 535.63 + 565.18
+    # Raise the combined Medicare wages. Both owners' SE earnings count once
+    # against the $40,000 of the joint threshold left after $210,000 wages.
+    result["form_8959_additional_medicare"] = {
+        "line_2_unreported_tips": 35000, "line_4_total_medicare_wages": 210000,
+    }
+    result["schedule_se"]["inputs"]["other_taxes_exclude_additional_medicare"] = True
+    business_tax, medicare = RB.schedule_c.business_tax_workpapers(
+        result, profile, ledger, tax_law, require_other_taxes=True,
+    )
+    assert medicare["line_8_se_income"] == 44328
+    assert medicare["line_13_se_additional_tax"] == 38.95  # .009 x $4,328
+    assert business_tax["line_23_other_taxes"] == 2490.57
     business["activities"][1]["activity_id"] = "business-a"
     with pytest.raises(RB.Blocked, match="unique local reference"):
         RB.build(result, tax_law, ledger, "MFJ", profile)
@@ -1896,7 +2020,7 @@ def test_a_form_4361_exemption_needs_the_interview_answer_and_ministerial_earnin
 def test_schedule_se_line_8d_is_the_parsed_wages_plus_listed_amounts(tmp_path):
     """One spouse carrying the household's box 3 used up the wage base and
     dropped that owner's SE tax: only a lower bound was checked."""
-    ws = _schedule_c_workspace(tmp_path, records=({"ss_wages": 50000},))
+    ws = _schedule_c_workspace(tmp_path, records=({"ss_wages": 50000, "medicare_wages": 50000},))
     result, profile, ledger, tax_law, _ = RB.load(ws)
     owner = result["schedule_se"]["inputs"]["by_owner"]["primary"]
     owner["ss_wages"] = 50000

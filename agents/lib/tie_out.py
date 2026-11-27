@@ -2928,11 +2928,12 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
     try:
-        business_tax = schedule_c.schedule_se_workpaper(result, profile or {}, ledger, tax_law or {},
-                                                       require_other_taxes=True)
+        business_tax, medicare = schedule_c.business_tax_workpapers(
+            result, profile or {}, ledger, tax_law or {}, require_other_taxes=True)
         missing_targets.extend(schedule_c.flow_differences(result, business_tax))
+        missing_targets.extend(schedule_c.medicare_differences(result, medicare))
     except (ValueError, TypeError, OverflowError) as exc:
-        missing_targets.append(f"Schedule C and Schedule SE: {redact(exc)}")
+        missing_targets.append(f"Schedule C, Schedule SE or Form 8959: {redact(exc)}")
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
     missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))

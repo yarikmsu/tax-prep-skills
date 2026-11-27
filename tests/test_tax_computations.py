@@ -8282,6 +8282,7 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
             "for every status; estimate ownership uses the validated status on the reviewed path"),
         "tax_computations/federal/rentals.py::compute_rental_passive_losses": "direct",
         "tax_computations/federal/rentals.py::compute_residential_rental_return": "direct",
+        "tax_computations/federal/schedule_c.py::medicare_status_key": "direct",
         "tax_computations/state/ca.py::compute_ca_schedule_p": "direct",
         "tax_computations/state/ca.py::compute_ca_exemption_credit": "direct",
         "tax_computations/state/ca.py::compute_ca_540": "direct",

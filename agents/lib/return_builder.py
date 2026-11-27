@@ -1031,10 +1031,10 @@ def build(result: dict, tax_law: dict, ledger, filing_status: str,
 
 def _business_tax_workpaper(result, profile, ledger, tax_law, *, checking):
     try:
-        return schedule_c.schedule_se_workpaper(result, profile, ledger, tax_law,
-                                               require_other_taxes=checking)
+        return schedule_c.business_tax_workpapers(result, profile, ledger, tax_law,
+                                                  require_other_taxes=checking)
     except (ValueError, TypeError, OverflowError) as exc:
-        raise Blocked(f"Schedule C and Schedule SE: {redact(exc)}") from None
+        raise Blocked(f"Schedule C, Schedule SE or Form 8959: {redact(exc)}") from None
 
 
 def _business_1040_lines(workpaper: dict | None) -> dict[str, float]:
@@ -1059,7 +1059,7 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
     # Validate before branching into optional income workpapers too.
     _full_status_key(filing_status, "return builder")
     if business_tax is None:
-        business_tax = _business_tax_workpaper(result, profile or {}, ledger, tax_law, checking=False)
+        business_tax, _ = _business_tax_workpaper(result, profile or {}, ledger, tax_law, checking=False)
     business_lines = _business_1040_lines(business_tax)
     if business_lines:
         result = {**result, "form_1040": {**result["form_1040"], **business_lines}}
@@ -1977,7 +1977,7 @@ def california_differences(result: dict, derived: dict) -> list[str]:
 
 def write(workspace: Path, result: dict, derived: "dict[str, float]", *, california=None,
           government=None, other_income=None, other_withholding=None, rental=None, federal_2210=None,
-          business_tax=None) -> bool:
+          business_tax=None, medicare=None) -> bool:
     """Publish the derived lines. Returns whether anything was written.
 
     NOT WRITING AN UNCHANGED FILE IS THE CONTRACT, not an optimization: V8's
@@ -2011,7 +2011,11 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
     payment_changes = federal_2210 is not None and federal_2210 != result.get("form_2210")
     business_changes = business_tax is not None and (business_tax != result.get("schedule_se") or
         business_tax["schedule_2_line_4_se_tax"] != (result.get("schedule_c") or {}).get("se_tax"))
-    if not differences(result, derived) and not california_differences(result, california or {}) and not gov_changes and not other_changes and not withholding_changes and not rental_changes and not payment_changes and not business_changes:
+    medicare_changes = schedule_c.medicare_differences(result, medicare)
+    if (not differences(result, derived) and not california_differences(result, california or {})
+            and not gov_changes and not other_changes and not withholding_changes
+            and not rental_changes and not payment_changes and not business_changes
+            and not medicare_changes):
         return False
     updated = {**result, "form_1040": {**result["form_1040"], **derived}}
     if federal_2210 is not None:
@@ -2019,6 +2023,8 @@ def write(workspace: Path, result: dict, derived: "dict[str, float]", *, califor
     if business_tax is not None:
         updated["schedule_se"] = business_tax
         updated["schedule_c"] = {**result["schedule_c"], "se_tax": business_tax["schedule_2_line_4_se_tax"]}
+    if medicare is not None:
+        updated[schedule_c.FORM_8959] = medicare
     if rental is not None:
         updated["schedule_e_rentals"] = rental
         updated["form_1040"]["line_8_schedule1_other"] = rental["total_schedule1"]
@@ -2179,10 +2185,12 @@ def _main(argv: list) -> int:
             if payment_changes:
                 print("BLOCKED: " + ", ".join(payment_changes), file=sys.stderr)
                 return _record_the_check(workspace, inputs, "FAILED", 2)
-        business_tax = _business_tax_workpaper(result, profile, ledger, tax_law, checking=args.check)
+        business_tax, medicare = _business_tax_workpaper(result, profile, ledger, tax_law, checking=args.check)
         business_changes = schedule_c.flow_differences(result, business_tax) if args.check else []
+        if args.check:
+            business_changes.extend(schedule_c.medicare_differences(result, medicare))
         if business_changes:
-            print("BLOCKED: Schedule C and Schedule SE disagree: " + ", ".join(business_changes), file=sys.stderr)
+            print("BLOCKED: Schedule C, Schedule SE or Form 8959 disagree: " + ", ".join(business_changes), file=sys.stderr)
             return _record_the_check(workspace, inputs, "FAILED", 2)
         if business_tax is not None and not args.check:
             result = {**result, "form_1040": {**result["form_1040"], **_business_1040_lines(business_tax)}}
@@ -2240,7 +2248,7 @@ def _main(argv: list) -> int:
                                       tax_law, ledger, profile)
         if write(workspace, original_result, derived, california=california, government=government,
                  other_income=other_income, other_withholding=other_withholding, rental=rental,
-                 federal_2210=federal_2210, business_tax=business_tax):
+                 federal_2210=federal_2210, business_tax=business_tax, medicare=medicare):
             print(f"Rewrote {len(changes)} derived line(s) of Form 1040 "
                   f"lines 1-38:\n{_report(changes)}\n"
                   "Re-read result.json before using any figure below the "
