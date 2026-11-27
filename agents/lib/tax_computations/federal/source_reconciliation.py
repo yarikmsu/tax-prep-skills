@@ -303,9 +303,12 @@ def _book_total(ledger: list[LedgerRecord], year: object,
         raise ValueError("business books and reported receipts must belong to one Schedule C owner")
     seen: set[str] = set()
     totals: dict[str, int] = defaultdict(int)
-    reported_files = {r.file.casefold() for r in (*books, *reported.values())}
+    # The evidence is the processor's report or the client's remittance, never
+    # a document the ledger already holds: a superseded copy of the 1099-K, or
+    # the parser's own summary of it, vouched for the overlap it was to prove.
+    reported_files = {r.file.casefold() for r in ledger}
     reported_files.update({"parse_ledger.json", "result.json", "taxpayer_profile.json", f"tax_law_{year}.json"})
-    reported_digests = {None, *(r.source_sha256 for r in (*books, *reported.values()))}
+    reported_digests = {None, *(r.source_sha256 for r in ledger)}
     gross, overlap_count, overlap_cents = 0, 0, 0
     for book in books:
         for row in book.business_receipts or []:
@@ -322,6 +325,7 @@ def _book_total(ledger: list[LedgerRecord], year: object,
             if len(reporters) > 1:
                 evidence = row.get("evidence_file")
                 if (not isinstance(evidence, str) or evidence.casefold() in reported_files
+                        or evidence.casefold().startswith("summaries/")
                         or overlap_sources.get(evidence) in reported_digests):
                     raise ValueError("An overlapping business receipt needs a separate evidence_file "
                                      "bound to input.business_receipt_overlap and the current parse ledger.")

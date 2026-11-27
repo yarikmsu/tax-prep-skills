@@ -491,6 +491,30 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
         assert T.evaluate(ledger, result, files, **options).failed
 
 
+@pytest.mark.parametrize("evidence,digest", [
+    ("documents/w2.pdf", "d" * 64),   # another document the ledger holds
+    ("summaries/k.md", "d" * 64),     # the parser's own summary
+    ("remittance.csv", "f" * 64),     # a ledger document's bytes under a new name
+])
+def test_overlap_evidence_is_no_document_the_ledger_already_holds(evidence, digest):
+    nec = dict(_record(doc_id="nec", file="documents/nec.pdf", form_type="1099-NEC", person="primary",
+                       key_boxes={"self_employment_gross": 120}), source_sha256="a" * 64)
+    k = dict(_record(doc_id="k", file="documents/k.pdf", form_type="1099-K", person="primary",
+                     key_boxes={"self_employment_gross": 120, "form_1099k_box_1a": 120}),
+             source_sha256="b" * 64)
+    w2 = dict(_record(doc_id="w2", file="documents/w2.pdf"), source_sha256="f" * 64)
+    rows = [{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec", "k"], "evidence_file": evidence}]
+    book = dict(_record(doc_id="books", file="documents/books.csv", form_type="business books", person="primary",
+                        key_boxes={"self_employment_book_gross": 120}),
+                business_receipts=rows, source_form={"tax_year": 2025}, source_sha256="c" * 64)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 120}}
+    options = {"ledger_sha256": "e" * 64, "evidence_items": {"input.business_receipt_overlap": {
+        "outcome": "reviewed", "inputs": {"parse_ledger.json": "e" * 64, evidence: digest}}}}
+    report = T.evaluate(_ledger(nec, k, book, w2), result,
+                        [nec["file"], k["file"], book["file"], w2["file"]], **options)
+    assert any("evidence_file" in issue for issue in report.source_issues), report.source_issues
+
+
 def test_positive_1099k_box_1a_cannot_be_routed_entirely_to_zero():
     record = _form("k", "1099-K", "Processor", "b" * 64,
                    form_1099k_box_1a=120, self_employment_gross=0, personal_1099k=0)
