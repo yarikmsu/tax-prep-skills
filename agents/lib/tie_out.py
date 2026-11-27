@@ -3788,10 +3788,10 @@ def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
         boxes = dict(record.key_boxes)
         status = record.w2_box_status or {}
         # The AA128 shape, declared instead of dropped: box 1 "blank" while the
-        # same form reports withholding or Social Security/Medicare wages. A
-        # verified zero is recorded as the amount 0, never as a blank.
+        # same form reports any other W-2 amount (boxes 2-7). A verified zero
+        # is recorded as the amount 0, never as a blank.
         reported = any(value > 0 for category, value in record.key_boxes
-                       if category in ("federal_withholding_w2", "ss_wages", "medicare_wages"))
+                       if category in _W2_SIGNALS and category != "wages")
         for box, (category, meaning) in _W2_BOXES.items():
             if status.get(box) == "blank" and box == "1" and reported:
                 outcome = "open"

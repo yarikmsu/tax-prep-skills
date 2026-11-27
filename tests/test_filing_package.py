@@ -782,6 +782,9 @@ def test_a_corrected_w2_cannot_declare_a_blank_whatever_its_spelling(form_type):
 
 @pytest.mark.parametrize("boxes, outcome", [({"federal_withholding_w2": 500}, "open"),
                                             ({"ss_wages": 38000}, "open"),
+                                            ({"ss_tips": 900}, "open"),
+                                            ({"ss_tax_withheld": 2356}, "open"),
+                                            ({"medicare_tax_withheld": 551}, "open"),
                                             ({}, "not_applicable")])
 def test_a_blank_box_1_beside_other_w2_amounts_stays_open(boxes, outcome):
     """The AA128 shape again, declared rather than dropped. A verified zero is
