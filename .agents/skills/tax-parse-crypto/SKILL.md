@@ -107,8 +107,9 @@ For each recognized exchange file, run the deterministic adapter:
 sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv' --exchange coinbase --account-id exchange-A --with-source-digest
 ```
 (Always single-quote the path — same shell-safety rule as `/tax-parse`.) This prints
-`transactions` and `source_sha256`. Save the digest for that CSV's intake
-record. The adapters are header-name driven and tolerant of column
+`transactions`, `source_sha256`, and a one-entry `csv_source_digests` list.
+Save the same digest for that CSV's intake record and the merged normalized
+JSON. The adapters are header-name driven and tolerant of column
 reordering, but real exports drift. **If an adapter errors on an unrecognized
 Transaction Type, pair, or Notes format, run a security-constrained normalization
 sub-task (below) for that file** — dispatch parallel sub-tasks if your agent supports
@@ -246,7 +247,10 @@ and disposal history and reviewed pre-2025 wallet allocation evidence. Never inf
 account ownership, acquisition date or basis. Obtain missing answers before import.
 
 Concatenate all reviewed arrays into ONE `crypto_transactions.json`, retaining
-both internal transfer legs. Set top-level `specific_identification` from the
+both internal transfer legs. Set top-level `csv_source_digests` to the list of
+digests from the ingested CSV snapshots, including CSVs normalized through the
+fallback. Preserve one digest per ingested CSV. The tie-out checks the list
+against the corresponding intake records. Set top-level `specific_identification` from the
 explicit profile answer collected in step 0.5. Add `transfer_links`, keyed by their shared
 `transfer_id`, with `ownership_confirmed: true` and a secured evidence reference.
 Missing matches remain unresolved; never drop a transfer to make the report pass.
@@ -447,7 +451,7 @@ make the next `/tax-compute` fail on an otherwise valid workspace:
 Add the `source_sha256` returned by the adapter or bound CSV read used to
 produce those transactions. Save the same record in `summaries/<doc_id>.record.json`
 so ordinary ledger rebuilds carry it over. Secure that file with `secure_fs`.
-If the digest is absent or the CSV changed, re-import before final export.
+Re-import and rebuild both artifacts when a digest is missing or the CSV changes.
 
 Set `"foreign": true` on the record when the exchange entity is
 foreign-domiciled (Kraken/Binance non-US entities) so `/tax-fbar` step 1.6

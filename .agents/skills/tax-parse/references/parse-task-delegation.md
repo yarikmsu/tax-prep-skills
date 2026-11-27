@@ -38,8 +38,19 @@ double-quote escapes from executing. Never interpolate a path into an inline
 `python3 -c` string, and reject a filename containing a single quote — ask the
 user to rename it.
 
-**A PDF over 10 pages:** extract page by page (`extract '{path}' {page} --with-source-digest`) — that
-bound is on the EXTRACTOR's memory, not on the worker. Do not split the dispatch
+**A PDF over 10 pages:** run these commands in either mode. Compute
+`source_sha256` once before any page and use that same digest on every extraction.
+
+```bash
+sh agents/lib/run.sh agents/lib/parse_utils.py digest '{path}'
+sh agents/lib/run.sh agents/lib/parse_utils.py extract '{path}' {page} --with-source-digest --expected-source-digest {source_sha256}
+```
+
+Use the same flags for a page-level table read. A digest mismatch refuses the
+page before extraction. Discard the whole document's partial work and start
+with a fresh digest. Record one digest for the completed source.
+
+Page-by-page extraction limits the extractor's memory. Do not split the dispatch
 by page expecting to save context: you have already read every page, so the
 main session holds the whole document either way. **That is the cost of this
 mode, and it is the trade the enforced boundary buys** — per-document sub-tasks

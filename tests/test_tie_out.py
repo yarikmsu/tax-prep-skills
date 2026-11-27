@@ -651,16 +651,22 @@ def test_resolved_crypto_skip_passes():
     """/tax-parse-crypto's upsert replaces the pending placeholder with a
     documented skip pointing at its FIFO reconciliation — that passes."""
     recs = _ledger(_record(),
-                   _record(doc_id="cb", file="documents/coinbase_2025.csv",
+                   dict(_record(doc_id="cb", file="documents/coinbase_2025.csv",
                            form_type="crypto-csv", payer="Coinbase",
                            key_boxes={},
                            skipped="crypto exchange CSV — ingested by "
                                    "/tax-parse-crypto; amounts flow to Form "
-                                   "8949/Schedule D via crypto_summary"))
-    report = T.evaluate(recs, _result(),
-                        ["documents/W2_Acme.pdf", "documents/coinbase_2025.csv"])
+                                   "8949/Schedule D via crypto_summary"), source_sha256="c" * 64))
+    files = ["documents/W2_Acme.pdf", "documents/coinbase_2025.csv"]
+    report = T.evaluate(recs, _result(), files, crypto_source={"transactions": [],
+                                                               "csv_source_digests": ["c" * 64]})
     assert not report.failed
     assert report.pending_skips == ()
+    assert not T.evaluate(recs, _result(), files, crypto_source={"source_sha256": "c" * 64}).failed
+    for source in (None, {"csv_source_digests": ["d" * 64]}, {"csv_source_digests": ["c" * 64] * 2}):
+        blocked = T.evaluate(recs, _result(), files, crypto_source=source)
+        assert blocked.failed
+        assert any("Crypto CSV source digests" in item for item in blocked.missing_result_targets)
 
 
 # --------------------------------------------------------------------------

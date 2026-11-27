@@ -944,6 +944,7 @@ def test_bound_crypto_adapter_uses_the_snapshot_when_the_source_is_replaced(tmp_
     output = json.loads(capsys.readouterr().out)
     assert len(output["transactions"]) == 6
     assert output["source_sha256"] == sha256(original).hexdigest()
+    assert output["csv_source_digests"] == [sha256(original).hexdigest()]
     assert output["source_sha256"] != sha256(source.read_bytes()).hexdigest()
 
 
