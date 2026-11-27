@@ -1520,6 +1520,65 @@ def test_invalid_payments_are_blocked_instead_of_changing_the_claim(tmp_path, ro
         _build(ws)
 
 
+@pytest.mark.parametrize("date,confirmation,accepted", [
+    ("2027-01-15", None, True),   # Fourth installment for 2026.
+    ("2027-04-15", None, True),   # Last date before confirmation is required.
+    ("2027-04-15", False, True),
+    ("2027-06-15", None, False),
+    ("2027-06-15", "true", False),
+    ("2027-06-15", True, True),
+])
+def test_late_estimate_needs_credit_confirmed_for_this_year(tmp_path, date, confirmation, accepted):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    row = _federal_row("posted-estimate", 500, date=date)
+    if confirmation is not None:
+        row["late_credit_confirmed"] = confirmation
+    profile = _set_federal_payments(ws, [row], 1, 500)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"}}
+    if accepted:
+        assert reviewed_payments(result, profile).line_26 == 500
+    else:
+        with pytest.raises(ValueError, match="late_credit_confirmed"):
+            reviewed_payments(result, profile)
+
+
+@pytest.mark.parametrize("confirmation", [None, "true", True])
+def test_balance_due_matching_estimate_requires_separate_remittances(tmp_path, confirmation):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    estimate = _federal_row("posted-estimate", 500, date="2027-04-15")
+    balance = _federal_row("balance-payment", 500, date="2027-04-15", kind="balance_due")
+    if confirmation is not None:
+        balance["distinct_payment_confirmed"] = confirmation
+    profile = _set_federal_payments(ws, [balance, estimate], 1, 500)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"}}
+    if confirmation is True:
+        reviewed = reviewed_payments(result, profile)
+        assert reviewed.line_26 == 500 and len(reviewed.rows) == 2
+    else:
+        with pytest.raises(ValueError, match="distinct_payment_confirmed"):
+            reviewed_payments(result, profile)
+
+
+def test_2210_requires_extension_payment_different_from_balance_payment(tmp_path):
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000, "line_31_schedule3_part2": 1000,
+                              "schedule_3_line_10_extension_payment": 1000})
+    row = _federal_row("balance-payment", 500, date="2027-04-15", kind="balance_due")
+    config = {"method": "irs_calculates", "schedule_3_refundable_credits": 0,
+              "excluded_current_year_tax": 0}
+    _set_federal_payments(ws, [row], 0, 0, config=config)
+    with pytest.raises(RB.Blocked, match="not_extension_payment_confirmed"):
+        _build(ws)
+    row["not_extension_payment_confirmed"] = True
+    _set_federal_payments(ws, [row], 0, 0, config=config)
+    assert RB._main(["--workspace", str(ws)]) == 0
+    result = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    assert result["form_2210"]["payment_table"][0]["not_extension_payment_confirmed"] is True
+
+
 def test_only_the_reviewed_joint_share_flows_to_a_separate_return(tmp_path):
     from agents.lib.tax_computations.federal.payments import reviewed_payments
 

@@ -202,6 +202,27 @@ def test_checklist_signature_and_w2_always_present():
     assert "ONLY when it shows federal income tax withheld" in lines
 
 
+def test_balance_checklist_refuses_unreviewed_extension_and_excess_credit():
+    balance_row = {"kind": "balance_due", "date": "2026-04-15", "amount": 400}
+    result = _result(form_2210={"payment_table": [balance_row], "balance_due_paid": 400})
+    form = result["form_1040"]
+    form.update(line_37_amount_owed=700, line_31_schedule3_part2=1000)
+    with pytest.raises(FP.FilingPackageError, match="Review Schedule 3 line 10"):
+        FP.attachment_checklist(result)
+    form["schedule_3_line_10_extension_payment"] = 1000
+    with pytest.raises(FP.FilingPackageError, match="not_extension_payment_confirmed"):
+        FP.attachment_checklist(result)
+    balance_row["not_extension_payment_confirmed"] = True
+    checklist = FP.attachment_checklist(result)
+    assert any("$300.00 of Form 1040 line 37 remains" in line for line in checklist)
+    assert any("include Form 1040-V" in line for line in checklist)
+    form["line_37_amount_owed"] = 400
+    assert all("include Form 1040-V" not in line for line in FP.attachment_checklist(result))
+    form["line_37_amount_owed"] = 399.99
+    with pytest.raises(FP.FilingPackageError, match="exceed Form 1040 line 37"):
+        FP.attachment_checklist(result)
+
+
 def test_checklist_conditional_branches():
     r = _result(form_8949={"rows": [1]},
                 california_540={"ca_total_tax": 8000,

@@ -100,6 +100,7 @@
     "line_29_refundable_aotc": 0,
     "_note_refundable_aotc": "Form 8863 line 8 (40% refundable AOTC) — flows into line_33 even at $0 tax. Persisted at the 1040 level (like the excess-SS note below) so /tax-generate and /tax-verify can audit the refundable payment instead of it silently folding into line 33.",
     "line_31_schedule3_part2": 0,
+    "schedule_3_line_10_extension_payment": null,
     "schedule_3_line_11_excess_ss": 0,
     "_note_excess_ss": "Schedule 3 line 11: per-person compute_excess_ss_withholding() excess_credit sum (multi-employer over the wage base). Flows into line_31_schedule3_part2 -> line_33. Persisted here so /tax-generate and /tax-verify can audit the refundable payment instead of it silently folding into line 33.",
     "line_33_total_payments": 0,

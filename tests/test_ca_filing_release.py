@@ -92,6 +92,26 @@ def test_two_w2s_and_posted_estimate_release(workspace):
     assert {"Line 26 — estimated payments $600.00", "Line 35a — refund $1,738.00", "Line 115 $792.52"} <= lines
 
 
+def test_next_year_estimate_requires_credit_review_before_release(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    _assert_ready(workspace)
+    profile_path = workspace / "taxpayer_profile.json"
+    profile = release.read_json(profile_path)
+    estimate = profile["estimated_payments"]["federal"][0]
+    estimate["date"] = "2026-06-15"
+    release.write_json(profile_path, profile)
+    output = release.run(workspace, "return_builder", "--check", expected=2)
+    assert "late_credit_confirmed" in output
+    tie_out = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "late_credit_confirmed" in tie_out
+    _assert_refused(workspace, "the tie_out gate recorded")
+    estimate["late_credit_confirmed"] = True
+    release.write_json(profile_path, profile)
+    release.compute(workspace)
+    _assert_ready(workspace)
+
+
 def test_overlapping_business_receipts_release(workspace):
     release.add_overlapping_business(workspace)
     release.compute(workspace)

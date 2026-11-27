@@ -30,6 +30,7 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
 )
 from agents.lib import receipt  # noqa: E402
+from agents.lib.tax_computations.federal.payments import reviewed_balance_due  # noqa: E402
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
 )
@@ -424,9 +425,16 @@ def attachment_checklist(result: dict) -> list:
         lines.append("Form 1040 line 26 uses reviewed federal estimates and any applied overpayment. Retain the IRS payment history, prior-return credit, and any joint-payment allocation with the return records.")
         if federal_2210.get("method") == "irs_calculates":
             lines.append("Form 1040 line 38: leave blank for the IRS to calculate any estimated-tax penalty.")
-        already_paid = _field_num(federal_2210, "balance_due_paid", "reviewed federal balance payment")
+        try:
+            already_paid = reviewed_balance_due(f1040, federal_2210["payment_table"])
+        except ValueError as exc:
+            raise FilingPackageError(str(exc)) from None
+        if already_paid != _field_num(federal_2210, "balance_due_paid", "reviewed federal balance payment"):
+            raise FilingPackageError("Form 2210 balance payments disagree with the reviewed payment table")
+        if already_paid > balance_due:
+            raise FilingPackageError("Reviewed balance payments exceed Form 1040 line 37")
         if already_paid > 0:
-            remaining_balance = max(0.0, round(balance_due - already_paid, 2))
+            remaining_balance = round(balance_due - already_paid, 2)
             lines.append(f"Federal balance after reviewed early payments: ${remaining_balance:,.2f} of Form 1040 line 37 remains to be paid.")
     if remaining_balance > 0:
         lines.append(

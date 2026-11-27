@@ -465,6 +465,9 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
 - `estimate` for 1040-ES payments. Reconcile the list to the expected count
   and total from the payment history and verified receipts. Retain independent
   payments of the same amount under distinct source references.
+  For a payment dated after April 15 of the following year, set
+  `late_credit_confirmed: true` only when the IRS account shows the payment
+  credited to this return year.
 - `carry_in` for a prior-year overpayment applied to this tax year. Reconcile
   the combined carry-in to `prior_year.estimated_payments_applied` (pre-filled
   from the prior return by rollover, then confirmed). If the previous return
@@ -474,8 +477,17 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   the effective date.
 - `balance_due` for a reviewed payment already made with an early-filed balance-due
   return, using the covered-year Table 1 effective date. It affects Form
-  2210 timing and the remaining remittance in the filing checklist. Extension
-  payments belong on Schedule 3.
+  2210 timing and the remaining remittance in the filing checklist. When
+  the effective date and amount match an estimate, confirm separate
+  remittances before setting `distinct_payment_confirmed: true` on the
+  balance-due row.
+  Record the reviewed federal extension payment in
+  `form_1040.schedule_3_line_10_extension_payment` and include it in
+  Form 1040 line 31. If line 31 includes payments besides excess Social
+  Security, review line 10 and record zero when there was no extension
+  payment before recording any balance-due rows. When line 10 is positive,
+  verify each balance-due row is a separate remittance and mark it
+  `not_extension_payment_confirmed: true`.
 
 For a separate return, include only the taxpayer's own amounts and confirmed
 allocations from joint payments. Record `allocation_confirmed: true` on each
