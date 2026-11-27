@@ -103,12 +103,23 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
         fields.add("federal.ira_limits.contribution_limit")
     if flags.get("has_foreign_tax_paid") is True or _section_present(result, "form_1116_ftc"):
         fields.add(f"federal.foreign_tax_credit_simplified.max_{two_status_key}")
-    if _section_present(result, "form_8959_additional_medicare"):
-        key = "mfs" if status == "mfs" else two_status_key
-        fields.update({"federal.additional_medicare_tax.rate", f"federal.additional_medicare_tax.threshold.{key}"})
+    business_income = schedule_c_net(result, profile)
+    # Triggered by the INPUTS. Keyed on Form 8959's section, a missing figure
+    # left no section, so the requirement never arose: circular.
+    medicare_key = "mfs" if status == "mfs" else two_status_key
+    if (_section_present(result, "form_8959_additional_medicare") or _positive(form.get("line_1a_wages"))
+            or _positive(business_income)):
+        fields.update({"federal.additional_medicare_tax.rate",
+                       f"federal.additional_medicare_tax.threshold.{medicare_key}"})
+    # NIIT was never required: with its threshold null compute_niit returned 0
+    # and a $70,000 investment return reached a final package.
+    if (_section_present(result, "form_8960_niit") or _section_present(result, "schedule_e_rentals")
+            or any(_positive(form.get(line)) for line in (
+                "line_2b_taxable_interest", "line_3b_ordinary_dividends", "line_7_capital_gain"))):
+        fields.update({"federal.niit.rate", f"federal.niit.threshold.{medicare_key}"})
     if _positive(form.get("schedule_3_line_11_excess_ss")):
         fields.update({"federal.social_security.wage_base", "federal.social_security.employee_rate"})
-    business = schedule_c_net(result, profile)
+    business = business_income
     if _positive(cache._get_path(result, "schedule_se.schedule_2_line_4_se_tax")) or (
             _positive(business) and not (result.get("schedule_se") or {}).get("by_owner")):
         fields.update({"federal.social_security.wage_base", "federal.social_security.employee_rate",
@@ -184,8 +195,13 @@ def _provenance_problem(path: str, law: dict, year: int, now: datetime, pin_path
             retrieved = cache._naive(datetime.fromisoformat(stamp))
         except (TypeError, ValueError, cache.TaxLawSetError):
             return f"{leaf}: verify the authoritative source, covered year and retrieval date in _provenance.{key}."
-        if retrieved > now or (now - retrieved).days > cache._FRESHNESS_DAYS:
-            return f"{leaf}: reconfirm the covered-year figure with a live primary source."
+        # A retrieval stamp says when `set` ran, not that anything was fetched,
+        # so a window on it was cleared by re-running `set` on an unchanged
+        # value. What a figure can prove is its pin, its covered year and its
+        # checksum; freshness against new legislation is the cache-level
+        # STALE review and the season-open audit.
+        if retrieved > now:
+            return f"{leaf}: the retrieval date in _provenance.{key} is in the future."
         digests = entry.get("figure_digests")
         if not isinstance(digests, dict) or digests.get(leaf) != cache._figure_digest(cache._get_path(law, leaf)):
             return f"{leaf}: record the exact verified figure with tax_law_fetcher.py set."
@@ -212,10 +228,17 @@ def filing_issues(result: dict, profile: dict, law: dict, *, now: datetime | Non
 
     pin_paths = cache.source_pins(law)
     timestamp = cache._naive(now) if now is not None else datetime.now()
+    seed = cache.create_empty_tax_law(year)
     for path in sorted(fields | state_fields):
         value = cache._get_path(law, path)
         if value in (None, [], {}):
             issues.append(f"{path}: required covered-year figure is missing.")
+            continue
+        if value == cache._get_path(seed, path):
+            # A statutory constant the template ships complete (the SE factor,
+            # NIIT and Additional Medicare rates and thresholds). Nothing
+            # fetches it, so nothing can give it provenance, and requiring
+            # one blocked every Schedule C return built the documented way.
             continue
         try:
             ref = cache._reference_for(path, law, value, year)

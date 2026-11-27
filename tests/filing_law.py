@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from agents.lib.tax_law_fetcher import _figure_digests, create_state_template, source_pins
+from agents.lib.tax_law_fetcher import _figure_digests, create_empty_tax_law, create_state_template, source_pins
 
 
 def pin_synthetic_law(law: dict, *, retrieved: datetime | None = None) -> dict:
@@ -42,6 +42,11 @@ def write_synthetic_filing_law(workspace) -> dict:
         law.setdefault("state", create_state_template("FL", year))
     if result.get("schedule_c", {}).get("activities"):
         federal.setdefault("qbi_threshold", {"mfj": 300000})
+    # Statutory blocks `create` ships complete: wages and investment income
+    # require them, and an unchanged seed needs no fetch provenance.
+    seed = create_empty_tax_law(year)["federal"]
+    for block in ("niit", "additional_medicare_tax"):
+        federal.setdefault(block, seed[block])
     pin_synthetic_law(law)
     law_path.write_text(json.dumps(law), encoding="utf-8")
     return law

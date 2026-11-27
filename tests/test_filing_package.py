@@ -361,7 +361,7 @@ def test_applicable_amt_and_child_credit_law_block_final_even_with_passing_gates
     assert _package(tmp_path).returncode == 0
 
 
-def test_a_fresh_leaf_keeps_its_own_date_but_cannot_refresh_its_sibling(tmp_path):
+def test_a_leaf_keeps_its_own_provenance_but_cannot_verify_its_sibling(tmp_path):
     from agents.lib.tax_computations.federal.applicable_law import filing_issues
 
     result_path = tmp_path / "result.json"
@@ -371,9 +371,66 @@ def test_a_fresh_leaf_keeps_its_own_date_but_cannot_refresh_its_sibling(tmp_path
     now = datetime.now()
     entry = law["_provenance"]["federal.filing_statuses"]
     law["_provenance"]["federal.filing_statuses.mfj.brackets"] = dict(entry)
-    entry["retrieved"] = (now - timedelta(days=45)).isoformat()
+    law["federal"]["filing_statuses"]["mfj"]["standard_deduction"] += 1000  # edited after `set`
     issues = filing_issues(result, {}, law, now=now)
-    assert issues == ["federal.filing_statuses.mfj.standard_deduction: reconfirm the covered-year figure with a live primary source."]
+    assert issues == ["federal.filing_statuses.mfj.standard_deduction: record the exact verified figure "
+                      "with tax_law_fetcher.py set."]
+
+
+def test_a_retrieval_date_is_not_a_freshness_window(tmp_path):
+    """The stamp says when `set` ran. A 14-day window on it was cleared by
+    re-running `set` on an unchanged value, with no fetch at all."""
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result()), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    now = datetime.now()
+    for entry in law["_provenance"].values():
+        entry["retrieved"] = (now - timedelta(days=45)).isoformat()
+    assert filing_issues(result, {}, law, now=now) == []
+    law["_provenance"]["federal.filing_statuses"]["retrieved"] = (now + timedelta(days=2)).isoformat()
+    assert any("in the future" in issue for issue in filing_issues(result, {}, law, now=now))
+
+
+@pytest.mark.parametrize(("form_1040", "block"), [
+    ({"line_2b_taxable_interest": 70000}, "federal.niit"),
+    ({"line_1a_wages": 400000}, "federal.additional_medicare_tax"),
+])
+def test_law_a_return_uses_is_required_from_its_inputs(tmp_path, form_1040, block):
+    """Keyed on its output line, a missing NIIT or Additional Medicare figure
+    produced no line, so nothing required it and the tax was left out."""
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result(form_1040=form_1040)), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert filing_issues(result, {}, law) == []
+    law["federal"][block.split(".")[1]] = None
+    assert any(issue.startswith(block) and "missing" in issue for issue in filing_issues(result, {}, law))
+
+
+def test_a_cache_built_by_create_and_set_passes_for_a_schedule_c_return(tmp_path):
+    """The seeded SE factor and rates were required with provenance nothing can
+    give them, so every Schedule C cache built the documented way was blocked."""
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+    from agents.lib.tax_law_fetcher import create_empty_tax_law
+
+    seed = create_empty_tax_law(2025)["federal"]
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps(_result(form_1040={"line_1a_wages": 50000})), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+    law["federal"]["se_tax"] = seed["se_tax"]
+    law["federal"]["social_security"] = dict(seed["social_security"], wage_base=176100)
+    for block in ("se_tax", "social_security", "niit", "additional_medicare_tax"):
+        law["_sources"].pop(f"federal.{block}", None)
+        law["_provenance"].pop(f"federal.{block}", None)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["schedule_se"] = {"schedule_2_line_4_se_tax": 100}
+    issues = filing_issues(result, {}, law)
+    assert issues == ["federal.social_security.wage_base: pin an authoritative source at _sources.federal.social_security."]
 
 
 def test_empty_exchange_rates_only_blocks_a_return_using_currency_conversion(tmp_path):
