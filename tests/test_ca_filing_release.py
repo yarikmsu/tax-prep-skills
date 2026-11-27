@@ -44,6 +44,8 @@ def _assert_ready(workspace, forms=("form_1040", "schedule_d", "california_540")
     package = json.loads(_package(workspace, "--json"))
     assert package["validated"] is True and package["receipt"] == verified
     assert [row["key"] for row in package["assembly_order"]] == list(forms)
+    # Each recovery ends in a fresh export of BOTH artifacts, not the package alone.
+    assert _pdf_lines(workspace)
     return package
 
 

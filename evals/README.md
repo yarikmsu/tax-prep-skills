@@ -37,7 +37,7 @@ household uses California Schedule X for taxable income above $100,000.
   deduction leaves $126,750 taxable. Ordinary tax is $17,651 + 24% ×
   ($122,250 − $103,350) = $22,187. The gain adds $675 at 15%, for $22,862
   total tax and a $1,138 refund after $24,000 withholding.
-  [2025 Form 1040 instructions](https://www.irs.gov/instructions/i1040gi),
+  [2025 Form 1040 instructions](https://www.irs.gov/pub/irs-prior/i1040gi--2025.pdf),
   [2025 inflation adjustments](https://www.irs.gov/pub/irs-drop/rp-24-40.pdf),
   [revised standard deduction](https://www.irs.gov/irb/2025-45_IRB)
 - **Form 540 for the same household.** $142,500 of California AGI less the
@@ -46,7 +46,8 @@ household uses California Schedule X for taxable income above $100,000.
   exemption credit to get $9,007.48 tax. Schedule P tentative minimum tax
   is 7% × ($142,500 − $92,749) = $3,482.57, below regular tax. The $9,800
   withholding covers the annual tax and produces a $792.52 refund. The
-  assertions use the toolkit's cent-precision transfer figures.
+  assertions keep cents as the toolkit carries them between lines; the filed
+  Form 540 rounds each line to whole dollars ($9,160, $9,007, $793).
   [2025 Form 540 booklet](https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html),
   [Schedule X](https://www.ftb.ca.gov/forms/2025/2025-540-tax-rate-schedules.pdf),
   [Schedule P](https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf),
@@ -55,7 +56,7 @@ household uses California Schedule X for taxable income above $100,000.
   withholding. The $600 reviewed federal estimate increases line 26 to
   $600, total payments to $24,600 and the federal refund to $1,738. California
   keeps the same withholding and refund.
-  [Form 2210 instructions](https://www.irs.gov/instructions/i2210)
+  [Form 2210 instructions](https://www.irs.gov/pub/irs-prior/i2210--2025.pdf)
 - **Sole proprietor.** Forms 1099-NEC and 1099-K report the same $12,000
   payment. The receipt book counts it once. After $2,000 of expenses, $10,000
   flows through Schedule 1. Schedule SE earnings are $9,235 (92.35% of net),

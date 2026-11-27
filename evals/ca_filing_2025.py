@@ -257,6 +257,7 @@ def prepare_return(workspace: Path, records: list[dict]) -> None:
         wages = sum(row["key_boxes"].get("ss_wages", 0) for row in records)
         result["schedule_c"] = {**template["schedule_c"], "line_1_gross_receipts": gross,
                                 "line_7_gross_income": gross, "line_28_total_expenses": expenses,
+                                "line_29_tentative_profit": gross - expenses,
                                 "line_31_net": net, "activities": [{"person": "primary",
                                     "activity_id": "synthetic-trade", "line_31_net": net, "se_treatment": "regular"}]}
         result["schedule_1_other_income"] = {"remaining_income": 0, "remaining_income_confirmed": True,
