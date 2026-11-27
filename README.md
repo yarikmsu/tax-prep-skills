@@ -7,7 +7,7 @@ The `tax-*` skills guide an AI coding agent through U.S. individual tax preparat
 The tax math is the easy half. The interesting half is the machinery that stops a *plausible* answer from passing as a correct one:
 
 - **Indexed tax figures are fetched for the covered year.** The agent obtains rates and limits from the IRS and state tax agencies. The skills require live sources and stop for covered-year figures when only cached search is available.
-- **Recorded source amounts are reconciled.** `tax-parse` records the source documents it reads. `tax-compute` ties supported ledger categories to the result and reports mismatches and categories it cannot verify.
+- **Recorded source amounts are reconciled.** `tax-parse` records the source documents it reads. `tax-compute` ties supported ledger categories to the result, stops the return on a mismatch, and warns about categories it cannot verify.
 - **Unsupported situations raise named limitations.** Examples include premium tax credit reconciliation, kiddie tax, and rentals outside the reviewed Schedule E scope. Acknowledging a limitation leaves any required calculation or form to be completed separately. TY2025 Schedule E supports certain directly owned long-term residential rentals for full-year California filers and covered no-income-tax regimes. [Rental scope and required worksheets](docs/contributing/rental-income.md).
 - **Bias direction decides severity.** When data is missing or ambiguous, a fallback that *overstates* the number you act on is a hard error; one that understates it degrades with a loud banner. Never a silent guess in the expensive direction.
 - **A skill without its engine refuses to run.** The gates above are scripts in `agents/lib/`, which does not travel when a skill is copied elsewhere. Copied alone, a skill still reads as a complete procedure while every gate silently does nothing — so each one now opens with a preflight, and failing to *run* that check is itself the block.
@@ -20,7 +20,7 @@ Runs on **OpenAI Codex, Cursor, Kimi Code, GitHub Copilot and [Claude Code](http
 
 ### Filing coverage
 
-Coverage depends on the form year, filing status, residency, and facts of the return. Check the form-specific scope before adding source documents.
+Coverage depends on the form year, filing status, residency, and facts of the return. Check the form-specific scope before adding source documents. [Who this fits](docs/WHO-IT-FITS.md) measures how often a named limitation stops a return in the places this toolkit is built for.
 
 - **California.** The TY2025 Form 540 combines computation and manual worksheets for supported full-year residents. The separately declared TY2025 Form 540NR path covers supported part-year residents with reviewed source allocations and worksheets. Part-year projections and withholding forecasts require separate work. [Form 540](docs/contributing/state-module-ca.md) · [Form 540NR](docs/contributing/state-module-ca-part-year.md).
 - **New York.** Form IT-201 covers supported full-year residents, including certain NYC, Yonkers, and MCTMT calculations. TY2025 Form IT-203 covers supported part-year and nonresident returns and NYC Form IT-360.1 with reviewed source allocations and a declared filing plan. The supported IT-203 path requires any other resident or source state to be a covered no-income-tax state with no return due. IT-203 withholding forecasts and ordinary NY projections remain manual. [New York coverage and limits](docs/contributing/state-module-ny.md).
