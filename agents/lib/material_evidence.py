@@ -34,7 +34,7 @@ _DIGEST = re.compile(r"[0-9a-f]{64}")
 # decimal digits about one time in four, which `redact` reads as an
 # identifier, so these ids skip that check. The writer refuses manual
 # entries under the prefix.
-_LEDGER_ID = re.compile(r"w2\.[0-9a-f]{64}\.[12]")
+_LEDGER_ID = re.compile(r"(?:source\.[0-9a-f]{64}|w2\.[0-9a-f]{64}\.[12])")
 
 
 class MaterialEvidenceError(Exception):

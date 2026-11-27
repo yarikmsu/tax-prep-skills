@@ -192,6 +192,9 @@ input that the parser used. The intake record and ledger preserve it through
 ordinary and crypto rebuilds. Tie-out compares it with the source digest it
 will bind to the receipt. A mismatch fails tie-out. A legacy record without a
 digest adds an open item and requires re-parsing before final export.
+`parse_utils.py digest <path>` hashes the same bounded snapshot without
+extracting, for a skipped or hand-transcribed document and for `.xls`, which
+no extractor reads. Its extensions are the tie-out's, held equal by test.
 
 ## Pipeline and optional branches
 

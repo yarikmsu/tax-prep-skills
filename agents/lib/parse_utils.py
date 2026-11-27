@@ -384,6 +384,12 @@ def _validate_file_path(
     return p
 
 
+# Every document type the tie-out hashes (tie_out._DOCUMENT_EXTENSIONS, which a
+# test holds equal). `digest` binds a document no extractor reads, such as a
+# legacy .xls or a page transcribed by hand, so its record is not open forever.
+DIGEST_EXTENSIONS = frozenset({".pdf", ".xlsx", ".xls", ".csv"})
+
+
 def read_source_snapshot(path: str, suffixes: set[str], workspace: str | None = None) -> bytes:
     """Keep an exact, bounded extraction input in memory for the source digest."""
     checked = _validate_file_path(path, suffixes, workspace)
@@ -2388,7 +2394,7 @@ if __name__ == "__main__":
         argv.pop()
     if len(argv) < 2:
         print("Usage: python parse_utils.py [--workspace DIR] "
-              "<scan|classify|extract|tables|csv|excel> <path> [page|sheet] [--with-source-digest]")
+              "<scan|classify|extract|tables|csv|excel|digest> <path> [page|sheet] [--with-source-digest]")
         sys.exit(1)
 
     cmd, path = argv[0], argv[1]
@@ -2433,7 +2439,10 @@ if __name__ == "__main__":
         def emit(data):
             _print_json(data if source is None else {"source_sha256": sha256(source).hexdigest(), "data": data})
 
-        if cmd == "scan":
+        if cmd == "digest":
+            _print_json({"source_sha256": sha256(read_source_snapshot(
+                path, set(DIGEST_EXTENSIONS), workspace)).hexdigest()})
+        elif cmd == "scan":
             _print_json(scan_workspace(_confined_dir(path, workspace)))
         elif cmd == "classify":
             text = extract_pdf_text(path, pages=[0], workspace=workspace)
@@ -2459,7 +2468,7 @@ if __name__ == "__main__":
             emit(extract_excel(path, sheet_names=sheets, workspace=workspace, _source=source))
         else:
             print(f"Error: Unknown command '{redact(cmd)}'. "
-                  f"Valid commands: scan, classify, extract, tables, csv, excel",
+                  f"Valid commands: scan, classify, extract, tables, csv, excel, digest",
                   file=sys.stderr)
             sys.exit(1)
     except (FileNotFoundError, ValueError, NotADirectoryError) as e:

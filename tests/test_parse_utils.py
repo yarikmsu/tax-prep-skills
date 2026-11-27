@@ -1097,6 +1097,41 @@ def test_bound_cli_returns_safe_data_with_the_source_digest(tmp_path, mode):
     assert ("4321" if mode == "excel" else "100,000.00") in data
 
 
+@pytest.mark.parametrize("mode", ["extract", "tables", "excel"])
+def test_bound_extraction_reads_the_snapshot_not_the_path(tmp_path, mode):
+    """The digest is of the snapshot, so the amounts must come from it too. A
+    file replaced after the snapshot was read must not be what is parsed."""
+    from agents.lib import parse_utils
+    if mode == "excel":
+        path = _workbook(tmp_path / "source.xlsx", rows=[["Wages", 4321]])
+    else:
+        path = _build_pdf(tmp_path / "source.pdf")
+    snapshot = parse_utils.read_source_snapshot(str(path), {path.suffix}, str(tmp_path))
+    path.write_bytes(b"replaced after the snapshot")
+    if mode == "excel":
+        data = parse_utils.extract_excel(str(path), workspace=str(tmp_path), _source=snapshot)
+    elif mode == "tables":
+        data = parse_utils.extract_tables(str(path), workspace=str(tmp_path), _source=snapshot)
+    else:
+        data = parse_utils.extract_pdf_text(str(path), workspace=str(tmp_path), _source=snapshot)
+    assert ("4321" if mode == "excel" else "100,000.00") in str(data)
+
+
+def test_digest_binds_a_document_no_extractor_reads(tmp_path):
+    """A legacy .xls, or a page transcribed by hand, still needs a digest on its
+    record, or its source item stays open and final export never comes."""
+    from agents.lib import parse_utils, tie_out
+    assert parse_utils.DIGEST_EXTENSIONS == tie_out._DOCUMENT_EXTENSIONS
+    (tmp_path / "documents").mkdir()
+    legacy = tmp_path / "documents" / "statement.xls"
+    legacy.write_bytes(b"legacy workbook bytes")
+    repo = Path(__file__).resolve().parent.parent
+    result = subprocess.run([sys.executable, "-m", "agents.lib.parse_utils", "--workspace", str(tmp_path),
+                             "digest", "documents/statement.xls"], cwd=repo, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"source_sha256": sha256(legacy.read_bytes()).hexdigest()}
+
+
 def _raw_pdf(path):
     """The UNMASKED pdfplumber read of the fixture."""
     import pdfplumber

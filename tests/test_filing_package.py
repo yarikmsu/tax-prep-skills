@@ -531,6 +531,21 @@ def test_a_blank_box_1_beside_other_w2_amounts_stays_open(boxes, outcome):
     assert _w2_items(zero)[0][1] == "reviewed"
 
 
+def test_source_item_ids_survive_the_reader_for_any_path(tmp_path):
+    """The W-2 ids' defect again: a path whose digest holds a run of nine
+    decimal digits made the source item unreadable and tie-out wedged."""
+    from agents.lib.secure_fs import redact
+    path = next(f"documents/interest{n}.csv" for n in range(1000)
+                if redact(receipt._entry_key(f"documents/interest{n}.csv"))
+                != receipt._entry_key(f"documents/interest{n}.csv"))
+    ledger = tie_out.load_ledger({"records": [{"doc_id": "interest", "file": path, "form_type": "1099-INT",
+                                               "payer": "Example bank", "key_boxes": {"taxable_interest": 200}}]})
+    items, _ = tie_out._source_outcomes(ledger, {receipt._entry_key(path): {"digest": "a" * 64}})
+    assert len(items) == 1
+    material_evidence.sync_group(tmp_path, material_evidence.SOURCE_PREFIX, items)
+    assert material_evidence.read(tmp_path)[1] == items
+
+
 def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_path):
     source_file = tmp_path / "documents" / "interest.csv"
     source_file.parent.mkdir()

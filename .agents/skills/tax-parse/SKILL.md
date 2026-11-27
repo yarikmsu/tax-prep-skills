@@ -334,7 +334,9 @@ prose for a person. Neither reaches the ledger; `boxes` is what a second
 independent extraction is diffed against, which is `==` where comparing two prose
 summaries asks a reader to spot a moved digit.
 
-Keep `source_sha256` from the bound extraction or skip inspection on the record.
+Keep `source_sha256` from the bound extraction on the record. For a skipped or
+hand-transcribed document, or a legacy `.xls` no extractor reads, take it from
+`sh agents/lib/run.sh agents/lib/parse_utils.py digest '<path>'`.
 Carry unchanged digests forward. Re-parse when a digest is missing or differs
 from the current file, including corrections saved under the same filename.
 
