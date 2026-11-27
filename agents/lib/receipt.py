@@ -484,8 +484,7 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
     from agents.lib import capabilities, material_evidence
 
     captured: dict[str, bytes | None] = {MATERIAL_EVIDENCE_NAME: None,
-                                         "taxpayer_profile.json": None,
-                                         "parse_ledger.json": None}
+                                         "taxpayer_profile.json": None}
     reasons = []
     profile_name = "taxpayer_profile.json"
     required_forms = {}
@@ -502,16 +501,6 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
             required_forms = capabilities.required_form_items(profile)
     except (OSError, ValueError, RolloverError, capabilities.CapabilityError):
         reasons.append("Could not check required forms in taxpayer_profile.json.")
-
-    try:
-        candidate = workspace / "parse_ledger.json"
-        ledger_path = _validate_subpath(candidate, workspace)
-        if is_reparse_point(candidate) or (ledger_path.exists() and not ledger_path.is_file()):
-            raise ValueError("ledger must be a local regular file")
-        if ledger_path.is_file():
-            captured["parse_ledger.json"] = ledger_path.read_bytes()
-    except (OSError, ValueError, RolloverError):
-        reasons.append("Could not read parse_ledger.json for filing evidence.")
 
     items: dict = {}
     try:
@@ -588,10 +577,16 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
         from agents.lib.tie_out import TieOutError, load_ledger
         ledger = []
         try:
-            raw_ledger = captured.get("parse_ledger.json")
-            if raw_ledger is not None:
+            # Read as the profile is, and bound with the other captured bytes
+            # so the checks and the receipt describe one ledger. A key holding
+            # None would read as a deleted file.
+            ledger_path = _validate_subpath(workspace / "parse_ledger.json", workspace)
+            if ledger_path.exists() and not ledger_path.is_file():
+                raise ValueError("ledger must be a regular file")
+            if ledger_path.is_file():
+                captured["parse_ledger.json"] = raw_ledger = ledger_path.read_bytes()
                 ledger = load_ledger(json.loads(raw_ledger))
-        except (ValueError, TieOutError):
+        except (OSError, ValueError, RolloverError, TieOutError):
             material_reasons.append("Could not validate parse_ledger.json for filing evidence.")
         material_reasons += _applicable_law_checks(workspace, captured, result_bytes, ledger)
         material_reasons += filing_input_issues(captured, ledger=ledger)

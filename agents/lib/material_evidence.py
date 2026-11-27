@@ -228,6 +228,13 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     niit_applies = investment and _positive(form.get("line_11_agi")) and _above(
         form.get("line_11_agi"), _get_path(law, f"federal.niit.threshold.{key}"))
     business = (result.get("schedule_c") or {}).get("line_31_net")
+    # Form 8959 line 8 never nets one spouse's loss against the other's
+    # earnings, so the Schedule SE earnings per owner screen as well.
+    se_owners = ((result.get("schedule_se") or {}).get("by_owner") or {}).values()
+    se_earnings = sum(owner["net_earnings"] for owner in se_owners
+                      if isinstance(owner, dict) and _positive(owner.get("net_earnings")))
+    if se_earnings and not (isinstance(business, (int, float)) and business >= se_earnings):
+        business = se_earnings
     wages = filing_medicare_wages(ledger or [], form.get("line_1a_wages"))
     earnings = 0.0
     for value in (wages, business):

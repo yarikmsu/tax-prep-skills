@@ -1134,17 +1134,68 @@ def test_box_5_wage_evidence_reaches_the_material_and_law_checks():
     }
 
 
-def test_complete_box_5_wages_can_be_lower_than_box_1():
-    record = tie_out.LedgerRecord(
-        "w2", "documents/w2.pdf", "W-2", "synthetic", "primary",
-        (("wages", 210000), ("medicare_wages", 195000)), None,
-    )
-    assert tie_out.filing_medicare_wages([record], 210000) == 195000
-    legacy = tie_out.LedgerRecord(
-        "legacy", "documents/second-w2.pdf", "W-2", "synthetic", "primary",
-        (("wages", 20000),), None,
-    )
-    assert tie_out.filing_medicare_wages([record, legacy], 230000) == 230000
+def _box_w2(doc_id, **boxes):
+    return tie_out.LedgerRecord(doc_id, f"documents/{doc_id}.pdf", "W-2", "synthetic", "primary",
+                                tuple(boxes.items()), None)
+
+
+def test_box_5_raises_the_medicare_screen_but_never_lowers_it():
+    # Nothing ties box 5 to a source, so a misread box 5 cannot clear the
+    # review line 1a requires.
+    assert tie_out.filing_medicare_wages([_box_w2("a", wages=210000, medicare_wages=195000)],
+                                         210000) == 210000
+    # A W-2 without box 5 counts the larger of box 1 and boxes 3 and 7: the
+    # 401(k) deferral that lowers box 1 does not lower box 3.
+    with_box_5 = _box_w2("a", wages=130000, medicare_wages=150000)
+    assert tie_out.filing_medicare_wages([with_box_5, _box_w2("b", wages=110000)], 240000) == 260000
+    assert tie_out.filing_medicare_wages([_box_w2("c", wages=115000, ss_wages=130000)], 115000) == 130000
+
+
+def test_a_surviving_spouse_screens_medicare_at_the_single_threshold():
+    form = {"line_1a_wages": 220000, "line_11_agi": 230000, "line_2b_taxable_interest": 5000}
+    # Form 8959 gives a qualifying surviving spouse the $200,000 threshold.
+    assert _inputs(dict(form), status="QSS")["input.other_taxes"] is True
+    # NIIT gives the same status the $250,000 joint threshold.
+    assert "input.other_taxes" not in _inputs({**form, "line_1a_wages": 0}, status="QSS")
+
+
+def test_a_surviving_spouse_needs_the_thresholds_its_taxes_use():
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result = {"meta": {"tax_year": 2025, "filing_status": "QSS"},
+              "form_1040": {"line_1a_wages": 100000, "line_2b_taxable_interest": 1000}}
+    issues = set(filing_issues(result, {}, {"tax_year": 2025}))
+
+    def missing(path):
+        return f"{path}: required covered-year figure is missing."
+    assert {missing("federal.additional_medicare_tax.threshold.single"),
+            missing("federal.niit.threshold.mfj")} <= issues
+    assert not {missing("federal.additional_medicare_tax.threshold.mfj"),
+                missing("federal.niit.threshold.single")} & issues
+
+
+def test_one_spouses_business_loss_does_not_hide_the_others_medicare_tax():
+    # Schedule C nets the spouses to $40,000; Form 8959 line 8 counts only the
+    # primary's $92,350, so wages plus earnings exceed the joint $250,000.
+    owners = {"primary": {"net_earnings": 92350}, "spouse": {"net_earnings": 0}}
+    sections = {"schedule_c": {"line_31_net": 40000}, "schedule_se": {"by_owner": owners}}
+    assert _inputs({"line_1a_wages": 200000}, **sections)["input.other_taxes"] is True
+    owners["primary"]["net_earnings"] = 36940
+    assert "input.other_taxes" not in _inputs({"line_1a_wages": 200000}, **sections)
+
+
+def test_a_symlinked_ledger_inside_the_workspace_reads_as_the_gates_read_it(tmp_path):
+    from agents.lib import receipt
+    (tmp_path / "taxpayer_profile.json").write_text("{}")
+    (tmp_path / "ledger-copy.json").write_text('{"records": []}')
+    (tmp_path / "parse_ledger.json").symlink_to("ledger-copy.json")
+    (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
+    _prepare_export(tmp_path)
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
+    assert receipt.verify(tmp_path).valid
+    filing = receipt.verify(tmp_path, for_filing=True)
+    assert not any("parse_ledger.json" in reason for reason in filing.reasons), filing.reasons
 
 
 def test_excess_social_security_needs_the_payment_review():
