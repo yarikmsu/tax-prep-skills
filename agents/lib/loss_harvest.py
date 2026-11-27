@@ -142,11 +142,31 @@ def _parse_txn_date(raw, label: str) -> datetime.date:
         raise LossHarvestError(f"{label} date {raw!r} is not a valid YYYY-MM-DD: {redact(e)}")
 
 
+_TXN_KINDS = ("buy", "sell")
+
+
+def _txn_kind(txn: dict, where: str) -> str:
+    """`buy` or `sell`; an absent kind is a buy.
+
+    Any other value is refused. A dividend reinvestment recorded as `reinvest`
+    used to be skipped as a non-buy, clearing a loss the purchase disallows.
+    """
+    raw = txn.get("kind")
+    if raw is None:
+        return "buy"
+    kind = raw.strip().lower() if isinstance(raw, str) else None
+    if kind not in _TXN_KINDS:
+        raise LossHarvestError(
+            f"{where} kind must be buy or sell. Record a dividend reinvestment, automatic "
+            "investment, RSU vest or ESPP purchase as a buy")
+    return kind
+
+
 def _window_buys(recent_txns: list[dict], as_of: datetime.date):
     for index, txn in enumerate(recent_txns or []):
-        if (txn.get("kind") or "buy").lower() != "buy":
-            continue
         where = f"recent_transactions[{index}]"
+        if _txn_kind(txn, where) != "buy":
+            continue
         tdate = _parse_txn_date(txn.get("date"), label=where)
         days = abs((tdate - as_of).days)
         if days > WASH_SALE_WINDOW_DAYS:
@@ -184,7 +204,7 @@ def _wash_sale_classifications(holdings: dict) -> dict[tuple[str, str], str]:
     for index, row in enumerate(raw):
         where = f"wash_sale_classifications[{index}]"
         if not isinstance(row, dict) or set(row) != {"ticker", "other_ticker", "classification"}:
-            raise LossHarvestError(f"{where} requires ticker, other_ticker and classification")
+            raise LossHarvestError(f"{where} requires exactly ticker, other_ticker and classification")
         ticker = _required_str(row, "ticker", where).upper()
         other = _required_str(row, "other_ticker", where).upper()
         pair = _ticker_pair(ticker, other)
@@ -194,6 +214,14 @@ def _wash_sale_classifications(holdings: dict) -> dict[tuple[str, str], str]:
                 f"{where} must classify a unique pair of different tickers as identical or not_identical")
         decisions[pair] = decision
     return decisions
+
+
+def _decision(lot_ticker: str, bought: str,
+              classifications: dict[tuple[str, str], str]) -> str | None:
+    """`identical`, `not_identical`, or None while the pair is unreviewed."""
+    if lot_ticker == bought:
+        return "identical"
+    return classifications.get(_ticker_pair(lot_ticker, bought))
 
 
 def check_wash_sale(ticker: str, recent_txns: list[dict], as_of: datetime.date, *,
@@ -211,12 +239,13 @@ def check_wash_sale(ticker: str, recent_txns: list[dict], as_of: datetime.date, 
     total_qty = 0.0
     reasons = []
     for _, _, bought, _, qty, reason in _window_buys(recent_txns, as_of):
-        decision = "identical" if target == bought else decisions.get(_ticker_pair(target, bought))
+        decision = _decision(target, bought, decisions)
         if decision == "not_identical":
             continue
         if decision != "identical":
             raise LossHarvestError(
-                f"{redact(target)} needs a reviewed classification for {redact(reason)}")
+                f"{redact(target)} needs a reviewed wash_sale_classifications decision "
+                f"for {redact(reason)}")
         total_qty += qty
         reasons.append(reason)
     return total_qty, reasons
@@ -299,8 +328,14 @@ def _required_num(d: dict, key: str, label: str, *, allow_negative: bool = False
         v = _coerce_numeric(raw, default=None)
     except TypeError:
         raise LossHarvestError(f"{label} {key!r} must be numeric, got bool")
+    except OverflowError:
+        v = math.inf
     if v is None:
         raise LossHarvestError(f"{label} {key!r} must be numeric, got {raw!r}")
+    # An infinite quantity matched no replacement share (matched / inf is 0),
+    # and a NaN basis read as no loss at all.
+    if not math.isfinite(v):
+        raise LossHarvestError(f"{label} {key!r} must be a finite number")
     if not allow_negative and v < 0:
         raise LossHarvestError(f"{label} {key!r} cannot be negative (got {v})")
     return float(v)
@@ -314,7 +349,7 @@ def parse_holdings(data: dict, *, today: datetime.date
     Per-lot work: parses acquired date, derives holding period, computes unrealized
     loss (>= 0). Wash-sale state is set to optimistic defaults (clear / no
     disallowance) here; `_apply_wash_sale_prorate` (called by build_harvest)
-    distributes the per-ticker replacement pool FIFO across losing lots.
+    matches reviewed replacement purchases across losing lots, oldest first.
     Sets `est_value_per_dollar` to 0 here — caller fills it after rate kwargs.
     """
     if not isinstance(data, dict):
@@ -460,7 +495,7 @@ def _coverage_gap(coverage: 'dict | None', lots: 'list[HoldingLot]',
     bought = {((t.get("ticker") or "").strip().upper(),
                _parse_txn_date(t.get("date"), f"transaction {t.get('ticker')}"),
                _account_key(t.get("account")))
-              for t in txns if (t.get("kind") or "buy").lower() == "buy"}
+              for i, t in enumerate(txns) if _txn_kind(t, f"recent_transactions[{i}]") == "buy"}
     unlisted = [l.id for l in lots if needed_from <= l.acquired <= as_of + window
                 and (l.ticker, l.acquired, _account_key(l.account)) not in bought]
     if unlisted:
@@ -523,7 +558,7 @@ def _apply_wash_sale_prorate(
             "index": txn_index, "account_type": account_type, "cost_basis": basis,
             "owner_is_taxpayer": owner_is_taxpayer})
 
-    # Per-ticker: compute lot-aware replacement pool with BUDGET CONSUMPTION
+    # Per ticker: the own-acquisition budget, consumed
     # across same-key buys. Group buys by (date, account); each group has ONE
     # self-acquisition budget (sum of harvest lot quantities matching that
     # date+account), consumed greedily across buys in the group. Without this,
@@ -596,19 +631,22 @@ def _apply_wash_sale_prorate(
         shares_left = lot.quantity
         for buy in replacements:
             ticker = buy["ticker"]
-            if ticker != lot.ticker:
-                decision = classifications.get(_ticker_pair(lot.ticker, ticker))
-                description = f"{buy['reason']} in {buy['account_label']}"
-                if decision is None:
-                    gaps.append(f"Review {description} against {lot.ticker}")
-                    continue
-                if decision == "not_identical":
-                    continue
-                if buy["owns_harvest_shares"]:
-                    gaps.append(f"{description} acquired shares of another losing lot")
-            for excluded_ticker, excluded_id in buy["excluded_lots"]:
-                if excluded_ticker != lot.ticker or ticker != lot.ticker:
-                    gaps.append(f"{buy['reason']} also matches held or blocked lot {excluded_id}")
+            decision = _decision(lot.ticker, ticker, classifications)
+            description = f"{buy['reason']} in {buy['account_label']}"
+            if decision is None:
+                gaps.append(f"Record a wash_sale_classifications decision for {description} "
+                            f"against {lot.ticker}")
+                continue
+            if decision == "not_identical":
+                continue
+            if ticker != lot.ticker and buy["owns_harvest_shares"]:
+                gaps.append(f"{description} also bought another losing lot, so it may replace "
+                            "this one")
+            # Matching assumes every losing lot is sold, oldest first. A lot
+            # the plan does not sell, or one a different ticker matched, may
+            # leave these shares to replace this lot instead.
+            gaps.extend(f"{description} also matched lot {other}; unless lot {other} is sold "
+                        "first, it may replace this one" for other in buy["excluded_lots"])
             take = min(shares_left, buy["remaining"])
             if take > 0:
                 matches.append((buy, take))
@@ -622,8 +660,8 @@ def _apply_wash_sale_prorate(
         adjustments = []
         allocated_shares, allocated_loss = 0.0, 0.0
         for buy, take in matches:
-            if not allowed or gaps:
-                buy["excluded_lots"].append((lot.ticker, lot.id))
+            if not allowed or gaps or buy["ticker"] != lot.ticker:
+                buy["excluded_lots"].append(lot.id)
             allocated_shares += take
             cumulative = round(disallowed * allocated_shares / matched, 2)
             part_loss = round(cumulative - allocated_loss, 2)
@@ -1313,7 +1351,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     # `wash_sale_blocked_loss` is the DISALLOWED portion across taxable lots
     # (partial lots contribute their disallowed slice; fully-blocked lots
     # contribute the whole unrealized loss). Tax-advantaged lots NEVER appear
-    # here even with a same-ticker buy in the window — their wash-sale status
+    # here even with a replacement buy in the window — their wash-sale status
     # is left "clear" because their loss isn't deductible to begin with.
     blocked_loss = round(sum(l.disallowed_loss for l in enriched), 2)
     # Total unrealized loss locked in tax-advantaged accounts (not deductible).
@@ -1522,19 +1560,29 @@ def render_markdown(r: HarvestReport) -> str:
               "marginal effect of harvesting is computed.", ""]
 
     held = [l for l in r.lots if l.held_back]
-    history_gap = next((l.history_gap for l in held if l.history_gap), None)
-    needs_review = any(l.classification_gaps for l in held)
-    held_title = "Held back for wash-sale review" if needs_review else _HELD_BACK
-    if history_gap:
-        lines += [f"> **⚠ Wash-sale history not confirmed — {_money(r.unverified_loss)} "
-                  "of losses held back.** A purchase of the same security in the 30 days "
+    # The history hold is one answer for the whole file; the review hold is per
+    # lot. Each banner states only the loss its own reason holds back.
+    history_held = [l for l in held if l.history_gap]
+    review_held = [l for l in held if l.classification_gaps]
+    held_title = "Held back for wash-sale review" if review_held else _HELD_BACK
+    if history_held:
+        lines += [f"> **⚠ Wash-sale history not confirmed — "
+                  f"{_money(sum(l.allowed_loss for l in history_held))} of losses held "
+                  "back.** A purchase of the same security in the 30 days "
                   "before or after a sale, in your accounts, your spouse's or an IRA, can "
                   "disallow the loss (§1091), and this file does not confirm that history: "
-                  f"{history_gap}.", ""]
-    if needs_review:
-        lines += [f"> **⚠ Wash-sale review incomplete — {_money(r.unverified_loss)} "
-                  "of losses held back.** Review the purchases listed for each lot "
-                  "and re-run the scan before counting these losses.", ""]
+                  f"{history_held[0].history_gap}. The lots under \"{held_title}\" are not "
+                  "in the plan or the savings until `holdings.json` fixes that and the scan "
+                  "re-runs.", ""]
+    if review_held:
+        lines += [f"> **⚠ Wash-sale review incomplete — "
+                  f"{_money(sum(l.allowed_loss for l in review_held))} of losses held "
+                  "back.** Each lot under "
+                  f"\"{held_title}\" names the purchases that hold it back. A purchase of "
+                  "another ticker needs a reviewed decision in `wash_sale_classifications`. "
+                  "A purchase also matched to another lot holds this loss until that lot is "
+                  "sold first, or until the purchase falls outside the 30 days around the "
+                  "sale. These losses are not in the plan or the savings.", ""]
     if r.nonresident_income_warning:
         lines += [f"> **⚠ Nonresident income exposure:** "
                   f"{r.nonresident_income_warning}", ""]
@@ -1667,12 +1715,13 @@ def render_markdown(r: HarvestReport) -> str:
 
     if held:
         lines += [f"## {held_title}", "",
-                  "| Lot | Ticker | Account | Loss held back | Review needed |",
-                  "|---|---|---|---:|---|"]
+                  "| Lot | Ticker | Account | Held | Loss held back | Review needed |",
+                  "|---|---|---|---|---:|---|"]
         for l in held:
             reasons = ([l.history_gap] if l.history_gap else []) + l.classification_gaps
             reason = "<br>".join(reason.replace("|", r"\|") for reason in reasons)
-            lines.append(f"| {l.id} | {l.ticker} | {l.account} | "
+            account = l.account.replace("|", r"\|")
+            lines.append(f"| {l.id} | {l.ticker} | {account} | {l.holding_period.upper()} | "
                          f"{_money(l.allowed_loss)} | {reason} |")
         lines.append("")
 
@@ -1788,8 +1837,12 @@ def render_markdown(r: HarvestReport) -> str:
               "group of qty-known and qty-less buys, qty-known buys consume the budget "
               "first; a qty-less buy with remaining budget assumes the slot "
               "(contribution 0), a qty-less buy with no remaining budget is a genuine "
-              "unknown-qty replacement (full block). The result is order-independent "
-              "(qty-known buys sort first).",
+              "unknown-qty replacement (full block). Within a group the result does not "
+              "depend on row order (qty-known buys sort first).",
+              "- **A purchase matched to more than one losing lot holds the later lots "
+              "back** when an earlier lot is not in the plan, is held back, or is a "
+              "different ticker. Matching assumes every losing lot is sold, oldest first; "
+              "if that lot is not sold first, the same shares may replace the later one.",
               "- **Cross-lot wash sales between multiple harvested same-ticker lots** "
               "acquired at DIFFERENT in-window dates are not fully captured in v1 — "
               "each buy is consumed by its own matching lot, so IRS's "

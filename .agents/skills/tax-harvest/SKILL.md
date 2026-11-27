@@ -182,7 +182,11 @@ permissions through the same guarded writer `/tax-scenario` uses.
   order and case of the two tickers do not matter. Enter each pair once.
   The data above illustrates the field with a hypothetical decision.
   An omitted pair with an in-window buy holds the lot's remaining loss out of
-  the savings estimate. Malformed or duplicate entries stop the scan.
+  the savings estimate. Malformed or duplicate entries stop the scan. A lot is also
+  held when a purchase that replaces it was matched to another losing lot that the
+  plan does not sell, that is held back, or that is a different ticker: matching
+  assumes every losing lot is sold, oldest first, so those shares may replace this
+  lot instead. Each held lot names the purchase and the other lot.
   [IRS Publication 550, Wash Sales](https://www.irs.gov/publications/p550)
 
 ## Steps
@@ -232,8 +236,10 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      exactly what it exists to catch. If they cannot confirm an account, leave it out;
      the scanner holds the losses back and says why.
    - Review each losing ticker against the other tickers bought within the window.
-     Record a decision only after review of the securities and the relevant
-     facts. The report lists unresolved purchases by lot.
+     **Ask the user** for each decision, after they review the securities and the
+     relevant facts. Never write a classification on the user's behalf, and never
+     record `not_identical` to clear a held lot: that is the decision the hold exists
+     to ask for. The report lists unresolved purchases by lot.
 
 3. **Compute.** Run:
    ```bash
