@@ -336,6 +336,32 @@ def test_thousands_grouping_cannot_join_separate_financial_cells(space, groups, 
     assert mask_table(rows) == rows
 
 
+def test_unowned_three_cell_reading_still_masks_an_identifier():
+    digits = _ssn("")
+    fragments = [digits[:3], f"{digits[3:5]} {digits[5:8]}", digits[8:]]
+    rows = [["SSN", "", ""], fragments]
+    masked = mask_table(rows)[-1]
+    assert not _prints(digits[:5], " ".join(masked))
+
+
+@pytest.mark.parametrize("caption", ["Annual earnings", "Federal taxable wages", "W-2 Box 1"])
+@pytest.mark.parametrize("place", ["same_row", "row_above"])
+def test_a_labelled_identifier_between_count_columns_stays_masked(caption, place):
+    """AA116 asked to free "850" | "12 500" | "1" under Count | amount | Copies.
+    The first attempt also printed an identifier cut the same way under its own
+    SSN label, in the row or directly above it, in layouts the masker already
+    protected. A masked amount is recoverable by local transcription; a printed
+    identifier is not, so this layout stays masked."""
+    digits = _ssn("")
+    fragments = [digits[:3], f"{digits[3:5]} {digits[5:8]}", digits[8:]]
+    header = ["Document type", "Count", caption, "Copies"]
+    if place == "same_row":
+        rows = [header, ["SSN", *fragments]]
+    else:
+        rows = [header, ["", "SSN", "", ""], ["", *fragments]]
+    assert not _prints(digits[:5], " ".join(str(c) for c in mask_table(rows)[-1]))
+
+
 @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
 @pytest.mark.parametrize("groups, next_value", [(["12", "500"], "2025"),
                                               (["125", "000"], "125"),
