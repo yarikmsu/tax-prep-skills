@@ -71,9 +71,10 @@ Output as a table:
 |---|------------|-------------|-----------------|------------|
 | 1 | {description} | ${amount} | {what to do} | Easy/Medium/Hard |
 ...
-
-Total potential savings: ${sum}
 ```
+
+Report each estimate against the current return. Identify opportunities that
+are alternatives or use the same expenses and leave the estimates separate.
 
 Only include opportunities where estimated savings > $50. Mark "Already optimized" items with ✅.
 
