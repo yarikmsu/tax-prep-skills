@@ -307,7 +307,7 @@
     "_include_if": "Schedule C has reviewed owner and net income records",
     "inputs": {"tax_year": null, "by_owner": {}, "remaining_adjustments": null,
                "adjustments_exclude_se_deduction": false, "remaining_other_taxes": null,
-               "other_taxes_exclude_se_tax": false},
+               "other_taxes_exclude_se_tax": false, "other_taxes_exclude_additional_medicare": false},
     "_note": "For each owner record confirmed, ss_wages from Schedule SE line 8d, and other_net_profit apart from Schedule C. The builder derives Schedule SE by owner and ties its totals to Schedule 1 line 15 and Schedule 2 line 4."
   },
 
@@ -456,10 +456,20 @@
   },
 
   "form_8959_additional_medicare": {
-    "_include_if": "Medicare wages > $200K (employer withholding threshold)",
+    "_include_if": "Combined Medicare wages and Schedule SE earnings exceed the filing-status threshold, or the covered-year Form 8959 instructions require it",
     "line_1_medicare_wages": 0,
+    "line_2_unreported_tips": 0,
+    "line_3_form_8919_wages": 0,
+    "line_4_total_medicare_wages": null,
     "line_5_mfj_threshold": 0,
     "line_7_additional_tax": 0,
+    "line_8_se_income": 0,
+    "line_9_threshold": 0,
+    "line_10_medicare_wages": 0,
+    "line_11_remaining_threshold": 0,
+    "line_12_taxable_se_income": 0,
+    "line_13_se_additional_tax": 0,
+    "line_17_rrta_additional_tax": 0,
     "line_18_total_additional_tax": 0,
     "line_19_medicare_withheld_w2_box6": 0,
     "line_21_regular_medicare": 0,

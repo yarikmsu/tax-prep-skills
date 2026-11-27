@@ -348,7 +348,19 @@ running the final gates. For a return without Schedule C, use the applicable
 Schedule SE worksheet when preparing other self-employment tax by hand.
 
 **Additional Medicare Tax (Form 8959):**
-Use `compute_additional_medicare()` — always compute if Medicare wages > $200K.
+Use the covered-year Form 8959 instructions and the cached filing-status
+threshold. When Schedule SE earnings and Medicare wages together exceed the
+threshold, enter the reviewed Form 8959 wage inputs. Use all W-2 box 5 amounts,
+Form 4137 line 6 and Form 8919 line 6. Record line 4 in
+`form_8959_additional_medicare.line_4_total_medicare_wages` if the intake ledger
+does not contain every W-2 box 5. Record any separately computed RRTA tax on
+line 17. Exclude all Form 8959 tax from `schedule_se.inputs.remaining_other_taxes`
+and confirm with `other_taxes_exclude_additional_medicare: true`. The builder
+derives Part II from Schedule SE line 6 for each filer and Form 8959 line 4,
+and carries Form 8959 line 18 through Schedule 2 line 11 to Form 1040 line 23.
+For wage-only returns, compute Form 8959 when the instructions require it.
+[IRS Form 8959 instructions, TY2025](https://www.irs.gov/pub/irs-prior/i8959--2025.pdf)
+
 For Form1040 line25c, use actual Additional Medicare withholding from the
 covered-year Form8959 worksheet (TY2025 line24). Its net `over_withholding_credit`
 is not the amount to copy to line25c. Keep the liability in the tax calculation

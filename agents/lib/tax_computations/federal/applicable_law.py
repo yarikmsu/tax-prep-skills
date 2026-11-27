@@ -73,7 +73,7 @@ def _state_figures(result: dict, profile: dict, law: dict, year: int, status: st
 
 
 def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: str) -> set[str]:
-    from agents.lib.tax_computations.federal.schedule_c import schedule_c_net
+    from agents.lib.tax_computations.federal.schedule_c import medicare_status_key, schedule_c_net
 
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
@@ -106,7 +106,7 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
     business_income = schedule_c_net(result, profile)
     # Triggered by the INPUTS. Keyed on Form 8959's section, a missing figure
     # left no section, so the requirement never arose: circular.
-    medicare_key = "mfs" if status == "mfs" else two_status_key
+    medicare_key = medicare_status_key(status)
     if (_section_present(result, "form_8959_additional_medicare") or _positive(form.get("line_1a_wages"))
             or _positive(business_income)):
         fields.update({"federal.additional_medicare_tax.rate",
@@ -116,7 +116,8 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
     if (_section_present(result, "form_8960_niit") or _section_present(result, "schedule_e_rentals")
             or any(_positive(form.get(line)) for line in (
                 "line_2b_taxable_interest", "line_3b_ordinary_dividends", "line_7_capital_gain"))):
-        fields.update({"federal.niit.rate", f"federal.niit.threshold.{medicare_key}"})
+        niit_key = "mfs" if status == "mfs" else two_status_key
+        fields.update({"federal.niit.rate", f"federal.niit.threshold.{niit_key}"})
     if _positive(form.get("schedule_3_line_11_excess_ss")):
         fields.update({"federal.social_security.wage_base", "federal.social_security.employee_rate"})
     business = business_income
