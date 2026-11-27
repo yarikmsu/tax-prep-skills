@@ -263,9 +263,13 @@ def _derived_schedules(result: dict) -> list:
     # `form_6251.amt` directly, from the days when line 17 had no field — so
     # "is there a Schedule 2 Part I" had one answer on the 1040 and another in
     # `form_6251`, and `return_builder` now derives the first from the second.
+    business_tax = result.get("schedule_se") or {}
+    owners = business_tax.get("by_owner") or {}
+    exemption = any(detail.get("approved_form_4361") and not detail.get("line_12_se_tax")
+                    for detail in owners.values())
     if (_field_num(f1040, "line_23_other_taxes", "line_23") != 0
-            or _field_num(f1040, "line_17_schedule2_part1", "line_17") != 0):
-        out.append(("Schedule 2 (Additional Taxes)", "02", None))
+            or _field_num(f1040, "line_17_schedule2_part1", "line_17") != 0 or exemption):
+        out.append(("Schedule 2 (Additional Taxes)", "02", "schedule_se" if owners else None))
     if (_field_num(f1040, "line_20_schedule3_line8", "line_20") != 0
             or _field_num(f1040, "line_31_schedule3_part2", "line_31") != 0
             or _field_num(f1040, "schedule_3_line_11_excess_ss",
@@ -284,7 +288,11 @@ def _derived_schedules(result: dict) -> list:
             or _section_present(result, "form_8938_fatca")):
         out.append(("Schedule B (Interest and Ordinary Dividends — incl. "
                     "Part III foreign accounts)", "08", None))
-    if _field_num(sch_c, "se_tax", "schedule_c.se_tax") > 0:
+    if type(business_tax.get("computed_tax_year")) is int:
+        for owner, detail in owners.items():
+            if _field_num(detail, "line_12_se_tax", "Schedule SE line 12") > 0:
+                out.append((f"Schedule SE (Self-Employment Tax) — {owner}", "17", f"schedule_se.by_owner.{owner}"))
+    elif _field_num(sch_c, "se_tax", "schedule_c.se_tax") > 0:
         out.append(("Schedule SE (Self-Employment Tax)", "17", None))
     if _field_num(f1040, "line_19_ctc", "line_19_ctc") > 0:
         out.append(("Schedule 8812 (Credits for Qualifying Children)", "47",
@@ -396,6 +404,10 @@ def attachment_checklist(result: dict) -> list:
             lines.append("CA rentals: retain the separate FTB3885A depreciation and FTB3801 passive-loss workpapers; complete and attach official forms when required. ScheduleCA SectionB line5 uses only the final allowed-net difference after both PAL limits, not the raw depreciation difference again.")
     if _field_num(result.get("other_forms_withholding") or {}, "w2g_withholding", "W-2G withholding") > 0:
         lines.append("Attach each Form W-2G, Copy B, showing federal withholding in box 4 to the front of Form 1040.")
+    business_tax = result.get("schedule_se") or {}
+    for owner, detail in (business_tax.get("by_owner") or {}).items():
+        if detail.get("approved_form_4361") and not detail.get("line_12_se_tax"):
+            lines.append(f"Schedule 2 line 4: report the approved Form 4361 exception for the {owner} where applicable. Retain the IRS approval.")
 
     if _section_present(result, "form_8949"):
         lines.append(

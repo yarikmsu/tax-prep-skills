@@ -154,7 +154,7 @@ def test_dropped_misc_income_cannot_hide_behind_a_large_other_component_or_scope
     assert result['form_1040']['line_8_schedule1_other']==11200
     def waiver(*args,**kwargs):
         raise B.OutOfScope('synthetic federal PFIC waiver')
-    monkeypatch.setattr(B,'build',waiver)
+    monkeypatch.setattr(B,'_build_with_payment_workpaper',waiver)
     assert B._main(['--workspace',str(ws),'--check'])==0
     result['form_1040']['line_8_schedule1_other']=10000
     write_secure(ws/'result.json',json.dumps(result))
@@ -164,22 +164,31 @@ def test_dropped_misc_income_cannot_hide_behind_a_large_other_component_or_scope
     assert any('form_1040.line_8' in e for e in report.missing_result_targets)
 
 
-@pytest.mark.parametrize('stated,refuses', [(None, True), (0, True), (80000, False)])
-def test_the_remainder_must_state_the_schedule_c_net_it_includes(tmp_path, stated, refuses):
-    # A typed remainder that leaves out an 80,000 Schedule C profit becomes a
-    # derived line 8 80,000 short; --check cannot see it unless it is stated.
+@pytest.mark.parametrize('confirmed', [False, True])
+def test_the_misc_remainder_must_exclude_the_derived_schedule_c_net(tmp_path, confirmed):
     import json
     from agents.lib import return_builder as B
     from agents.lib.secure_fs import write_secure
-    ws = misc_workspace(tmp_path, remaining=80000)
+    ws = misc_workspace(tmp_path, remaining=0)
     result = json.loads((ws/'result.json').read_text())
-    result['schedule_c'] = {'line_31_net': 80000}
-    if stated is not None:
-        result['schedule_1_other_income']['schedule_c_net_included'] = stated
+    from tests.test_return_builder import _schedule_c_lines
+    result['schedule_c'] = {**_schedule_c_lines(80000, gross=80000), 'activities': [
+        {'activity_id': 'business-a', 'person': 'primary', 'line_31_net': 80000, 'se_treatment': 'approved_form_4361',
+         'approval_confirmed': True, 'ministerial_services': True}]}
+    result['schedule_se'] = {'inputs': {'tax_year': 2025, 'remaining_adjustments': 0,
+        'adjustments_exclude_se_deduction': True, 'remaining_other_taxes': 0,
+        'other_taxes_exclude_se_tax': True,
+        'by_owner': {'primary': {'other_net_profit': 0, 'ss_wages': 0, 'confirmed': True}}}}
+    profile = json.loads((ws/'taxpayer_profile.json').read_text())
+    profile.setdefault('flags', {})['has_form_4361_exemption'] = True
+    write_secure(ws/'taxpayer_profile.json', json.dumps(profile))
+    if confirmed:
+        result['schedule_1_other_income']['schedule_c_excluded_from_remaining'] = True
     write_secure(ws/'result.json', json.dumps(result))
-    assert (B._main(['--workspace', str(ws)]) != 0) == refuses
-    if not refuses:  # the statement survives the rebuilt workpaper
-        assert B._main(['--workspace', str(ws)]) == 0
+    assert (B._main(['--workspace', str(ws)]) == 0) == confirmed
+    if confirmed:
+        result = json.loads((ws/'result.json').read_text())
+        assert result['form_1040']['line_8_schedule1_other'] == 81200
         assert B._main(['--workspace', str(ws), '--check']) == 0
 
 
@@ -288,14 +297,16 @@ def test_filing_package_cannot_ignore_an_active_workpaper_with_a_bad_year_witnes
         F.assembly_order(result)
 
 
-def test_the_benefits_remainder_must_state_the_schedule_c_net_too():
+def test_the_benefits_remainder_receives_the_derived_schedule_c_net_once():
     from agents.lib import tie_out as T
     from tests.test_government_benefits import source as benefit
     ledger = T.load_ledger({'records': [benefit()]})
     result = {'meta': {'tax_year': 2025}, 'form_1040': {'line_8_schedule1_other': 0},
               'schedule_1_government_benefits': {'other_income': 80000, 'other_income_confirmed': True},
-              'schedule_c': {'line_31_net': 80000}}
-    with pytest.raises(ValueError, match='schedule_c_net_included'):
+              'schedule_c': {'line_1_gross_receipts': 80000, 'line_7_gross_income': 80000,
+                             'line_28_total_expenses': 0, 'line_31_net': 80000}}
+    with pytest.raises(ValueError, match='confirm remaining Schedule1 income'):
         T.derive_government_workpaper(ledger, result, {'tax_year': 2025})
-    result['schedule_1_government_benefits']['schedule_c_net_included'] = 80000
+    result['schedule_1_other_income'] = {'remaining_income': 0, 'remaining_income_confirmed': True,
+                                        'schedule_c_excluded_from_remaining': True}
     assert T.derive_government_workpaper(ledger, result, {'tax_year': 2025})['other_income'] == 80000
