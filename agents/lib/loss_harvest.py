@@ -215,7 +215,8 @@ def check_wash_sale(ticker: str, recent_txns: list[dict], as_of: datetime.date, 
         if decision == "not_identical":
             continue
         if decision != "identical":
-            raise LossHarvestError(f"{target} needs a reviewed classification for {reason}")
+            raise LossHarvestError(
+                f"{redact(target)} needs a reviewed classification for {redact(reason)}")
         total_qty += qty
         reasons.append(reason)
     return total_qty, reasons
