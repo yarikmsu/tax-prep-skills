@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 BOOK_GROSS = "self_employment_book_gross"
 BUSINESS_GROSS = "self_employment_gross"
+K_REPORTED_GROSS = "form_1099k_box_1a"
+_K_ROUTES = (BUSINESS_GROSS, "personal_1099k", "capital_proceeds")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
 
 
@@ -31,8 +33,10 @@ def _clean_code(name: str) -> str:
 
 def _base_form(name: str) -> str:
     code = _clean_code(name)
+    # Containment, as the 1099-DA rule reads it: "Substitute 1099-K" or
+    # "PayPal 1099-K" matched no business rule as a prefix test.
     for business_form in ("1099NEC", "1099K"):
-        if code.startswith(business_form):
+        if business_form in code and not _consolidated(code):
             return business_form
     return "W2" if code == "W2C" else code
 
@@ -134,7 +138,29 @@ def _payer_identity(name: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[^\W_]+", name.casefold()))
 
 
-def _review_forms(ledger: list[LedgerRecord], year: object) -> tuple[list[str], list[str]]:
+def _review_1099k(record: LedgerRecord, number: int,
+                  personal_sources: dict[str, str] | None) -> list[str]:
+    boxes = dict(record.key_boxes)
+    routes = {route: boxes[route] for route in _K_ROUTES if route in boxes}
+    reported = boxes.get(K_REPORTED_GROSS)
+    if reported is None:
+        return [f"Document #{number} needs verified Form 1099-K Box 1a in {K_REPORTED_GROSS}."]
+    # Every dollar of Box 1a has a line (IRS, "What to do with Form 1099-K").
+    # Routing only part of it dropped the rest from Schedule C unseen, and
+    # leaving it unrouted needed less review than calling it personal.
+    routed = round(sum(routes.values()), 2)
+    if routed != round(reported, 2):
+        return [f"Document #{number} routes ${routed:,.2f} of its ${reported:,.2f} Form 1099-K Box 1a. "
+                "Route all of it to business, personal or capital receipts."]
+    if (personal_sources is not None and (routes.get("personal_1099k") or routes.get("capital_proceeds"))
+            and (not record.source_sha256 or personal_sources.get(record.file) != record.source_sha256)):
+        return [f"Document #{number} needs a reviewed input.1099k_personal_routing outcome "
+                "bound to the form and parse ledger before treating its receipts as personal."]
+    return []
+
+
+def _review_forms(ledger: list[LedgerRecord], year: object,
+                  personal_sources: dict[str, str] | None) -> tuple[list[str], list[str]]:
     problems, disclosures = [], []
     records = {r.doc_id: (number, r) for number, r in enumerate(ledger, 1)}
     digests: dict[str, list[tuple[int, LedgerRecord]]] = defaultdict(list)
@@ -151,8 +177,8 @@ def _review_forms(ledger: list[LedgerRecord], year: object) -> tuple[list[str], 
         if record.source_sha256:
             digests[record.source_sha256].append((number, record))
         if record.skipped is None:
-            if form == "1099K" and not {BUSINESS_GROSS, "personal_1099k", "capital_proceeds"} & dict(record.key_boxes).keys():
-                problems.append(f"Document #{number} needs the routed gross from Form 1099-K.")
+            if form == "1099K":
+                problems.extend(_review_1099k(record, number, personal_sources))
             if _information_return(form):
                 active.append((number, record, form, payer))
             continue
@@ -288,8 +314,9 @@ def _book_total(ledger: list[LedgerRecord], year: object) -> tuple[float | None,
     return gross / 100, overlap
 
 
-def review(ledger: list[LedgerRecord], tax_year: object) -> SourceReview:
-    problems, disclosures = _review_forms(ledger, tax_year)
+def review(ledger: list[LedgerRecord], tax_year: object, *,
+           personal_1099k_sources: dict[str, str] | None = None) -> SourceReview:
+    problems, disclosures = _review_forms(ledger, tax_year, personal_1099k_sources)
     try:
         gross, overlap = _book_total(ledger, tax_year)
     except ValueError as exc:

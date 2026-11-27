@@ -141,7 +141,7 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   "ss_tax_withheld", "medicare_tax_withheld",
                   # Components already included in the federal aggregates.
                   # The reviewed CA derivation below checks their use.
-                  "state_refund_1099g", "personal_1099k",
+                  "state_refund_1099g", "personal_1099k", source_reconciliation.K_REPORTED_GROSS,
                   "qualified_tips", "qualified_overtime_premium",
                   # Form 3922 ESPP boxes — feed the §423 disposition split and
                   # FUTURE-year basis; no single result line to tie to.
@@ -3041,6 +3041,24 @@ def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: boo
     return errors
 
 
+def _business_return(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> bool:
+    """A return with business receipts, whatever the interview flag says.
+
+    Keyed on `has_self_employment` alone, a profile left false let a 1099-K be
+    routed personal beside an active Schedule C with no review.
+    """
+    if (profile.get("flags") or {}).get("has_self_employment") is True:
+        return True
+    if any(record.skipped is None and (record.business_receipts
+                                       or dict(record.key_boxes).get(source_reconciliation.BUSINESS_GROSS, 0) > 0)
+           for record in ledger):
+        return True
+    try:
+        return schedule_c.schedule_c_net(result, profile) is not None
+    except ValueError:
+        return True  # an unreadable Schedule C still asks for the review
+
+
 def evaluate(ledger: "list[LedgerRecord]", result: dict,
              document_files: "list[str]",
              tolerance: float = DEFAULT_TOLERANCE,
@@ -3060,7 +3078,9 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
              specific_identification_answer: "bool | None" = None,
              crypto_source: "dict | None" = None,
              profile: "dict | None" = None,
-             tax_law: "dict | None" = None) -> TieOutReport:
+             tax_law: "dict | None" = None, *,
+             evidence_items: dict | None = None,
+             ledger_sha256: str | None = None) -> TieOutReport:
     """Run checks A-D. document_files are workspace-relative paths of the
     source files that exist under documents/."""
     if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)) \
@@ -3086,7 +3106,11 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sums = category_sums(ledger)
     meta = result.get("meta")
     year = (meta.get("tax_year") if isinstance(meta, dict) else None) or (profile or {}).get("tax_year")
-    source_review = source_reconciliation.review(ledger, year)
+    personal_sources = None
+    if _business_return(ledger, result, profile or {}):
+        item = (evidence_items or {}).get(material_evidence.PERSONAL_1099K_ITEM) or {}
+        personal_sources = material_evidence.reviewed_personal_1099k_sources(item, ledger_sha256)
+    source_review = source_reconciliation.review(ledger, year, personal_1099k_sources=personal_sources)
     expected = (profile or {}).get("expected_sources")
     missing_forms = missing_expected_forms(ledger, expected) if expected is not None else []
     source_issues = source_review.problems + tuple(
@@ -4006,9 +4030,14 @@ def _main(argv: list) -> int:
         })
         source_items, changed_sources = _source_outcomes(ledger, gate_inputs)
         material_evidence.sync_group(workspace, material_evidence.SOURCE_PREFIX, source_items)
+        ledger_sha256 = receipt._sha256(ledger_raw)
         material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
-                                     _w2_outcomes(ledger, receipt._sha256(ledger_raw)))
-        evidence_raw, _ = material_evidence.read(workspace)
+                                     _w2_outcomes(ledger, ledger_sha256))
+        evidence_raw, evidence_items = material_evidence.read(workspace)
+        routing_id = material_evidence.PERSONAL_1099K_ITEM
+        if routing_id in evidence_items and material_evidence.open_items(
+                workspace, {routing_id: evidence_items[routing_id]}, {}):
+            evidence_items.pop(routing_id)
         if evidence_raw is not None:
             name = material_evidence.FILENAME
             gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}
@@ -4106,7 +4135,8 @@ def _main(argv: list) -> int:
                           option_exercise_answer=option_exercise_answer,
                           specific_identification_answer=specific_identification_answer,
                           crypto_source=crypto_source,
-                          profile=prof, tax_law=ca_law)
+                          profile=prof, tax_law=ca_law,
+                          evidence_items=evidence_items, ledger_sha256=ledger_sha256)
         if changed_sources:
             report = replace(report, failed=True, changed_sources=changed_sources)
         markdown = render_markdown(report)

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from hashlib import sha256
 
 import pytest
 
@@ -194,6 +195,38 @@ def test_unread_w2_box_blocks_final_until_recovered(workspace):
     release.compute(workspace)
     _assert_ready(workspace)
     _assert_lines(release.read_json(workspace / "result.json")["form_1040"], FEDERAL)
+
+
+def test_personal_1099k_requires_source_bound_review_when_business_is_active(workspace):
+    release.add_overlapping_business(workspace)
+    release.compute(workspace)
+    relative = "documents/personal-payments.pdf"
+    source = workspace / relative
+    release._document(source, "Synthetic Form 1099-K", [("Box 1a Gross Payments", "125.00")])
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    ledger["records"].append({
+        "doc_id": "personal-payments", "file": relative, "form_type": "1099-K",
+        "person": "primary", "payer": "Synthetic Personal Payments",
+        "source_sha256": sha256(source.read_bytes()).hexdigest(),
+        "source_form": {"tax_year": release.YEAR, "series_id": "personal-payments"},
+        "key_boxes": {"form_1099k_box_1a": 125, "personal_1099k": 125},
+    })
+    release.write_json(ledger_path, ledger)
+    release.run(workspace, "return_builder", "--check")
+    report = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "input.1099k_personal_routing" in report
+    _assert_refused(workspace, "the tie_out gate recorded")
+    review = workspace / "personal-receipts-review.json"
+    release.write_json(review, {"routing": "personal reimbursement"})
+    release.run(workspace, "material_evidence", "--id", "input.1099k_personal_routing",
+                "--label", "Personal source routing", "--outcome", "reviewed",
+                "--input", "parse_ledger.json", "--input", relative, "--input", review.name)
+    release.validate(workspace)
+    assert json.loads(_package(workspace, "--json"))["validated"] is True
+    release.write_json(review, {"routing": "review reopened"})
+    stale = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "input.1099k_personal_routing" in stale
 
 
 def test_open_deduction_blocks_even_when_arithmetic_passes(workspace):

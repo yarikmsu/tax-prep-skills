@@ -382,7 +382,8 @@ def test_a_corrected_prefix_keeps_the_1099_k_rules():
     """"Corrected 1099-K" matched no business rule, so one payment on a
     1099-NEC and a corrected 1099-K counted twice with no books."""
     nec = _form("nec", "1099-NEC", "Client", "a" * 64, self_employment_gross=120)
-    k = _form("k", "Corrected Form 1099-K", "Processor", "b" * 64, self_employment_gross=120)
+    k = _form("k", "Corrected Form 1099-K", "Processor", "b" * 64, self_employment_gross=120,
+              form_1099k_box_1a=120)
     result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 240}}
     issues, _ = _issues(nec, k, result=result)
     assert any("receipt-level book" in issue for issue in issues), issues
@@ -448,13 +449,14 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
     nec = dict(_record(doc_id="nec", file="documents/nec.pdf", form_type="1099-NEC", person="primary",
                        key_boxes={"self_employment_gross": 120}), source_sha256="a" * 64)
     k = dict(_record(doc_id="k", file="documents/k.pdf", form_type="1099-K", person="primary",
-                     key_boxes={"self_employment_gross": 120}), source_sha256="b" * 64)
+                     key_boxes={"self_employment_gross": 120, "form_1099k_box_1a": 120}),
+             source_sha256="b" * 64)
     result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 240}}
     files = [nec["file"], k["file"]]
     assert T.evaluate(_ledger(nec, k), result, files).failed
     assert T.evaluate(_ledger(nec, dict(k, skipped="overlap", key_boxes={})), result, files).failed
     unclassified = T.evaluate(_ledger(nec, dict(k, key_boxes={"federal_withholding_1099": 0})), result, files)
-    assert any("needs the routed gross from Form 1099-K" in issue for issue in unclassified.source_issues)
+    assert any("needs verified Form 1099-K Box 1a" in issue for issue in unclassified.source_issues)
 
     rows = ([{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec", "k"]}] if overlap else
             [{"payment_id": "payment-a", "amount": 120, "reported_by": ["nec"]},
@@ -470,6 +472,78 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
     report = T.evaluate(ledger, result, files)
     assert not report.failed
     assert bool(report.source_disclosures) is overlap
+
+
+def test_positive_1099k_box_1a_cannot_be_routed_entirely_to_zero():
+    record = _form("k", "1099-K", "Processor", "b" * 64,
+                   form_1099k_box_1a=120, self_employment_gross=0, personal_1099k=0)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 0}}
+    refused = T.evaluate(_ledger(record), result, [record["file"]])
+    assert refused.failed
+    assert any("routes $0.00 of its $120.00 Form 1099-K Box 1a" in issue
+               for issue in refused.source_issues)
+    record["key_boxes"]["form_1099k_box_1a"] = 0
+    assert not T.evaluate(_ledger(record), result, [record["file"]]).failed
+
+
+@pytest.mark.parametrize("routes", [{"self_employment_gross": 47000},
+                                    {"self_employment_gross": 0.01},
+                                    {"self_employment_gross": 30000, "capital_proceeds": 30000}])
+def test_every_dollar_of_1099k_box_1a_is_routed(routes):
+    # $3,000 left unrouted dropped from Schedule C line 1 with no review, while
+    # routing it as personal needed one; routing more than Box 1a over-states.
+    record = _form("k", "1099-K", "Processor", "b" * 64, form_1099k_box_1a=50000, **routes)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 60000}}
+    report = T.evaluate(_ledger(record), result, [record["file"]])
+    assert any("Form 1099-K Box 1a" in issue for issue in report.source_issues), report.source_issues
+    record["key_boxes"] = {"form_1099k_box_1a": 50000, "self_employment_gross": 50000}
+    report = T.evaluate(_ledger(record), result, [record["file"]])
+    assert not any("Box 1a" in issue for issue in report.source_issues)
+
+
+@pytest.mark.parametrize("label", ["Substitute 1099-K", "PayPal 1099-K"])
+def test_a_1099k_is_read_whatever_its_label_says(label):
+    record = _form("k", label, "Processor", "b" * 64, form_1099k_box_1a=120)
+    report = T.evaluate(_ledger(record), {"meta": {"tax_year": 2025}}, [record["file"]])
+    assert any("routes $0.00 of its $120.00" in issue for issue in report.source_issues)
+
+
+@pytest.mark.parametrize("business", [{"schedule_c": {"line_1_gross_receipts": 5000}}, "ledger"])
+def test_personal_1099k_review_follows_the_return_not_only_the_interview(business):
+    # The profile's has_self_employment is false, but the return has a business.
+    personal = _form("k", "1099-K", "Processor", "b" * 64, form_1099k_box_1a=3000, personal_1099k=3000)
+    records = [personal]
+    result = {"meta": {"tax_year": 2025}, "form_1040": {}}
+    if business == "ledger":
+        records.append(_form("nec", "1099-NEC", "Client", "a" * 64, self_employment_gross=5000))
+    else:
+        result.update(business)
+    report = T.evaluate(_ledger(*records), result, [r["file"] for r in records],
+                        profile={"flags": {"has_self_employment": False}})
+    assert any("input.1099k_personal_routing" in issue for issue in report.source_issues)
+
+
+@pytest.mark.parametrize("category", ["personal_1099k", "capital_proceeds"])
+def test_personal_1099k_on_a_business_return_needs_current_review(category):
+    record = _form("k", "1099-K", "Processor", "b" * 64, form_1099k_box_1a=120, **{category: 120})
+    result = {"meta": {"tax_year": 2025}}
+    profile = {"flags": {"has_self_employment": True}}
+    ledger_digest = "a" * 64
+
+    def routing_issues(item=None):
+        report = T.evaluate(
+            _ledger(record), result, [record["file"]], profile=profile,
+            evidence_items={"input.1099k_personal_routing": item}, ledger_sha256=ledger_digest,
+        )
+        return [problem for problem in report.source_issues if "input.1099k_personal_routing" in problem]
+
+    assert routing_issues()
+    item = {"outcome": "reviewed", "inputs": {"parse_ledger.json": ledger_digest}}
+    assert routing_issues(item)
+    item["inputs"][record["file"]] = "b" * 64
+    assert not routing_issues(item)
+    item["inputs"]["parse_ledger.json"] = "c" * 64
+    assert routing_issues(item)
 
 
 # --------------------------------------------------------------------------
@@ -1206,7 +1280,7 @@ def test_personal_1099k_informational_with_advisory():
     a classification advisory."""
     recs = _ledger(_record(doc_id="k", file="documents/1099K.pdf",
                            form_type="1099-K", payer="Venmo",
-                           key_boxes={"personal_1099k": 2500.0}))
+                           key_boxes={"personal_1099k": 2500.0, "form_1099k_box_1a": 2500.0}))
     report = T.evaluate(recs, {"form_1040": {}}, ["documents/1099K.pdf"])
     assert not report.failed
     assert not any(c.category == "personal_1099k" for c in report.sum_checks)

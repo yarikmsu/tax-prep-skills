@@ -402,7 +402,7 @@ Rules:
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |
   | 1099-NEC box 1 (TY2025) / box 1a (TY2026, already includes 1b/1d) / reviewed 1099-MISC business box 3 and boxes 5/6 / 1099-K box 1a (business/gig) | `self_employment_gross` (AT-LEAST tie: Schedule C gross receipts may exceed it via cash income, but never fall below; EXACT to the receipt-level books when both a 1099-NEC and a business 1099-K are present, see [source reconciliation](references/source-reconciliation.md)) |
-  | 1099-K box 1a (personal-item sales / reimbursements) | `personal_1099k` (informational — NOT Schedule C: gains go to Form 8949, losses non-deductible; ASK the taxpayer which it is and record the answer in answers.md — the gate emits a verify advisory) |
+  | Form 1099-K box 1a and personal receipts | Record the original gross in `form_1099k_box_1a` and the reviewed personal portion in `personal_1099k`. For a business return, follow the [personal-routing evidence](references/source-reconciliation.md#business-forms-1099-nec-and-1099-k). |
   | 1099-SA box 1 | `hsa_distributions` |
   | W-2 box 12 code W | `hsa_contributions` (payroll: employer + cafeteria-plan employee) |
   | 5498-SA box 2 | `hsa_contributions` — **ONLY the portion NOT already on a W-2 box 12-W** (direct personal contributions). A 5498-SA that merely restates payroll contributions is `"skipped": "duplicates W-2 box 12-W"` — recording both double-counts the same dollars and false-fails the tie-out |
