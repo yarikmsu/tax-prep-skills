@@ -3564,3 +3564,21 @@ def test_an_acknowledged_refused_household_is_not_held_to_the_engines_line():
     profile["acknowledged_limitations"] = []
     assert _ny_report(result,
                       T._flags_for_city_and_yonkers(profile, flags)).failed
+
+
+
+def test_each_received_form_clears_one_expected_entry():
+    def interest(doc_id, payer):
+        return _record(doc_id=doc_id, file=f"documents/{doc_id}.pdf", payer=payer,
+                       form_type="1099-INT", key_boxes={"taxable_interest": 10})
+    expected = {"interest_payers": [{"name": "Example Bank"}, {"name": "Example Bank"}]}
+    assert T.missing_expected_forms(_ledger(interest("a", "Example Bank")), expected) == [
+        ("interest reporting", "Example Bank")]
+    # Matched as a whole: the short name may serve either entry, so the order of
+    # the forms cannot strand the entry only the other form fits.
+    expected = {"interest_payers": [{"name": "First National Bank of Omaha"},
+                                    {"name": "First National Bank Alaska"}]}
+    for order in (("a", "First National Bank"), ("b", "First National Bank of Omaha")), \
+                 (("b", "First National Bank of Omaha"), ("a", "First National Bank")):
+        received = _ledger(*(interest(doc_id, payer) for doc_id, payer in order))
+        assert T.missing_expected_forms(received, expected) == []
