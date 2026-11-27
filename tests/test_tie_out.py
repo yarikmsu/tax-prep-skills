@@ -472,6 +472,41 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
     assert bool(report.source_disclosures) is overlap
 
 
+def test_positive_1099k_box_1a_cannot_be_routed_entirely_to_zero():
+    record = _form("k", "1099-K", "Processor", "b" * 64,
+                   form_1099k_box_1a=120, self_employment_gross=0, personal_1099k=0)
+    result = {"meta": {"tax_year": 2025}, "schedule_c": {"line_1_gross_receipts": 0}}
+    refused = T.evaluate(_ledger(record), result, [record["file"]])
+    assert refused.failed
+    assert any("positive Form 1099-K Box 1a and zero routed receipts" in issue
+               for issue in refused.source_issues)
+    record["key_boxes"]["form_1099k_box_1a"] = 0
+    assert not T.evaluate(_ledger(record), result, [record["file"]]).failed
+
+
+@pytest.mark.parametrize("category", ["personal_1099k", "capital_proceeds"])
+def test_personal_1099k_on_a_business_return_needs_current_review(category):
+    record = _form("k", "1099-K", "Processor", "b" * 64, form_1099k_box_1a=120, **{category: 120})
+    result = {"meta": {"tax_year": 2025}}
+    profile = {"flags": {"has_self_employment": True}}
+    ledger_digest = "a" * 64
+
+    def routing_issues(item=None):
+        report = T.evaluate(
+            _ledger(record), result, [record["file"]], profile=profile,
+            evidence_items={"input.1099k_personal_routing": item}, ledger_sha256=ledger_digest,
+        )
+        return [problem for problem in report.source_issues if "input.1099k_personal_routing" in problem]
+
+    assert routing_issues()
+    item = {"outcome": "reviewed", "inputs": {"parse_ledger.json": ledger_digest}}
+    assert routing_issues(item)
+    item["inputs"][record["file"]] = "b" * 64
+    assert not routing_issues(item)
+    item["inputs"]["parse_ledger.json"] = "c" * 64
+    assert routing_issues(item)
+
+
 # --------------------------------------------------------------------------
 # Check A — coverage
 # --------------------------------------------------------------------------

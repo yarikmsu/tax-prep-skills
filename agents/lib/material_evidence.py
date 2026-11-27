@@ -26,9 +26,11 @@ W2_PREFIX = "w2."
 SOURCE_PREFIX = "source."
 _INPUT_PREFIX = "input."
 DEDUCTION_ITEM = "input.deduction_election"
+PERSONAL_1099K_ITEM = "input.1099k_personal_routing"
 DEDUCTION_METHODS = ("standard", "itemized", "standard_worksheet")
 _FILING_INPUT_LABELS = {
     DEDUCTION_ITEM: "Form 1040 line 12 deduction election",
+    PERSONAL_1099K_ITEM: "Personal Form 1099-K receipts on a business return",
     "input.nonrefundable_credits": "Form 1040 lines 19–20 nonrefundable credit worksheets",
     "input.amt": "Form 6251 alternative minimum tax worksheet",
     "input.other_taxes": "Schedule 2 Part II other-tax worksheets",
@@ -365,6 +367,15 @@ def _law_name(result, profile) -> str:
 def _worksheet_attached(item_id, method, inputs, mandatory) -> bool:
     return bool(item_id == DEDUCTION_ITEM and method == "standard"
                 or inputs.keys() - mandatory)
+
+
+def reviewed_personal_1099k_sources(item: dict, ledger_sha256: str | None) -> dict[str, str]:
+    """Return the source digests for a reviewed routing of the current ledger."""
+    sources = item.get("inputs") or {}
+    if (item.get("outcome") != "reviewed" or ledger_sha256 is None
+            or sources.get("parse_ledger.json") != ledger_sha256):
+        return {}
+    return sources
 
 
 def record(workspace: Path, item_id: str, label: str, outcome: str,
