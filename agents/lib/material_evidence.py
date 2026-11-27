@@ -22,12 +22,18 @@ from agents.lib.workspace import (
 FILENAME = receipt.MATERIAL_EVIDENCE_NAME
 OUTCOMES = ("open", "computed", "reviewed", "not_applicable")
 _FORM_PREFIX = "form."
+W2_PREFIX = "w2."
 _EXCLUDED_INPUTS = {FILENAME, receipt.RECEIPT_NAME, "answers.md"}
 # Compared case-folded: on a case-insensitive volume (macOS, Windows)
 # `ANSWERS.md` IS answers.md, and an exact match let it through.
 _EXCLUDED_FOLDED = {name.casefold() for name in _EXCLUDED_INPUTS}
 _ID = re.compile(r"[a-z][a-z0-9_.-]{0,95}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# Ids the tie-out derives from a digest. A hex digest holds a run of nine
+# decimal digits about one time in four, which `redact` reads as an
+# identifier, so these ids skip that check. The writer refuses manual
+# entries under the prefix.
+_LEDGER_ID = re.compile(r"w2\.[0-9a-f]{64}\.[12]")
 
 
 class MaterialEvidenceError(Exception):
@@ -83,8 +89,15 @@ def read(workspace: Path) -> tuple[bytes | None, dict]:
     if (not isinstance(data, dict) or type(data.get("version")) is not int
             or data["version"] != 1 or not isinstance(data.get("items"), dict)):
         raise MaterialEvidenceError(f"{FILENAME} must be a version 1 material evidence record")
-    for item_id, item in data["items"].items():
-        if (not _ID.fullmatch(item_id) or redact(item_id) != item_id or not isinstance(item, dict)
+    _check_items(data["items"])
+    return raw, data["items"]
+
+
+def _check_items(items: dict) -> None:
+    for item_id, item in items.items():
+        if (not _ID.fullmatch(item_id)
+                or (not _LEDGER_ID.fullmatch(item_id) and redact(item_id) != item_id)
+                or not isinstance(item, dict)
                 or not _label(item.get("label")) or item.get("outcome") not in OUTCOMES):
             raise MaterialEvidenceError(f"{FILENAME} contains an invalid material item")
         inputs = item.get("inputs")
@@ -95,10 +108,12 @@ def read(workspace: Path) -> tuple[bytes | None, dict]:
             _source_path(name)
             if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
                 raise MaterialEvidenceError(f"{FILENAME} contains an invalid source digest")
-    return raw, data["items"]
 
 
 def _write(workspace: Path, items: dict) -> None:
+    # The reader's checks, before anything reaches disk: a record its own
+    # reader refuses would wedge every later gate on this workspace.
+    _check_items(items)
     with atomic_write(workspace / FILENAME) as handle:
         json.dump({"version": 1, "items": items}, handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -106,10 +121,16 @@ def _write(workspace: Path, items: dict) -> None:
 
 def sync_required_forms(workspace: Path, required: dict[str, str]) -> None:
     """Register open forms from the capability gate without changing other items."""
+    sync_group(workspace, _FORM_PREFIX,
+               {key: {"label": label, "outcome": "open", "inputs": {}}
+                for key, label in required.items()})
+
+
+def sync_group(workspace: Path, prefix: str, replacements: dict) -> None:
+    """Replace the records derived from one gate, preserving the other items."""
     _, items = read(workspace)
-    updated = {key: item for key, item in items.items() if not key.startswith(_FORM_PREFIX)}
-    updated.update({key: {"label": label, "outcome": "open", "inputs": {}}
-                    for key, label in required.items()})
+    updated = {key: item for key, item in items.items() if not key.startswith(prefix)}
+    updated.update(replacements)
     if updated != items:
         _write(workspace, updated)
 
@@ -143,6 +164,8 @@ def record(workspace: Path, item_id: str, label: str, outcome: str,
         raise MaterialEvidenceError("use a stable item id and a short label without taxpayer details")
     if item_id.startswith(_FORM_PREFIX):
         raise MaterialEvidenceError("required forms must be completed through their filing workflow")
+    if item_id.startswith(W2_PREFIX):
+        raise MaterialEvidenceError("W-2 box outcomes come from the parse ledger")
     if outcome not in OUTCOMES or (outcome == "open") != (not inputs):
         raise MaterialEvidenceError("record a closed outcome with its source files, or mark it open")
     _, items = read(workspace)
