@@ -5,6 +5,14 @@
     "from": "2026-11-15",
     "through": "2026-12-15"
   },
+  "wash_sale_classifications": [
+    {"ticker": "VTSAX", "other_ticker": "TSLA", "classification": "not_identical"},
+    {"ticker": "VTSAX", "other_ticker": "META", "classification": "not_identical"},
+    {"ticker": "AAPL", "other_ticker": "TSLA", "classification": "not_identical"},
+    {"ticker": "AAPL", "other_ticker": "META", "classification": "not_identical"},
+    {"ticker": "TSLA", "other_ticker": "META", "classification": "not_identical"},
+    {"ticker": "AAPL", "other_ticker": "VTSAX", "classification": "not_identical"}
+  ],
   "lots": [
     {
       "id": "L1",
