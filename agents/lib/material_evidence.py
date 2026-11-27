@@ -173,8 +173,22 @@ def _positive(value) -> bool:
     return _is_number(value) and value > 0
 
 
-def _required_filing_inputs(result: dict, profile: dict) -> dict[str, bool]:
-    """Applicable inputs, with True when a positive amount is already claimed."""
+def _status_key(result: dict, profile: dict) -> str:
+    from agents.lib.projection import _full_status_key
+    status = (result.get("meta") or {}).get("filing_status") or profile.get("filing_status")
+    return _full_status_key(status, "material filing inputs")
+
+
+def _above(value, threshold) -> bool:
+    """Over a cached threshold; a missing threshold cannot rule the tax out."""
+    from agents.lib.tax_law_fetcher import _is_number
+    return not _is_number(threshold) or (_is_number(value) and value > threshold)
+
+
+def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None) -> dict[str, bool]:
+    """Applicable inputs, with True when a positive amount is already claimed
+    or the return's own inputs make the item apply."""
+    from agents.lib.tax_law_fetcher import _get_path
     from agents.lib.yoy_diff import _section_present
 
     flags = profile.get("flags") or {}
@@ -187,24 +201,46 @@ def _required_filing_inputs(result: dict, profile: dict) -> dict[str, bool]:
     def positive_lines(*names):
         return any(_positive(form.get(name)) for name in names)
 
+    # The key /tax-rollover and the template write. `form_8801_carryforward`
+    # was read here and in AA114, and nothing writes it, so a prior-year AMT
+    # credit (Form 8801 through Schedule 3 line 6b) never asked for review.
+    amt_credit = _positive((profile.get("prior_year") or {}).get("amt_credit_carryforward"))
     credits = positive_lines("line_19_ctc", "line_20_schedule3_line8")
-    if credits or profile.get("dependents") or result.get("dependents") or flags_set(
+    if credits or amt_credit or profile.get("dependents") or result.get("dependents") or flags_set(
             "has_dependent_care", "has_education_expenses", "has_foreign_tax_paid", "has_energy_credits", "has_ev_purchase"):
         required["input.nonrefundable_credits"] = credits
     amt = positive_lines("line_17_schedule2_part1")
-    amt_credit = _positive((profile.get("prior_year") or {}).get("form_8801_carryforward"))
     if amt or amt_credit or flags_set("has_iso_exercise") or (result.get("schedule_a") or {}).get("use_itemized") is True or _section_present(result, "form_6251"):
         required["input.amt"] = amt
     se_total = (result.get("schedule_se") or {}).get("schedule_2_line_4_se_tax")
     other_tax = form.get("line_23_other_taxes", 0)
     remainder = _positive(other_tax) and round(other_tax, 2) != (se_total or 0)
-    if remainder or flags_set("has_unreported_or_allocated_tips", "has_household_employees",
-                              "has_dependent_unearned_income", "has_hsa", "has_1099r") or _section_present(result, "form_8959_additional_medicare"):
-        required["input.other_taxes"] = remainder
+    # NIIT and Additional Medicare tax apply from the return's own inputs. A
+    # line 23 at 0, or equal to the SE tax alone, left a $390,000 joint return
+    # with $30,000 of investment income validated with neither tax.
+    key = {"mfj": "mfj", "qss": "mfj", "mfs": "mfs"}.get(_status_key(result, profile), "single")
+    law = law or {}
+    investment = positive_lines("line_2b_taxable_interest", "line_3b_ordinary_dividends",
+                                "line_7_capital_gain") or _section_present(result, "schedule_e_rentals")
+    niit_applies = investment and _positive(form.get("line_11_agi")) and _above(
+        form.get("line_11_agi"), _get_path(law, f"federal.niit.threshold.{key}"))
+    business = (result.get("schedule_c") or {}).get("line_31_net")
+    wages = form.get("line_1a_wages")
+    earnings = 0.0
+    for value in (wages, business):
+        if isinstance(value, (int, float)) and _positive(value):
+            earnings += value
+    medicare_applies = _positive(earnings) and _above(
+        earnings, _get_path(law, f"federal.additional_medicare_tax.threshold.{key}"))
+    if remainder or niit_applies or medicare_applies or flags_set(
+            "has_unreported_or_allocated_tips", "has_household_employees", "has_dependent_unearned_income",
+            "has_hsa", "has_1099r") or _section_present(result, "form_8959_additional_medicare"):
+        required["input.other_taxes"] = remainder or niit_applies or medicare_applies
 
-    excess_ss = (form.get("schedule_3_line_11_excess_ss") or 0)
+    # Excess Social Security withholding is part of line 31 and no gate
+    # compares it with W-2 box 4, so it needs the payment review like the rest.
     other_payment = form.get("line_31_schedule3_part2", 0)
-    has_other_payment = _positive(other_payment) and round(other_payment, 2) != excess_ss
+    has_other_payment = _positive(other_payment)
     dated_payments = (result.get("form_2210") or {}).get("payment_table") is not None
     needs_manual_penalty = not dated_payments and positive_lines("line_38_estimated_tax_penalty")
     if has_other_payment or needs_manual_penalty or flags_set("filed_extension"):
@@ -212,8 +248,20 @@ def _required_filing_inputs(result: dict, profile: dict) -> dict[str, bool]:
     return required
 
 
+def _deduction_facts(profile: dict, key: str) -> tuple[bool, bool]:
+    """(65 or older or blind, can be claimed as a dependent): the facts that move
+    line 12 off the basic amount. The spouse counts only on a joint return."""
+    flags = profile.get("flags") or {}
+    exemptions = profile.get("ca_exemptions") or {}
+    people = ("primary", "spouse") if key == "mfj" else ("primary",)
+    older = any(flags.get(f"age_65_plus_{who}") is True or exemptions.get(f"{who}_blind") is True
+                for who in people)
+    dependent = any(exemptions.get(f"{who}_can_be_claimed") is True for who in people)
+    return older, dependent
+
+
 def _deduction_problem(result: dict, profile: dict, law: dict, method: str | None) -> str:
-    from agents.lib.projection import _full_status_key
+    from agents.lib.projection import ProjectionError, _full_status_key
     from agents.lib.tax_computations._shared import _amount
     from agents.lib.tax_law_fetcher import _get_path
 
@@ -227,28 +275,36 @@ def _deduction_problem(result: dict, profile: dict, law: dict, method: str | Non
             itemized = _amount(sched_a.get("itemized_total"), "Schedule A itemized total")
             if sched_a.get("use_itemized") is not True or round(amount, 2) != round(itemized, 2):
                 return "Line 12 must equal the elected Schedule A deduction."
-        elif method == "standard":
+        elif method in ("standard", "standard_worksheet"):
             status = (result.get("meta") or {}).get("filing_status") or profile.get("filing_status")
             key = _full_status_key(status, "line 12 deduction election")
-            flags = profile.get("flags") or {}
-            if flags.get("age_65_plus_primary") is True or (
-                    key == "mfj" and flags.get("age_65_plus_spouse") is True):
-                return "Use the reviewed standard deduction worksheet for an age adjustment."
+            older, dependent = _deduction_facts(profile, key)
             base = _amount(_get_path(law, f"federal.filing_statuses.{key}.standard_deduction"), "cached standard deduction")
-            if sched_a.get("use_itemized") is True or amount != base or base <= 0:
-                return "Line 12 must equal the covered-year basic standard deduction."
-        elif method == "standard_worksheet":
             if sched_a.get("use_itemized") is True:
                 return "The reviewed standard deduction conflicts with the Schedule A election."
+            if method == "standard":
+                if older or dependent:
+                    return ("Use the reviewed standard deduction worksheet for age, blindness or a filer "
+                            "who can be claimed as a dependent.")
+                if amount != base or base <= 0:
+                    return "Line 12 must equal the covered-year basic standard deduction."
+            # The worksheet is for a fact the profile records. Without one it
+            # accepted any line 12 with any file attached, the AA113 zero included.
+            elif not (older or dependent):
+                return "Use the basic standard deduction: no age, blindness or dependent fact needs the worksheet."
+            elif amount <= 0 or (dependent and not older and amount > base) or (older and not dependent and amount <= base):
+                return "Line 12 is outside what the standard deduction worksheet allows for these facts."
         else:
             return "Record the deduction method."
-    except (ValueError, TypeError, AttributeError, OverflowError):
+    except (ValueError, TypeError, AttributeError, OverflowError, ProjectionError):
         return "Review the elected deduction and the inputs that support it."
     return ""
 
 
 def filing_input_issues(captured: dict[str, bytes | None]) -> list[str]:
     """Check required outcomes against the snapshots being used at export."""
+    from agents.lib.projection import ProjectionError
+
     try:
         result = json.loads(captured.get("result.json") or b"{}")
         profile = json.loads(captured.get("taxpayer_profile.json") or b"{}")
@@ -260,7 +316,7 @@ def filing_input_issues(captured: dict[str, bytes | None]) -> list[str]:
         law = json.loads(captured.get(law_name) or b"{}")
         mandatory = {"result.json", "taxpayer_profile.json", law_name}
         reasons = []
-        for item_id, positive in _required_filing_inputs(result, profile).items():
+        for item_id, positive in _required_filing_inputs(result, profile, law).items():
             item = items.get(item_id) or {}
             outcome = item.get("outcome")
             inputs = item.get("inputs") or {}
@@ -284,7 +340,7 @@ def filing_input_issues(captured: dict[str, bytes | None]) -> list[str]:
                 if detail:
                     reasons.append(f"{prefix} {detail}")
         return reasons
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError, ProjectionError):
         return ["Could not validate the material filing inputs."]
 
 

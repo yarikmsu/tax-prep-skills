@@ -280,17 +280,23 @@ sh agents/lib/run.sh -m agents.lib.material_evidence --id input.deduction_electi
 ```
 
 For an itemized election, use `--deduction-method itemized` and attach the
-reviewed Schedule A worksheet. For a dependent's limit, the age or blindness
-addition, or special standard-deduction treatment, use
-`--deduction-method standard_worksheet` and attach the reviewed worksheet.
-The election can be zero when the covered-year worksheet supports that result.
+reviewed Schedule A worksheet. For a dependent's limit or the age or blindness
+addition, use `--deduction-method standard_worksheet` and attach the reviewed
+worksheet. The profile must record the fact (`age_65_plus_*`, or
+`ca_exemptions.*_blind` / `*_can_be_claimed`): without one the basic amount
+applies, and `standard` is refused when one is recorded. Line 12 is never zero
+on either route.
 
 Record these outcomes when the corresponding worksheets apply:
 
-- `input.nonrefundable_credits` for Form 1040 lines 19 and 20.
+- `input.nonrefundable_credits` for Form 1040 lines 19 and 20, including a
+  prior-year AMT credit (`prior_year.amt_credit_carryforward`, Form 8801).
 - `input.amt` for the Form 6251 review.
-- `input.other_taxes` for remaining Schedule 2 Part II taxes.
-- `input.payments` for Schedule 3 payments and manual Form 2210 work.
+- `input.other_taxes` for remaining Schedule 2 Part II taxes, and whenever AGI
+  with investment income exceeds the NIIT threshold or wages and business
+  income exceed the Additional Medicare threshold.
+- `input.payments` for Schedule 3 payments, excess Social Security withholding
+  included, and manual Form 2210 work.
 
 Use `computed`, `reviewed`, or `not_applicable` after completing the work.
 Keep an unresolved outcome `open`. Record a worked zero with the same inputs

@@ -63,13 +63,15 @@ def write_synthetic_filing_inputs(workspace) -> None:
     status = (result["meta"].get("filing_status") or profile["filing_status"]).lower()
     base = law["federal"]["filing_statuses"][status]["standard_deduction"]
     form = result["form_1040"]
-    if "line_12_standard_deduction" not in form:
+    # The template's 0 is the AA113 return itself, an untouched line 12, and
+    # the worksheet route no longer accepts it.
+    if not form.get("line_12_standard_deduction"):
         form["line_12_standard_deduction"] = base
         result_path.write_text(json.dumps(result), encoding="utf-8")
     worksheet = workspace / "synthetic-filing-workpaper.json"
     worksheet.write_text('{"review": "Synthetic worksheet fixtures"}', encoding="utf-8")
     sources = ["result.json", "taxpayer_profile.json", law_name]
-    for item_id in material_evidence._required_filing_inputs(result, profile):
+    for item_id in material_evidence._required_filing_inputs(result, profile, law):
         method = None
         if item_id == material_evidence.DEDUCTION_ITEM:
             if (result.get("schedule_a") or {}).get("use_itemized") is True:

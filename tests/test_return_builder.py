@@ -1542,7 +1542,7 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
         {"effective_from": f"2026-{quarter}-01", "annual_rate": 0.073}
         for quarter in ("04", "07", "10")
     ] + [{"effective_from": "2027-01-01", "annual_rate": 0.073}]
-    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000}, law=law,
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000, "line_12_standard_deduction": 30000}, law=law,
                     extra={"meta": {"tax_year": 2026, "filing_status": "MFJ",
                                     "limitations": ["Synthetic return"]}})
     rows = [
@@ -1691,6 +1691,9 @@ def test_schedule_c_dropped_or_duplicated_flows_block_export(tmp_path):
 
     ws = _schedule_c_workspace(tmp_path)
     write_synthetic_filing_law(ws)
+    built = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    built["form_1040"]["line_12_standard_deduction"] = 30000
+    (ws / "result.json").write_text(json.dumps(built), encoding="utf-8")
     args = ["--workspace", str(ws)]
     package_args = [*args, "--result", "result.json"]
     assert RB._main(args) == 0
