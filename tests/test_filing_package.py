@@ -207,7 +207,7 @@ def test_balance_checklist_refuses_unreviewed_extension_and_excess_credit():
     result = _result(form_2210={"payment_table": [balance_row], "balance_due_paid": 400})
     form = result["form_1040"]
     form.update(line_37_amount_owed=700, line_31_schedule3_part2=1000)
-    with pytest.raises(FP.FilingPackageError, match="Review Schedule 3 line 10"):
+    with pytest.raises(FP.FilingPackageError, match="Record form_1040.schedule_3_line_10"):
         FP.attachment_checklist(result)
     form["schedule_3_line_10_extension_payment"] = 1000
     with pytest.raises(FP.FilingPackageError, match="not_extension_payment_confirmed"):
@@ -220,6 +220,18 @@ def test_balance_checklist_refuses_unreviewed_extension_and_excess_credit():
     assert all("include Form 1040-V" not in line for line in FP.attachment_checklist(result))
     form["line_37_amount_owed"] = 399.99
     with pytest.raises(FP.FilingPackageError, match="exceed Form 1040 line 37"):
+        FP.attachment_checklist(result)
+    form["line_37_amount_owed"] = 700
+    result["form_2210"]["balance_due_paid"] = 300
+    with pytest.raises(FP.FilingPackageError, match="disagree with the reviewed payment table"):
+        FP.attachment_checklist(result)
+    result["form_2210"]["balance_due_paid"] = 400
+    form["line_31_schedule3_part2"] = 800
+    with pytest.raises(FP.FilingPackageError, match="exceed Form 1040 line 31"):
+        FP.attachment_checklist(result)
+    form["line_31_schedule3_part2"] = 1000
+    form["schedule_3_line_10_extension_payment"] = None
+    with pytest.raises(FP.FilingPackageError, match="schedule_3_line_10_extension_payment, 0 when"):
         FP.attachment_checklist(result)
 
 

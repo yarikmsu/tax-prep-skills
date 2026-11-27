@@ -1521,9 +1521,11 @@ def test_invalid_payments_are_blocked_instead_of_changing_the_claim(tmp_path, ro
 
 
 @pytest.mark.parametrize("date,confirmation,accepted", [
-    ("2027-01-15", None, True),   # Fourth installment for 2026.
-    ("2027-04-15", None, True),   # Last date before confirmation is required.
-    ("2027-04-15", False, True),
+    ("2027-01-15", None, True),   # Fourth installment for 2026, the last date without review.
+    ("2027-01-19", None, False),  # Late fourth installment, or next year's.
+    ("2027-04-15", None, False),  # The 2027 first installment's own due date.
+    ("2027-04-15", False, False),
+    ("2027-04-15", True, True),
     ("2027-06-15", None, False),
     ("2027-06-15", "true", False),
     ("2027-06-15", True, True),
@@ -1550,6 +1552,7 @@ def test_balance_due_matching_estimate_requires_separate_remittances(tmp_path, c
 
     ws = _workspace(tmp_path)
     estimate = _federal_row("posted-estimate", 500, date="2027-04-15")
+    estimate["late_credit_confirmed"] = True  # isolates the double entry from the date rule
     balance = _federal_row("balance-payment", 500, date="2027-04-15", kind="balance_due")
     if confirmation is not None:
         balance["distinct_payment_confirmed"] = confirmation
@@ -1561,6 +1564,55 @@ def test_balance_due_matching_estimate_requires_separate_remittances(tmp_path, c
     else:
         with pytest.raises(ValueError, match="distinct_payment_confirmed"):
             reviewed_payments(result, profile)
+
+
+def test_an_estimate_matching_the_extension_payment_needs_separate_remittances(tmp_path):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    row = _federal_row("posted-estimate", 1000, date="2027-04-15")
+    row["late_credit_confirmed"] = True
+    profile = _set_federal_payments(ws, [row], 1, 1000)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"},
+              "form_1040": {"line_31_schedule3_part2": 1000,
+                            "schedule_3_line_10_extension_payment": 1000}}
+    # Line 31 already counts the Form 4868 payment; line 26 would count it again.
+    with pytest.raises(ValueError, match="extension payment.*distinct_payment_confirmed"):
+        reviewed_payments(result, profile)
+    row["distinct_payment_confirmed"] = True
+    assert reviewed_payments(result, profile).line_26 == 1000
+    result["form_1040"]["schedule_3_line_10_extension_payment"] = 999
+    del row["distinct_payment_confirmed"]
+    assert reviewed_payments(result, profile).line_26 == 1000
+
+
+@pytest.mark.parametrize("extension,line_31,excess", [
+    (-5, 0, 0), (1000, 0, 0), (600, 1000, 500), ("1000", 1000, 0),
+])
+def test_the_extension_payment_must_sit_inside_line_31(tmp_path, extension, line_31, excess):
+    ws = _workspace(tmp_path, {"line_31_schedule3_part2": line_31,
+                              "schedule_3_line_11_excess_ss": excess,
+                              "schedule_3_line_10_extension_payment": extension})
+    with pytest.raises((RB.Blocked, RB.ReturnBuilderError), match="Schedule 3 line 10|finite"):
+        _build(ws)
+
+
+def test_an_extension_payment_inside_line_31_builds(tmp_path):
+    ws = _workspace(tmp_path, {"line_31_schedule3_part2": 1500, "schedule_3_line_11_excess_ss": 500,
+                              "schedule_3_line_10_extension_payment": 1000})
+    assert RB._main(["--workspace", str(ws)]) == 0
+
+
+def test_2210_refundable_credits_exclude_the_extension_payment(tmp_path):
+    # Line 31 is all extension payment, so no Schedule 3 refundable credit is left
+    # for Form 2210 to subtract from the current-year tax.
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000, "line_31_schedule3_part2": 1000,
+                              "schedule_3_line_10_extension_payment": 1000})
+    config = {"method": "irs_calculates", "schedule_3_refundable_credits": 500,
+              "excluded_current_year_tax": 0}
+    _set_federal_payments(ws, [_federal_row("q4", 500, date="2027-01-15")], 1, 500, config=config)
+    with pytest.raises(RB.Blocked, match="additional refundable credits exceed"):
+        _build(ws)
 
 
 def test_2210_requires_extension_payment_different_from_balance_payment(tmp_path):

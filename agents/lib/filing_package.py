@@ -432,7 +432,10 @@ def attachment_checklist(result: dict) -> list:
         if already_paid != _field_num(federal_2210, "balance_due_paid", "reviewed federal balance payment"):
             raise FilingPackageError("Form 2210 balance payments disagree with the reviewed payment table")
         if already_paid > balance_due:
-            raise FilingPackageError("Reviewed balance payments exceed Form 1040 line 37")
+            raise FilingPackageError(
+                f"Reviewed balance-due payments (${already_paid:,.2f}) exceed Form 1040 line 37 "
+                f"(${balance_due:,.2f}). Check each balance_due row against the IRS payment "
+                "record; record a payment larger than the balance at the amount applied to it")
         if already_paid > 0:
             remaining_balance = round(balance_due - already_paid, 2)
             lines.append(f"Federal balance after reviewed early payments: ${remaining_balance:,.2f} of Form 1040 line 37 remains to be paid.")

@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from agents.lib.irs_dates import next_business_day
 from agents.lib.tax_computations._shared import _amount, _normalize_filing_status
 from agents.lib.tax_computations.federal.penalties import compute_form_2210
 
@@ -62,10 +63,13 @@ def _payment_row(raw, index: int, year: int, status: str) -> tuple[str, dict]:
         raise ValueError(f"{where} requires an effective date in YYYY-MM-DD format")
     if not year <= effective.year <= year + 1:
         raise ValueError(f"{where}.date must fall in the return year or the following year")
-    if (kind == "estimate" and effective > date(year + 1, 4, 15)
+    # The next year's first installment is due April 15 itself, so a bound at
+    # April 15 let an on-time next-year voucher raise this year's line 26.
+    if (kind == "estimate" and effective > next_business_day(date(year + 1, 1, 15))
             and row.get("late_credit_confirmed") is not True):
-        raise ValueError(f"{where} needs late_credit_confirmed for an estimate after April 15 "
-                         "of the following year")
+        raise ValueError(f"{where} needs late_credit_confirmed for an estimate after the fourth "
+                         "installment due date: the IRS account must show it credited to this "
+                         "return year as an estimated tax payment")
     if kind == "carry_in" and effective < date(year, 4, 15):
         raise ValueError(f"{where}.date precedes the first installment date for an applied overpayment")
     if kind == "balance_due" and not date(year + 1, 1, 1) <= effective <= date(year + 1, 4, 15):
@@ -130,6 +134,7 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     if estimate_payments & unconfirmed_balance_payments:
         raise ValueError("A balance-due payment matches an estimate's effective date and amount. "
                          "Confirm separate remittances with distinct_payment_confirmed")
+    _check_extension_not_an_estimate(result, rows, parsed, year)
     if not math.isfinite(sum(row["amount"] for row in parsed)):
         raise ValueError("Federal payment records exceed the finite range for a total")
     estimates = [row["amount"] for row in parsed if row["kind"] == "estimate"]
@@ -144,6 +149,20 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     return FederalPayments(year, status, tuple(sorted(parsed, key=lambda row: (row["date"], row["kind"], row["amount"]))))
 
 
+def _check_extension_not_an_estimate(result: dict, rows: list, parsed: list[dict], year: int) -> None:
+    """Line 31 already counts the Form 4868 payment; line 26 must not count it again."""
+    extension = (result.get("form_1040") or {}).get(EXTENSION_PAYMENT)
+    if extension is None:
+        return
+    extension = _money(extension, "Schedule 3 line 10")
+    for raw, item in zip(rows, parsed, strict=True):
+        if (extension > 0 and item["kind"] == "estimate" and item["amount"] == extension
+                and item["date"] >= date(year + 1, 1, 1).isoformat()
+                and raw.get("distinct_payment_confirmed") is not True):
+            raise ValueError("An estimate matches the Schedule 3 line 10 extension payment. "
+                             "Confirm separate remittances with distinct_payment_confirmed")
+
+
 def reviewed_balance_due(form: dict, rows: list[dict] | tuple[dict, ...]) -> float:
     """Keep extension payments already credited on Form 1040 out of settlement."""
     if not isinstance(rows, (list, tuple)) or any(not isinstance(row, dict) for row in rows):
@@ -155,7 +174,8 @@ def reviewed_balance_due(form: dict, rows: list[dict] | tuple[dict, ...]) -> flo
     excess_ss = _money(form.get("schedule_3_line_11_excess_ss", 0), "Schedule 3 line 11")
     extension = form.get(EXTENSION_PAYMENT)
     if extension is None and other_payments > excess_ss:
-        raise ValueError("Review Schedule 3 line 10 before crediting any balance-due payments")
+        raise ValueError("Record form_1040.schedule_3_line_10_extension_payment, 0 when no "
+                         "extension payment was made, before crediting any balance-due payments")
     extension = _money(0 if extension is None else extension, "Schedule 3 line 10")
     if round(extension + excess_ss, 2) > other_payments:
         raise ValueError("The extension payment and excess Social Security exceed Form 1040 line 31")
@@ -195,7 +215,8 @@ def form_2210_workpaper(form: dict, payments: FederalPayments, config: dict, tax
     excess_ss = _money(form.get("schedule_3_line_11_excess_ss", 0), "Schedule 3 line 11")
     schedule_3 = _money(form.get("line_31_schedule3_part2", 0), "Form 1040 line 31")
     additional = _money(config.get("schedule_3_refundable_credits"), "Form 2210 Schedule 3 refundable credits")
-    if additional > round(schedule_3 - excess_ss, 2):
+    extension = _money(form.get(EXTENSION_PAYMENT) or 0, "Schedule 3 line 10")
+    if additional > round(schedule_3 - excess_ss - extension, 2):
         raise ValueError("Form 2210 additional refundable credits exceed the remaining Schedule 3 payments")
     total_tax = _money(form.get("line_24_total_tax"), "Form 1040 line 24")
     withholding = _money(form.get("line_25d_total_withholding"), "Form 1040 line 25d")

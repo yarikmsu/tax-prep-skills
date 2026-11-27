@@ -734,6 +734,17 @@ def _check_the_payments(result: dict) -> None:
             "line 33 adds line 31 and not the two — so an excess larger than "
             "the total it belongs to means either that line 31 never picked it "
             "up, which loses the credit, or that it is being counted twice.")
+    # Schedule 3 line 10 is inside Part II as well. Null means not yet
+    # reviewed; a recorded amount must be a real payment that line 31 holds.
+    if (result.get("form_1040") or {}).get("schedule_3_line_10_extension_payment") is not None:
+        extension = _path_num(result, "form_1040.schedule_3_line_10_extension_payment",
+                              "schedule_3_line_10_extension_payment")
+        if extension < 0 or extension + excess - part_2 > CENT:
+            raise Blocked(
+                f"Schedule 3 line 10 (extension payment) is {extension:,.2f} beside "
+                f"excess social security of {excess:,.2f} and a Schedule 3 Part II total "
+                f"of {part_2:,.2f} on Form 1040 line 31. Both lines are inside Part II, "
+                "so line 31 must hold them: correct line 10 or line 31.")
 
 
 
