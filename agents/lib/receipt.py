@@ -373,8 +373,13 @@ def record(workspace, gate: str, outcome: str, *,
     # `required=REQUIRED_GATES` and not the caller's narrower set: a run that
     # re-passes one gate has not re-validated the workspace, and clearing on
     # that would make the marker vanish at the first of three.
+    #
+    # `material=False`: the marker says whether the GATES re-ran on these
+    # files. An open material item is a different reason, which re-running a
+    # gate cannot clear, so counting it would keep "never finished" leading a
+    # draft whose run did finish.
     if abandoned_run(workspace):
-        report = verify(workspace)
+        report = verify(workspace, material=False)
         if not [r for r in report.reasons if r != _interruption_reason(workspace)]:
             clear_abandoned_run(workspace)
     return path
@@ -499,7 +504,8 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
     return captured, reasons + material_evidence.open_items(workspace, items, required_forms)
 
 
-def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyReport:
+def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *,
+           material: bool = True) -> VerifyReport:
     """Re-read what each gate read and report every way the receipt is stale.
 
     Every reason is stated, not just the first: an agent handed one drift at a
@@ -509,9 +515,12 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES) -> VerifyRep
     gate verifies: a killed run leaves artifacts part-written, and a receipt
     whose digests happen to match says only that nothing has changed SINCE —
     not that what is here was ever whole.
+
+    `material=False` leaves out open material items, for a caller asking only
+    whether the gates verify.
     """
     workspace = Path(workspace).resolve()
-    captured, material_reasons = _material_checks(workspace)
+    captured, material_reasons = _material_checks(workspace) if material else ({}, [])
     data = _read(workspace)
     if not data:
         return VerifyReport(False, [

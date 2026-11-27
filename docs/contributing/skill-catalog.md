@@ -168,6 +168,12 @@ digest of the evidence file itself, and receipt verification lists all open
 items in draft output and refuses final export. A workspace with no tracked
 items can continue without an evidence file.
 
+Required forms are re-derived from the profile at every check, so editing the
+record cannot close one. An item recorded only through the CLI exists in the
+file alone: the tie-out refuses to re-run after the file it bound is gone, but
+deleting the file together with the receipt and re-running every gate drops
+it. The record guards against stale evidence, not against its own deletion.
+
 The capability gate registers the Marketplace Form 8962 item. The generic
 writer reserves required-form ids for their filing workflows. Completing Form
 8962 will require its checked return entries and attachment under AA120.

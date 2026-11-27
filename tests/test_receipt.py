@@ -326,6 +326,52 @@ class TestTheInvalidationSetIsTheInputSetAndNothingWider:
         with pytest.raises(ReceiptError, match="Restore material_evidence.json"):
             receipt.record(tmp_path, "tie_out", receipt.PASS)
 
+    def test_a_hand_closed_required_form_stays_open(self, tmp_path):
+        """A required form is derived from the PROFILE at verify time, never
+        from the record. Closing Form 8962 by editing material_evidence.json
+        by hand must not reach a final package (AA136, ruling Q15)."""
+        _workspace(tmp_path)
+        (tmp_path / "taxpayer_profile.json").write_text(json.dumps(
+            {"filing_status": "MFJ", "flags": {"has_marketplace_insurance": True}}))
+        digest = receipt._file_digest(tmp_path / "result.json")
+        (tmp_path / material_evidence.FILENAME).write_text(json.dumps({"version": 1, "items": {
+            "form.marketplace_insurance": {"label": "Form 8962", "outcome": "reviewed",
+                                           "inputs": {"result.json": digest}}}}))
+        _passing(tmp_path)
+        reasons = verify(tmp_path).reasons
+        assert any(r.startswith("Open material item: Form 8962") for r in reasons), reasons
+
+    def test_a_label_carrying_an_identifier_is_refused(self, tmp_path):
+        """Labels are printed in drafts and on stderr (AGENTS.md §1), so one
+        with an SSN shape is refused by the writer AND by the reader."""
+        _workspace(tmp_path)
+        with pytest.raises(material_evidence.MaterialEvidenceError):
+            material_evidence.record(tmp_path, "w2-box", "W-2 000-00-0000", "open", [])
+        assert not (tmp_path / material_evidence.FILENAME).exists()
+        (tmp_path / material_evidence.FILENAME).write_text(json.dumps({"version": 1, "items": {
+            "w2-box": {"label": "W-2 000-00-0000", "outcome": "open", "inputs": {}}}}))
+        _passing(tmp_path)
+        report = verify(tmp_path)
+        assert not report.valid
+        assert f"Could not validate {material_evidence.FILENAME}." in report.reasons
+
+    @pytest.mark.parametrize("alias", ["ANSWERS.md", "Material_Evidence.json",
+                                       "VALIDATION_RECEIPT.JSON"])
+    def test_a_case_alias_of_an_excluded_file_is_refused(self, tmp_path, alias):
+        """On a case-insensitive volume the alias IS the excluded file."""
+        _workspace(tmp_path)
+        (tmp_path / "answers.md").write_text("## Resolved\n")
+        with pytest.raises(material_evidence.MaterialEvidenceError,
+                           match="canonical workspace input"):
+            material_evidence.record(tmp_path, "item", "Form 1040 line 1", "reviewed", [alias])
+        # The reader checks a stored name the same way, with no file lookup.
+        (tmp_path / material_evidence.FILENAME).write_text(json.dumps({"version": 1, "items": {
+            "item": {"label": "Form 1040 line 1", "outcome": "reviewed",
+                     "inputs": {alias: "0" * 64}}}}))
+        with pytest.raises(material_evidence.MaterialEvidenceError,
+                           match="canonical workspace input"):
+            material_evidence.read(tmp_path)
+
     def test_a_new_summary_or_review_file_leaves_the_receipt_valid(self, tmp_path):
         _passing(_workspace(tmp_path))
         (tmp_path / "summaries").mkdir(exist_ok=True)
@@ -551,6 +597,21 @@ class TestAnInterruptedRunIsNotValidated:
             receipt.record(ws, gate, receipt.PASS)
         assert not W.abandoned_run(ws)
         assert verify(ws).valid
+
+    def test_an_open_material_item_does_not_hold_the_marker(self, tmp_path):
+        """The marker is about whether the GATES re-ran. An open item is its
+        own reason, which no gate run clears, so it must not keep "never
+        finished" leading every draft of a run that did finish."""
+        from agents.lib import workspace as W
+        ws = _workspace(tmp_path)
+        material_evidence.record(ws, "estimated-payments", "Form 1040 estimated payments",
+                                 "open", [])
+        self._interrupt(ws)
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(ws, gate, receipt.PASS)
+        assert not W.abandoned_run(ws)
+        reasons = verify(ws).reasons
+        assert reasons == ["Open material item: Form 1040 estimated payments."]
 
     def test_a_FAILING_gate_leaves_the_marker_where_it_was(self, tmp_path):
         from agents.lib import workspace as W

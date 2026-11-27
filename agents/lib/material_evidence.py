@@ -23,6 +23,9 @@ FILENAME = receipt.MATERIAL_EVIDENCE_NAME
 OUTCOMES = ("open", "computed", "reviewed", "not_applicable")
 _FORM_PREFIX = "form."
 _EXCLUDED_INPUTS = {FILENAME, receipt.RECEIPT_NAME, "answers.md"}
+# Compared case-folded: on a case-insensitive volume (macOS, Windows)
+# `ANSWERS.md` IS answers.md, and an exact match let it through.
+_EXCLUDED_FOLDED = {name.casefold() for name in _EXCLUDED_INPUTS}
 _ID = re.compile(r"[a-z][a-z0-9_.-]{0,95}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -48,7 +51,7 @@ def _source_path(name: str) -> Path:
         raise MaterialEvidenceError("each evidence reference must be a safe workspace-relative path")
     path = Path(name)
     if (path.is_absolute() or path.anchor or "\\" in name or ":" in name or ".." in path.parts
-            or name != path.as_posix() or not path.parts or name in _EXCLUDED_INPUTS):
+            or name != path.as_posix() or not path.parts or name.casefold() in _EXCLUDED_FOLDED):
         raise MaterialEvidenceError("each evidence reference must name a canonical workspace input")
     return path
 
@@ -59,7 +62,7 @@ def _dependency(workspace: Path, name: str) -> Path:
         resolved = _validate_subpath(workspace / path, workspace)
     except RolloverError as exc:
         raise MaterialEvidenceError("an evidence reference points outside the workspace") from exc
-    if resolved.relative_to(workspace.resolve()).as_posix() in _EXCLUDED_INPUTS:
+    if resolved.relative_to(workspace.resolve()).as_posix().casefold() in _EXCLUDED_FOLDED:
         raise MaterialEvidenceError("each evidence reference must name a canonical workspace input")
     return resolved
 
