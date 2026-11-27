@@ -228,9 +228,10 @@ blocks, and 73% of the City's out-of-state commuters work in New Jersey. Togethe
 
 ### North Carolina
 
-Nothing blocks for living in North Carolina. But North Carolina's own return is
-not produced: every North Carolinian gets a bracket-based estimate of the D-400
-instead, which is a bigger gap for this persona than any block. Above $200,000
+The TY2025 D-400 is computed for a full-year resident, and other form years are
+refused until their instructions are verified. North Carolina adds its own blocks
+for some Schedule S adjustments and credits, which are not measured here (see
+[How these were measured](#how-these-were-measured)). Above $200,000
 the federal blocks come out as Florida's do, 24–29% hitting at least one. Across
 all returns fewer are blocked, 22% against Florida's 27%, because fewer took an
 advance premium credit: 9.2% against 17%. 6.9% of households moved to or from
@@ -239,11 +240,11 @@ North Carolina's out-of-state commuters work in South Carolina or Virginia. Rent
 
 ### Seattle
 
-Washington taxes no wages, and living there blocks nothing on its own. It is
-still not on the no-income-tax list, because of its capital-gains excise, which
-is not computed. A Washington resident with large long-term gains owes it and
-gets no figure for it here, and a wage-only filer gets an estimate note rather
-than a plain statement that no state return exists. King County's blocks are the
+Washington taxes no wages. It is still not on the no-income-tax list, because of
+its separate capital-gains excise. The TY2025 excise is computed for a full-year
+Washington household from confirmed asset classifications and eligibility
+worksheets. Special federal gains and a separate spouse or RDP household block
+the excise; their frequency is not measured. King County's blocks are the
 federal ones: rental at 13% above $200,000, moves across the state line at
 7.7%, and almost no commuting (0.36%). 21–26% of $200,000+ returns hit one. As
 in California, a separate return under community-property law is a hand
@@ -256,9 +257,6 @@ are the ones that matter most for these personas. Every situation the gate
 notes without blocking is listed in the
 [skill catalog](contributing/skill-catalog.md).
 
-- **North Carolina's D-400** is a bracket-based estimate.
-- **Washington's capital-gains excise** is not computed, and the return's state
-  note does not name it: it says only that Washington is an estimate.
 - **The Earned Income Credit** is never computed, federally, for New York State
   or for New York City. Each is an input taken from its worksheet, and mostly
   falls below these personas' incomes.
