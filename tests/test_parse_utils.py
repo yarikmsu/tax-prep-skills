@@ -1163,6 +1163,12 @@ def test_long_pdf_page_extract_refuses_a_different_source_snapshot(tmp_path):
     second = command("extract", path.name, "1", *flags)
     assert second.returncode == 1 and not second.stdout
     assert "Source changed during extraction" in second.stderr
+    # A misspelled flag is a stray argument, which must not extract unchecked.
+    for stray in (("--expected-source-digst", digest), (digest,)):
+        typo = command("extract", path.name, "1", *stray, "--with-source-digest")
+        assert typo.returncode == 1 and not typo.stdout
+        assert "unexpected arguments" in typo.stderr
+    assert command("digest", path.name, "extra").returncode == 1
 
 
 def _raw_pdf(path):

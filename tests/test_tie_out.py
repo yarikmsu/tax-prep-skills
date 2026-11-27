@@ -669,6 +669,23 @@ def test_resolved_crypto_skip_passes():
         assert any("Crypto CSV source digests" in item for item in blocked.missing_result_targets)
 
 
+def test_a_second_download_of_an_imported_crypto_csv_is_one_import():
+    reason = "crypto exchange CSV — ingested by /tax-parse-crypto; amounts flow via crypto_summary"
+    imported = dict(_record(doc_id="cb", file="documents/coinbase.csv", form_type="crypto-csv",
+                            payer="Coinbase", key_boxes={}, skipped=reason), source_sha256="c" * 64)
+    copy = dict(imported, doc_id="cb-copy", file="documents/coinbase (1).csv")
+    files = ["documents/W2_Acme.pdf", imported["file"], copy["file"]]
+    source = {"transactions": [], "csv_source_digests": ["c" * 64]}
+    # Unlinked, the copy reads as a second import the JSON does not hold.
+    assert T.evaluate(_ledger(_record(), imported, copy), _result(), files, crypto_source=source).failed
+    copy["source_form"] = {"duplicate_of": "cb"}
+    report = T.evaluate(_ledger(_record(), imported, copy), _result(), files, crypto_source=source)
+    assert not report.failed, (report.source_issues, report.missing_result_targets)
+    # Different bytes are a different export, not a copy.
+    other = dict(copy, source_sha256="d" * 64)
+    assert T.evaluate(_ledger(_record(), imported, other), _result(), files, crypto_source=source).failed
+
+
 # --------------------------------------------------------------------------
 # Check C — sums
 # --------------------------------------------------------------------------

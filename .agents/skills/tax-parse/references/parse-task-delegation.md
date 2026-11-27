@@ -42,8 +42,8 @@ user to rename it.
 `source_sha256` once before any page and use that same digest on every extraction.
 
 ```bash
-sh agents/lib/run.sh agents/lib/parse_utils.py digest '{path}'
-sh agents/lib/run.sh agents/lib/parse_utils.py extract '{path}' {page} --with-source-digest --expected-source-digest {source_sha256}
+sh agents/lib/run.sh agents/lib/parse_utils.py digest '{filepath}'
+sh agents/lib/run.sh agents/lib/parse_utils.py extract '{filepath}' {page} --with-source-digest --expected-source-digest {source_sha256}
 ```
 
 Use the same flags for a page-level table read. A digest mismatch refuses the
@@ -118,7 +118,9 @@ local account.
 
 ## SEQUENTIAL mode
 
-You do the extraction and the summarising yourself, in this session.
+You do the extraction and the summarising yourself, in this session. A PDF
+over 10 pages uses the pinned-digest commands under "A PDF over 10 pages"
+above: they apply in this mode too.
 
 **The SEQUENTIAL rules.** In ENFORCED mode the worker cannot break them — it
 holds no tool that could. Here they bind whoever is parsing:

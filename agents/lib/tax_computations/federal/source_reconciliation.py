@@ -46,6 +46,18 @@ def _marked_corrected(name: str) -> bool:
     return "CORRECTED" in form_code(name) or _clean_code(name) == "W2C"
 
 
+def _crypto_csv_copy(record: LedgerRecord, kept: LedgerRecord) -> bool:
+    """A second download of an imported exchange CSV, byte for byte.
+
+    Every crypto CSV record is a skip (its rows reach the return through the
+    importer), so a copy's link could never name an active form, and the
+    tie-out's digest check counted the copy as a second import.
+    """
+    return (form_code(record.form_type) == form_code(kept.form_type) == "CRYPTOCSV"
+            and bool(record.source_sha256) and record.source_sha256 == kept.source_sha256
+            and not (kept.source_form or {}).get("duplicate_of"))
+
+
 def _information_return(form: str) -> bool:
     return form == "W2" or "1099" in form
 
@@ -200,6 +212,8 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
                 unlinked.append((number, record, form, payer))
             continue
         retained = records.get(link)
+        if copy_of and retained is not None and _crypto_csv_copy(record, retained[1]):
+            continue
         if retained is None or retained[1].skipped is not None:
             problems.append(f"Document #{number} must name an active retained form.")
             continue

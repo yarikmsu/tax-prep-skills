@@ -3010,7 +3010,9 @@ def crypto_csv_source_digests(data: object) -> list[str]:
     if "csv_source_digests" in data:
         digests = data["csv_source_digests"]
         if "source_sha256" in data and digests != [data["source_sha256"]]:
-            raise CryptoImportError("Single-export and combined crypto source digests disagree.")
+            raise CryptoImportError("Single-export and combined crypto source digests disagree. In a "
+                                    "merged file keep csv_source_digests and remove the top-level "
+                                    "source_sha256.")
     elif "source_sha256" in data:
         digests = [data["source_sha256"]]
     else:

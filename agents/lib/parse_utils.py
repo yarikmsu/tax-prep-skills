@@ -2410,6 +2410,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     cmd, path = argv[0], argv[1]
+    # A misspelled flag reads as a stray argument, and a stray argument was
+    # ignored, so `--expected-source-digst` extracted with no digest check.
+    if len(argv) > (3 if cmd in ("extract", "tables", "excel") else 2):
+        print("Error: unexpected arguments after the path; check the spelling of each flag",
+              file=sys.stderr)
+        sys.exit(1)
     # A RELATIVE path means a file in the WORKSPACE. `documents/w2.pdf` is how
     # every skill spells it, and that used to be the same directory the command
     # ran from — which under $TAX_WORKSPACE is the checkout (Y4). Resolving the

@@ -108,8 +108,8 @@ sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv
 ```
 (Always single-quote the path — same shell-safety rule as `/tax-parse`.) This prints
 `transactions`, `source_sha256`, and a one-entry `csv_source_digests` list.
-Save the same digest for that CSV's intake record and the merged normalized
-JSON. The adapters are header-name driven and tolerant of column
+Save the digest on that CSV's intake record; the merged JSON keeps only
+`csv_source_digests`, one per imported CSV. The adapters are header-name driven and tolerant of column
 reordering, but real exports drift. **If an adapter errors on an unrecognized
 Transaction Type, pair, or Notes format, run a security-constrained normalization
 sub-task (below) for that file** — dispatch parallel sub-tasks if your agent supports
@@ -198,10 +198,12 @@ Every file written this way opens with this line, verbatim:
 CSV via `parse_utils.py csv '{filepath}' --with-source-digest` (use the `data` rows,
 `extract`/`tables` are the PDF commands and refuse a CSV), then emit a
 normalized transaction list to `summaries/crypto_<exchange>.json` using this schema — one
-object per economic event:
+object per economic event, with the `source_sha256` the CSV read printed in
+`csv_source_digests`:
 
 ```json
 {
+  "csv_source_digests": ["<source_sha256 of the CSV read>"],
   "specific_identification": false,
   "transactions": [
     {"date": "2024-06-01", "kind": "sell",  "asset": "BTC", "quantity": 0.5,
@@ -452,6 +454,8 @@ Add the `source_sha256` returned by the adapter or bound CSV read used to
 produce those transactions. Save the same record in `summaries/<doc_id>.record.json`
 so ordinary ledger rebuilds carry it over. Secure that file with `secure_fs`.
 Re-import and rebuild both artifacts when a digest is missing or the CSV changes.
+Never import a byte-identical second download: give its record
+`"source_form": {"duplicate_of": "<imported CSV's doc_id>"}`.
 
 Set `"foreign": true` on the record when the exchange entity is
 foreign-domiciled (Kraken/Binance non-US entities) so `/tax-fbar` step 1.6
