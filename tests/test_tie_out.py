@@ -610,6 +610,19 @@ def test_informational_categories_not_tied():
                    for c in report.sum_checks)
 
 
+def test_w2_payroll_tax_withholding_is_preserved_without_changing_box_2():
+    payroll_taxes = {"ss_tax_withheld": 6200, "medicare_tax_withheld": 1450}
+    recs = _ledger(_record(key_boxes={"wages": 100000, "federal_withholding_w2": 12000,
+                                      **payroll_taxes}))
+    amounts = T.category_sums(recs)
+    assert {key: amounts[key] for key in payroll_taxes} == payroll_taxes
+    report = T.evaluate(recs, _result(), ["documents/W2_Acme.pdf"])
+    assert not report.failed
+    assert all(check.category not in payroll_taxes for check in report.sum_checks)
+    assert next(check for check in report.sum_checks
+                if check.category == "federal_withholding_w2").ledger_total == 12000
+
+
 def test_skipped_records_excluded_from_sums():
     recs = _ledger(_record(),
                    _record(doc_id="dup", file="documents/dup.pdf",

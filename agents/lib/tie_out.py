@@ -138,6 +138,7 @@ _SIGNED_CATEGORIES = {"ss_benefits"}
 # ss_tips. The deduction is capped and MAGI-phased, so the ledger figure won't
 # equal any result line; the record just makes the raw amount traceable.
 _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
+                  "ss_tax_withheld", "medicare_tax_withheld",
                   # Components already included in the federal aggregates.
                   # The reviewed CA derivation below checks their use.
                   "state_refund_1099g", "personal_1099k",
@@ -717,9 +718,10 @@ def _other_withholding_localities(rec: dict, boxes: dict, where: str) -> "tuple[
 # than C is a different form: W-2G is gambling, W-2GU/W-2AS/W-2VI territorial.
 # An exact-code match let every longer spelling through with no box items.
 _W2_FORM = re.compile(r"(?<![A-Z0-9])W[\s\-‐‑–—]*2(?:[\s\-‐‑–—]*(C))?(?![A-Z0-9])")
-# Boxes 3, 5 and 7 appear on a W-2 and on no other source, so a record holding
+# Boxes 3–7 appear on a W-2 and on no other source, so a record holding
 # only them is still a W-2 whose boxes 1 and 2 need an outcome.
-_W2_SIGNALS = ("wages", "federal_withholding_w2", "ss_wages", "medicare_wages", "ss_tips")
+_W2_SIGNALS = ("wages", "federal_withholding_w2", "ss_wages", "medicare_wages", "ss_tips",
+               "ss_tax_withheld", "medicare_tax_withheld")
 
 
 def _w2_form(form_type: str) -> "re.Match | None":
@@ -3786,10 +3788,10 @@ def _w2_outcomes(ledger: list[LedgerRecord], ledger_digest: str) -> dict:
         boxes = dict(record.key_boxes)
         status = record.w2_box_status or {}
         # The AA128 shape, declared instead of dropped: box 1 "blank" while the
-        # same form reports withholding or Social Security/Medicare wages. A
-        # verified zero is recorded as the amount 0, never as a blank.
+        # same form reports any other W-2 amount (boxes 2-7). A verified zero
+        # is recorded as the amount 0, never as a blank.
         reported = any(value > 0 for category, value in record.key_boxes
-                       if category in ("federal_withholding_w2", "ss_wages", "medicare_wages"))
+                       if category in _W2_SIGNALS and category != "wages")
         for box, (category, meaning) in _W2_BOXES.items():
             if status.get(box) == "blank" and box == "1" and reported:
                 outcome = "open"
