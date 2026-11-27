@@ -8,12 +8,14 @@ Wraps pdfplumber with error handling and provides consistent interfaces.
 import bisect
 import csv
 import functools
+import io
 import json
 import math
 import re
 import sys
 import time
 import zipfile
+from hashlib import sha256
 from itertools import accumulate, combinations
 from pathlib import Path
 
@@ -157,7 +159,7 @@ def _charge_deep(budget: "_Budget", node) -> None:
         budget.charge_cell(node)
 
 
-def _refuse_a_zip_bomb(path: str) -> None:
+def _refuse_a_zip_bomb(path: str, *, source: bytes | None = None) -> None:
     """Refuse a workbook whose XML is far larger than its ZIP.
 
     `.xlsx` is a ZIP, and the 100 MB cap above bounds the ZIP alone: a few
@@ -172,7 +174,7 @@ def _refuse_a_zip_bomb(path: str) -> None:
     before anything is decompressed at all.
     """
     try:
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(path if source is None else io.BytesIO(source)) as archive:
             entries = archive.infolist()
     except (zipfile.BadZipFile, OSError) as e:
         raise ParseBudgetError(
@@ -380,6 +382,22 @@ def _validate_file_path(
             f"(limit: {MAX_FILE_SIZE / 1024 / 1024:.0f} MB)"
         )
     return p
+
+
+# Every document type the tie-out hashes (tie_out._DOCUMENT_EXTENSIONS, which a
+# test holds equal). `digest` binds a document no extractor reads, such as a
+# legacy .xls or a page transcribed by hand, so its record is not open forever.
+DIGEST_EXTENSIONS = frozenset({".pdf", ".xlsx", ".xls", ".csv"})
+
+
+def read_source_snapshot(path: str, suffixes: set[str], workspace: str | None = None) -> bytes:
+    """Keep an exact, bounded extraction input in memory for the source digest."""
+    checked = _validate_file_path(path, suffixes, workspace)
+    with checked.open("rb") as stream:
+        source = stream.read(MAX_FILE_SIZE + 1)
+    if len(source) > MAX_FILE_SIZE:
+        raise ParseBudgetError("Source grew past the extraction size limit. Re-run intake.")
+    return source
 
 
 _WORD_GAP = 3   # pdfplumber's default x_tolerance: glyphs further apart than this begin a new word
@@ -1127,7 +1145,8 @@ def _safe_pdf_page(page, tick):
     return safe, governed | _governed_runs(words, tick)
 
 
-def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, str]:
+def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str | None = None, *,
+                     _source: bytes | None = None) -> dict[int, str]:
     """Extract text from PDF, page by page.
 
     Args:
@@ -1155,7 +1174,7 @@ def extract_pdf_text(path: str, pages: list[int] | None = None, workspace: str |
 
     budget = _Budget(f"Reading {redact(path)}")
     result = {}
-    with pdfplumber.open(checked) as pdf:
+    with pdfplumber.open(checked if _source is None else io.BytesIO(_source)) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
         _refuse_too_many_pages(len(target_pages), path)
@@ -1917,7 +1936,8 @@ def extract_pdf_words(path: str, pages: list[int] | None = None, workspace: str 
     return result
 
 
-def extract_tables(path: str, pages: list[int] | None = None, workspace: str | None = None) -> dict[int, list[list]]:
+def extract_tables(path: str, pages: list[int] | None = None, workspace: str | None = None, *,
+                   _source: bytes | None = None) -> dict[int, list[list]]:
     """Extract tables from PDF, page by page.
 
     Args:
@@ -1942,7 +1962,7 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
 
     budget = _Budget(f"Reading the tables in {redact(path)}")
     result = {}
-    with pdfplumber.open(checked) as pdf:
+    with pdfplumber.open(checked if _source is None else io.BytesIO(_source)) as pdf:
         num_pages = len(pdf.pages)
         target_pages = pages if pages is not None else range(num_pages)
         _refuse_too_many_pages(len(target_pages), path)
@@ -1967,7 +1987,8 @@ def extract_tables(path: str, pages: list[int] | None = None, workspace: str | N
     return result
 
 
-def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: str | None = None) -> dict[str, list[list]]:
+def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: str | None = None, *,
+                  _source: bytes | None = None) -> dict[str, list[list]]:
     """Extract data from Excel workbook.
 
     Args:
@@ -2007,10 +2028,10 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
     checked = _validate_file_path(path, {".xlsx"}, workspace=workspace)
     # BEFORE `load_workbook`, which decompresses the whole archive into memory:
     # the 100 MB cap bounds the ZIP, not the XML behind it.
-    _refuse_a_zip_bomb(str(checked))
+    _refuse_a_zip_bomb(str(checked), source=_source)
 
     budget = _Budget(f"Reading {redact(path)}")
-    wb = openpyxl.load_workbook(checked, data_only=True)
+    wb = openpyxl.load_workbook(checked if _source is None else io.BytesIO(_source), data_only=True)
     try:
         targets = sheet_names if sheet_names is not None else wb.sheetnames
         # A sheet that is not there is a refusal naming the ones that are. It
@@ -2055,7 +2076,8 @@ def extract_excel(path: str, sheet_names: list[str] | None = None, workspace: st
         wb.close()
 
 
-def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = None) -> list[list[str]]:
+def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = None, *,
+                _source: bytes | None = None) -> list[list[str]]:
     """Extract data from CSV file.
 
     Args:
@@ -2073,7 +2095,9 @@ def extract_csv(path: str, encoding: str = "utf-8-sig", workspace: str | None = 
     checked = _validate_file_path(path, {".csv"}, workspace=workspace)
 
     budget = _Budget(f"Reading {redact(path)}")
-    with open(checked, newline="", encoding=encoding) as f:
+    stream = (open(checked, newline="", encoding=encoding) if _source is None
+              else io.TextIOWrapper(io.BytesIO(_source), encoding=encoding, newline=""))
+    with stream as f:
         rows = []
         for row in csv.reader(f):
             budget.tick()
@@ -2365,9 +2389,12 @@ if __name__ == "__main__":
         print(f"Error: {redact(e)}", file=sys.stderr)
         sys.exit(1)
 
+    bind_source = bool(argv and argv[-1] == "--with-source-digest")
+    if bind_source:
+        argv.pop()
     if len(argv) < 2:
         print("Usage: python parse_utils.py [--workspace DIR] "
-              "<scan|classify|extract|tables|csv|excel> <path> [page|sheet]")
+              "<scan|classify|extract|tables|csv|excel|digest> <path> [page|sheet] [--with-source-digest]")
         sys.exit(1)
 
     cmd, path = argv[0], argv[1]
@@ -2402,7 +2429,20 @@ if __name__ == "__main__":
         print(json.dumps(obj, indent=2, ensure_ascii=False, default=str))
 
     try:
-        if cmd == "scan":
+        source = None
+        if bind_source:
+            suffix = {"extract": ".pdf", "tables": ".pdf", "csv": ".csv", "excel": ".xlsx"}.get(cmd)
+            if suffix is None:
+                raise ValueError("--with-source-digest requires extract, tables, csv or excel")
+            source = read_source_snapshot(path, {suffix}, workspace)
+
+        def emit(data):
+            _print_json(data if source is None else {"source_sha256": sha256(source).hexdigest(), "data": data})
+
+        if cmd == "digest":
+            _print_json({"source_sha256": sha256(read_source_snapshot(
+                path, set(DIGEST_EXTENSIONS), workspace)).hexdigest()})
+        elif cmd == "scan":
             _print_json(scan_workspace(_confined_dir(path, workspace)))
         elif cmd == "classify":
             text = extract_pdf_text(path, pages=[0], workspace=workspace)
@@ -2410,22 +2450,25 @@ if __name__ == "__main__":
             print(f"Document type: {doc_type}")
         elif cmd == "extract":
             pages = [int(arg3)] if arg3 is not None else None
-            text = extract_pdf_text(path, pages=pages, workspace=workspace)
-            for pg, content in sorted(text.items()):
-                print(f"=== Page {pg} ===")
-                print(content)
-                print()
+            text = extract_pdf_text(path, pages=pages, workspace=workspace, _source=source)
+            if bind_source:
+                emit(text)
+            else:
+                for pg, content in sorted(text.items()):
+                    print(f"=== Page {pg} ===")
+                    print(content)
+                    print()
         elif cmd == "tables":
             pages = [int(arg3)] if arg3 is not None else None
-            _print_json(extract_tables(path, pages=pages, workspace=workspace))
+            emit(extract_tables(path, pages=pages, workspace=workspace, _source=source))
         elif cmd == "csv":
-            _print_json(extract_csv(path, workspace=workspace))
+            emit(extract_csv(path, workspace=workspace, _source=source))
         elif cmd == "excel":
             sheets = [arg3] if arg3 is not None else None
-            _print_json(extract_excel(path, sheet_names=sheets, workspace=workspace))
+            emit(extract_excel(path, sheet_names=sheets, workspace=workspace, _source=source))
         else:
             print(f"Error: Unknown command '{redact(cmd)}'. "
-                  f"Valid commands: scan, classify, extract, tables, csv, excel",
+                  f"Valid commands: scan, classify, extract, tables, csv, excel, digest",
                   file=sys.stderr)
             sys.exit(1)
     except (FileNotFoundError, ValueError, NotADirectoryError) as e:

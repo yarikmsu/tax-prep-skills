@@ -187,6 +187,15 @@ compares as zero, except a Box 1 blank beside Box 2, 3 or 5 amounts, which
 stays open. An unread or missing amount stays open. The ledger inputs preserve the source record and owner, and the
 items stay draft-only until the ledger is repaired and checked again.
 
+Bound extraction records a SHA-256 digest from the same bounded in-memory
+input that the parser used. The intake record and ledger preserve it through
+ordinary and crypto rebuilds. Tie-out compares it with the source digest it
+will bind to the receipt. A mismatch fails tie-out. A legacy record without a
+digest adds an open item and requires re-parsing before final export.
+`parse_utils.py digest <path>` hashes the same bounded snapshot without
+extracting, for a skipped or hand-transcribed document and for `.xls`, which
+no extractor reads. Its extensions are the tie-out's, held equal by test.
+
 ## Pipeline and optional branches
 
 **Optional parsing branch (off `/tax-parse`, feeds `/tax-compute`):**

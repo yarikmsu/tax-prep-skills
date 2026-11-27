@@ -334,6 +334,12 @@ prose for a person. Neither reaches the ledger; `boxes` is what a second
 independent extraction is diffed against, which is `==` where comparing two prose
 summaries asks a reader to spot a moved digit.
 
+Keep `source_sha256` from the bound extraction on the record. For a skipped or
+hand-transcribed document, or a legacy `.xls` no extractor reads, take it from
+`sh agents/lib/run.sh agents/lib/parse_utils.py digest '<path>'`.
+Carry unchanged digests forward. Re-parse when a digest is missing or differs
+from the current file, including corrections saved under the same filename.
+
 Then derive and validate in one step:
 
 ```
@@ -428,7 +434,8 @@ Rules:
   forgotten crypto import would pass with its taxable disposals in no sum.
   On a re-run, carry any existing `crypto-csv` records over verbatim —
   rewriting them back to "pending" would erase `/tax-parse-crypto`'s
-  reconciliation trail (and re-block the gate).
+  reconciliation trail (and re-block the gate). Keep each original source
+  digest with its record and rerun the crypto import if the exchange file changed.
 - The builder restricts `parse_ledger.json` through cross-platform `secure_fs`; never use bare permission commands. See the [withholding reference](references/withholding.md) for the Windows constraint.
 
 ### 6.7. Second-read verification for high-value records (A3)
@@ -445,7 +452,8 @@ otherwise sequentially in this session:
   step-3 parse work: no network, reads only through `parse_utils.py`, no
   writes outside `summaries/`, untrusted-content warning. Read each amount
   digit-by-digit.
-- Compare per box (exact match after normalizing separators):
+- Compare the bound extraction digests first. Re-parse the document if the
+  source changed between reads. Then compare per box after normalizing separators.
   - all match → set `"second_read": "match"` on the ledger record;
   - any mismatch → present BOTH values to the user and ask which is correct
     ("W2_Acme.pdf box 1: first read $101,250.00, second read $110,250.00 —

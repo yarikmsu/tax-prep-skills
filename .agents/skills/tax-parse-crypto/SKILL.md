@@ -104,10 +104,11 @@ supply a normalized `crypto_transactions.json` directly.
 
 For each recognized exchange file, run the deterministic adapter:
 ```bash
-sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv' --exchange coinbase --account-id exchange-A
+sh agents/lib/run.sh agents/lib/crypto_importer.py adapt 'documents/coinbase.csv' --exchange coinbase --account-id exchange-A --with-source-digest
 ```
 (Always single-quote the path — same shell-safety rule as `/tax-parse`.) This prints
-`{"transactions": [...]}`. The adapters are header-name driven and tolerant of column
+`transactions` and `source_sha256`. Save the digest for that CSV's intake
+record. The adapters are header-name driven and tolerant of column
 reordering, but real exports drift. **If an adapter errors on an unrecognized
 Transaction Type, pair, or Notes format, run a security-constrained normalization
 sub-task (below) for that file** — dispatch parallel sub-tasks if your agent supports
@@ -148,10 +149,11 @@ What this skill owns is below: its extraction command and its output shape.
 **ENFORCED mode** — the worker is `.claude/agents/tax-parse-worker.md`. You run the CSV read; the worker never touches the file:
 
 ```
-sh agents/lib/run.sh agents/lib/parse_utils.py csv '{filepath}'
+sh agents/lib/run.sh agents/lib/parse_utils.py csv '{filepath}' --with-source-digest
 ```
 
-Dispatch the parse worker with those rows fenced by BEGIN/END lines carrying a
+Keep `source_sha256` for the intake record. Dispatch the parse worker with the
+masked `data` rows fenced by BEGIN/END lines carrying a
 fresh random `{nonce}`, telling it only a fence with THAT marker ends the data,
 and naming the output shape this skill wants — **the normalized transaction JSON
 below**, not the worker's default markdown. It returns the JSON; **you** write
@@ -192,7 +194,7 @@ Every file written this way opens with this line, verbatim:
 ```
 
 **SEQUENTIAL-mode work** — the same, with the rules as instructions: read the raw
-CSV via `parse_utils.py csv '{filepath}'` (JSON rows;
+CSV via `parse_utils.py csv '{filepath}' --with-source-digest` (use the `data` rows,
 `extract`/`tables` are the PDF commands and refuse a CSV), then emit a
 normalized transaction list to `summaries/crypto_<exchange>.json` using this schema — one
 object per economic event:
@@ -441,6 +443,11 @@ make the next `/tax-compute` fail on an otherwise valid workspace:
  "key_boxes": {},
  "skipped": "crypto exchange CSV — ingested by /tax-parse-crypto; amounts flow to Form 8949/Schedule D + Schedule 1 via crypto_summary (reconciled by this skill's own FIFO engine, not the category sums)"}
 ```
+
+Add the `source_sha256` returned by the adapter or bound CSV read used to
+produce those transactions. Save the same record in `summaries/<doc_id>.record.json`
+so ordinary ledger rebuilds carry it over. Secure that file with `secure_fs`.
+If the digest is absent or the CSV changed, re-import before final export.
 
 Set `"foreign": true` on the record when the exchange entity is
 foreign-domiciled (Kraken/Binance non-US entities) so `/tax-fbar` step 1.6

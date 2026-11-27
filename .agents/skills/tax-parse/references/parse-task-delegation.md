@@ -17,7 +17,7 @@ inside a single round. What follows is what THIS skill owns.
 a file, so it never touches one. For each document in the group:
 
 ```
-sh agents/lib/run.sh agents/lib/parse_utils.py extract '{filepath}'
+sh agents/lib/run.sh agents/lib/parse_utils.py extract '{filepath}' --with-source-digest
 ```
 
 `tables` for its ruled tables; `excel '{filepath}' '{sheet}'` or `csv
@@ -27,12 +27,18 @@ running from elsewhere, pass `--workspace DIR` FIRST, before the command. No
 invocation is unconfined — but the flag chooses the workspace, so run from the
 workspace and do not widen it.
 
+Append `--with-source-digest` to each extraction in both modes, after any page
+or sheet argument. The JSON output wraps masked `data` with `source_sha256`.
+Keep the digest with the corresponding source record. Before combining pages,
+sheets or extraction methods, confirm every digest for that document agrees.
+If one differs, discard that document's partial work and extract it again.
+
 **Always wrap `{filepath}` in SINGLE quotes.** They stop `$()`, backticks and
 double-quote escapes from executing. Never interpolate a path into an inline
 `python3 -c` string, and reject a filename containing a single quote — ask the
 user to rename it.
 
-**A PDF over 10 pages:** extract page by page (`extract '{path}' {page}`) — that
+**A PDF over 10 pages:** extract page by page (`extract '{path}' {page} --with-source-digest`) — that
 bound is on the EXTRACTOR's memory, not on the worker. Do not split the dispatch
 by page expecting to save context: you have already read every page, so the
 main session holds the whole document either way. **That is the cost of this

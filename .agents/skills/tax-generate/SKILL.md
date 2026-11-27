@@ -212,6 +212,8 @@ pass, or passed against inputs that have since changed. Re-run `/tax-compute` ra
 around it. Open or stale material outcomes also prevent final export. `--draft`
 renders anyway and stamps **NOT VALIDATED** in the page-1 box with each reason,
 including the name of every open item. Never file from a draft.
+If the receipt reports a missing intake digest or a changed source, re-parse
+the document before re-running computation.
 
 **A workspace that has run an older version of this skill still has a
 `generate_tax_pdf.py` at its root.** It is no longer used. Leave it alone or
