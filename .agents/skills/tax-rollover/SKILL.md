@@ -73,6 +73,10 @@ sh agents/lib/run.sh -m agents.lib.rollover diff \
 
 Where `{current_year}` is read from `result.json` `meta.tax_year`. Parse the JSON output.
 
+For expected forms, rollover uses the archived parse ledger when available.
+It preserves each payer's recorded owner and account last four digits, and
+uses the archived payer lists for older returns or entries missing from the ledger.
+
 ### 3. Present each category and ask the user
 
 Rental `schedule_e_rentals.carryforward` becomes

@@ -614,6 +614,40 @@ def test_expected_sources_foreign_account_dedup():
     assert fa.prior_value[0]["institution"] == "Foreign Bank EU"
 
 
+def test_rollover_keeps_separate_expected_accounts_and_owners_at_one_bank(tmp_path):
+    import shutil
+    from agents.lib.tie_out import load_ledger, missing_expected_forms
+
+    archive = tmp_path / "archive"
+    shutil.copytree(FIXTURES / "prior_2024_clean", archive)
+
+    def record(number, person, last4):
+        return {"doc_id": f"interest-{number}", "file": f"documents/interest-{number}.pdf",
+                "payer": "Example Bank", "person": person, "form_type": "1099-INT",
+                "source_form": {"account_last4": last4}, "key_boxes": {"taxable_interest": 10}}
+
+    records = [record(1, "primary", "1011"), record(2, "primary", "1012"),
+               record(3, "spouse", "1011")]
+    (archive / "parse_ledger.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+    prior = load_prior(archive, 2024)
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"expected_sources"}, tax_law_new=current.tax_law)
+    sources = next(change.prior_value for change in diff["expected_sources"]
+                   if change.json_path == "expected_sources.interest_payers")
+    bank_rows = [row for row in sources if row["name"] == "Example Bank"]
+    assert [(row["person"], row["account_last4"]) for row in bank_rows] == [
+        ("primary", "1011"), ("primary", "1012"), ("spouse", "1011"),
+    ]
+    expected = {"interest_payers": bank_rows}
+    assert missing_expected_forms(load_ledger({"records": records[:1]}), expected) == [
+        ("interest reporting", "Example Bank"), ("interest reporting", "Example Bank"),
+    ]
+    assert missing_expected_forms(load_ledger({"records": records[:2]}), expected) == [
+        ("interest reporting", "Example Bank"),
+    ]
+    assert not missing_expected_forms(load_ledger({"records": records}), expected)
+
+
 from agents.lib.rollover import apply_changes, WritePaths
 
 

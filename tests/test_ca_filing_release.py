@@ -254,6 +254,27 @@ def test_open_deduction_blocks_even_when_arithmetic_passes(workspace):
     _assert_ready(workspace)
 
 
+def test_one_brokerage_account_does_not_clear_two_expected_accounts(workspace):
+    release.compute(workspace)
+    profile_path = workspace / "taxpayer_profile.json"
+    profile = release.read_json(profile_path)
+    profile["expected_sources"] = {"brokerages": [
+        {"name": "Synthetic broker", "person": "primary", "account_last4": suffix}
+        for suffix in ("1011", "1012")
+    ]}
+    release.write_json(profile_path, profile)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    broker = next(record for record in ledger["records"] if record["form_type"] == "1099-B")
+    broker["source_form"]["account_last4"] = "1011"
+    release.write_json(ledger_path, ledger)
+    release.run(workspace, "capabilities", "--json")
+    release.run(workspace, "return_builder", "--check")
+    report = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Expected brokerage reporting item #1 is missing" in report
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
 def test_unverified_applicable_law_blocks_even_after_gates_are_refreshed(workspace):
     release.compute(workspace)
     path = workspace / release.LAW
