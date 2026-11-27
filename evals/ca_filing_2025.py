@@ -218,8 +218,12 @@ def parse_sources(workspace: Path, *, unread_box_2: bool = False) -> list[dict]:
             record.update(form_type="1099-B", payer="Synthetic broker",
                           key_boxes={"capital_proceeds": _amount(boxes, "Box 1d Proceeds")})
         elif source.stem in ("1099-nec", "1099-k"):
+            gross = _amount(boxes, "Box 1 Gross")
+            key_boxes = {"self_employment_gross": gross}
+            if source.stem == "1099-k":
+                key_boxes["form_1099k_box_1a"] = gross
             record.update(form_type=source.stem.upper(), payer=f"Synthetic payer {source.stem}",
-                          key_boxes={"self_employment_gross": _amount(boxes, "Box 1 Gross")})
+                          key_boxes=key_boxes)
         else:
             assert source.stem == "business-book"
             gross = _amount(boxes, "Gross payment")

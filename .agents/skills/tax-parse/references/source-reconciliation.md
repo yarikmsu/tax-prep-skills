@@ -58,14 +58,17 @@ documented disposition, source routing, or reconciliation. Equal amounts alone
 do not establish that two payments are the same. [IRS Form 1099-K guidance](https://www.irs.gov/businesses/what-to-do-with-form-1099-k).
 
 Copy each 1099-K's original Box 1a in `form_1099k_box_1a` and route its
-reviewed receipts to the appropriate categories. A positive Box 1a requires
-a positive routed amount. Record an explicit Box 1a zero when the effective
-form reports zero. Personal-item gains go to Form 8949. Personal-item losses
-are nondeductible.
+reviewed receipts to the appropriate categories (`self_employment_gross`,
+`personal_1099k`, `capital_proceeds`). The routed amounts must add up to
+Box 1a to the cent: every dollar has a line, and a remainder left unrouted
+drops from the return. Record an explicit Box 1a zero when the effective form
+reports zero. Personal-item gains go to Form 8949. Personal-item losses are
+nondeductible.
 
-When `flags.has_self_employment` is true, review the receipts before treating
-any portion of a 1099-K as personal, including personal sales routed to
-Form 8949. Record `input.1099k_personal_routing` with `--outcome reviewed`
+When the return has a business — `flags.has_self_employment` true, an active
+Schedule C, or business receipts in the ledger — review the receipts before
+treating any portion of a 1099-K as personal, including personal sales routed
+to Form 8949. Record `input.1099k_personal_routing` with `--outcome reviewed`
 using the material-evidence command. Bind the current `parse_ledger.json`
 and each affected 1099-K with repeatable `--input` arguments. Include
 supporting transaction records when used. Refresh the review after a source

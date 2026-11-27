@@ -3041,6 +3041,24 @@ def _ca_return_checks(result: dict, profile: "dict | None", refund_recorded: boo
     return errors
 
 
+def _business_return(ledger: "list[LedgerRecord]", result: dict, profile: dict) -> bool:
+    """A return with business receipts, whatever the interview flag says.
+
+    Keyed on `has_self_employment` alone, a profile left false let a 1099-K be
+    routed personal beside an active Schedule C with no review.
+    """
+    if (profile.get("flags") or {}).get("has_self_employment") is True:
+        return True
+    if any(record.skipped is None and (record.business_receipts
+                                       or dict(record.key_boxes).get(source_reconciliation.BUSINESS_GROSS, 0) > 0)
+           for record in ledger):
+        return True
+    try:
+        return schedule_c.schedule_c_net(result, profile) is not None
+    except ValueError:
+        return True  # an unreadable Schedule C still asks for the review
+
+
 def evaluate(ledger: "list[LedgerRecord]", result: dict,
              document_files: "list[str]",
              tolerance: float = DEFAULT_TOLERANCE,
@@ -3089,7 +3107,7 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     meta = result.get("meta")
     year = (meta.get("tax_year") if isinstance(meta, dict) else None) or (profile or {}).get("tax_year")
     personal_sources = None
-    if ((profile or {}).get("flags") or {}).get("has_self_employment") is True:
+    if _business_return(ledger, result, profile or {}):
         item = (evidence_items or {}).get(material_evidence.PERSONAL_1099K_ITEM) or {}
         personal_sources = material_evidence.reviewed_personal_1099k_sources(item, ledger_sha256)
     source_review = source_reconciliation.review(ledger, year, personal_1099k_sources=personal_sources)

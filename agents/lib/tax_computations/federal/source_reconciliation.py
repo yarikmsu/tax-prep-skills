@@ -33,8 +33,10 @@ def _clean_code(name: str) -> str:
 
 def _base_form(name: str) -> str:
     code = _clean_code(name)
+    # Containment, as the 1099-DA rule reads it: "Substitute 1099-K" or
+    # "PayPal 1099-K" matched no business rule as a prefix test.
     for business_form in ("1099NEC", "1099K"):
-        if code.startswith(business_form):
+        if business_form in code and not _consolidated(code):
             return business_form
     return "W2" if code == "W2C" else code
 
@@ -141,13 +143,15 @@ def _review_1099k(record: LedgerRecord, number: int,
     boxes = dict(record.key_boxes)
     routes = {route: boxes[route] for route in _K_ROUTES if route in boxes}
     reported = boxes.get(K_REPORTED_GROSS)
-    if not any(routes.values()):
-        if reported is None and routes:
-            return [f"Document #{number} needs verified Form 1099-K Box 1a before routing zero."]
-        if reported and routes:
-            return [f"Document #{number} has a positive Form 1099-K Box 1a and zero routed receipts."]
-        if reported != 0:
-            return [f"Document #{number} needs the routed gross from Form 1099-K."]
+    if reported is None:
+        return [f"Document #{number} needs verified Form 1099-K Box 1a in {K_REPORTED_GROSS}."]
+    # Every dollar of Box 1a has a line (IRS, "What to do with Form 1099-K").
+    # Routing only part of it dropped the rest from Schedule C unseen, and
+    # leaving it unrouted needed less review than calling it personal.
+    routed = round(sum(routes.values()), 2)
+    if routed != round(reported, 2):
+        return [f"Document #{number} routes ${routed:,.2f} of its ${reported:,.2f} Form 1099-K Box 1a. "
+                "Route all of it to business, personal or capital receipts."]
     if (personal_sources is not None and (routes.get("personal_1099k") or routes.get("capital_proceeds"))
             and (not record.source_sha256 or personal_sources.get(record.file) != record.source_sha256)):
         return [f"Document #{number} needs a reviewed input.1099k_personal_routing outcome "
