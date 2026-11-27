@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import pdf_render, receipt  # noqa: E402
 from tests.skill_text import skill_text  # noqa: E402
-from tests.filing_law import write_synthetic_filing_law  # noqa: E402
+from tests.filing_law import write_synthetic_filing_inputs, write_synthetic_filing_law  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = json.loads((REPO / "agents" / "templates" / "result_template.json").read_text())
@@ -220,6 +220,7 @@ class TestTheCli:
         (tmp_path / "result.json").write_text(json.dumps(_result()))
         if validated:
             write_synthetic_filing_law(tmp_path)
+            write_synthetic_filing_inputs(tmp_path)
             for gate in receipt.REQUIRED_GATES:
                 receipt.record(tmp_path, gate, receipt.PASS)
         return tmp_path

@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import capabilities, filing_package as FP, material_evidence, receipt  # noqa: E402
 from agents.lib import parse_records, return_builder, tie_out  # noqa: E402
-from tests.filing_law import write_synthetic_filing_law  # noqa: E402
+from tests.filing_law import write_synthetic_filing_inputs, write_synthetic_filing_law  # noqa: E402
 
 
 def _result(**sections):
@@ -257,6 +257,11 @@ def test_render_markdown_carries_not_efile_banner():
 FIX_REPO = Path(__file__).resolve().parent.parent
 
 
+def _prepare_export(tmp_path):
+    write_synthetic_filing_law(tmp_path)
+    write_synthetic_filing_inputs(tmp_path)
+
+
 def _package(tmp_path, *flags):
     p = tmp_path / "result.json"
     if not p.exists():
@@ -299,13 +304,77 @@ def test_a_valid_receipt_assembles_with_no_banner(tmp_path):
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
-    write_synthetic_filing_law(tmp_path)
+    _prepare_export(tmp_path)
     for gate in receipt.REQUIRED_GATES:
         receipt.record(tmp_path, gate, receipt.PASS)
     out = _package(tmp_path)
     assert out.returncode == 0, out.stderr
     assert out.stdout.startswith("# Filing package") or "Filing package" in out.stdout
     assert "NOT VALIDATED" not in out.stdout
+
+
+def test_untouched_standard_deduction_is_an_open_item_even_with_passing_arithmetic(tmp_path):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(_result(form_1040={"line_9_total_income": 100000,
+                                                "line_12_standard_deduction": 0})), encoding="utf-8")
+    law = write_synthetic_filing_law(tmp_path)
+
+    def certify():
+        for gate in receipt.REQUIRED_GATES:
+            receipt.record(tmp_path, gate, receipt.PASS)
+
+    certify()
+    denied = _package(tmp_path)
+    assert denied.returncode == 2
+    assert "Open material item: Form 1040 line 12 deduction election." in denied.stderr
+    draft = _package(tmp_path, "--draft")
+    assert draft.returncode == 0 and "Form 1040 line 12 deduction election" in draft.stdout
+
+    def record_basic_deduction():
+        record = _material_cli(tmp_path, "--id", "input.deduction_election", "--label", "Deduction election",
+                               "--outcome", "computed", "--deduction-method", "standard",
+                               "--input", "result.json", "--input", "taxpayer_profile.json",
+                               "--input", "tax_law_2025.json")
+        assert record.returncode == 0, record.stderr
+        certify()
+
+    record_basic_deduction()
+    assert "Line 12 must equal the covered-year basic standard deduction" in _package(tmp_path).stderr
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["form_1040"]["line_12_standard_deduction"] = law["federal"]["filing_statuses"]["mfj"]["standard_deduction"]
+    path.write_text(json.dumps(result), encoding="utf-8")
+    record_basic_deduction()
+    assert _package(tmp_path).returncode == 0
+
+
+def test_reviewed_zero_credit_clears_export_until_its_manual_worksheet_changes(tmp_path):
+    flags = {"has_education_expenses": True}
+    profile = {"tax_year": 2025, "filing_status": "MFJ", "flags": flags}
+    (tmp_path / "taxpayer_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(_result(form_1040={"line_9_total_income": 100000,
+                                                "line_12_standard_deduction": 30000,
+                                                "line_20_schedule3_line8": 0})), encoding="utf-8")
+    write_synthetic_filing_law(tmp_path)
+    common_sources = ["result.json", "taxpayer_profile.json", "tax_law_2025.json"]
+    material_evidence.record(tmp_path, "input.deduction_election", "Deduction election", "computed",
+                             common_sources, deduction_method="standard")
+    for gate in receipt.REQUIRED_GATES:
+        receipt.record(tmp_path, gate, receipt.PASS)
+    denied = _package(tmp_path)
+    assert denied.returncode == 2 and "nonrefundable credit worksheets" in denied.stderr
+
+    worksheet = tmp_path / "synthetic-education-worksheet.json"
+    worksheet.write_text('{"eligible_paid_expenses": 0, "reason": "All expenses covered by grants"}', encoding="utf-8")
+    material_evidence.record(tmp_path, "input.nonrefundable_credits", "Education credit", "reviewed",
+                             common_sources + [worksheet.name])
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    assert _package(tmp_path).returncode == 0
+
+    worksheet.write_text('{"eligible_paid_expenses": 1000}', encoding="utf-8")
+    receipt.record(tmp_path, "tie_out", receipt.PASS)
+    changed = _package(tmp_path)
+    assert changed.returncode == 2 and "nonrefundable credit worksheets. A source changed" in changed.stderr
 
 
 def test_applicable_amt_and_child_credit_law_block_final_even_with_passing_gates(tmp_path):
@@ -320,6 +389,7 @@ def test_applicable_amt_and_child_credit_law_block_final_even_with_passing_gates
     law_path = tmp_path / "tax_law_2025.json"
 
     def recertify():
+        write_synthetic_filing_inputs(tmp_path)
         for gate in receipt.REQUIRED_GATES:
             receipt.record(tmp_path, gate, receipt.PASS)
 
@@ -468,7 +538,7 @@ def _material_cli(tmp_path, *args):
 @pytest.mark.parametrize("outcome", ["computed", "reviewed", "not_applicable"])
 def test_material_outcome_controls_export_and_reopens_on_source_change(tmp_path, outcome):
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
-    write_synthetic_filing_law(tmp_path)
+    _prepare_export(tmp_path)
     source = tmp_path / "reviewed-worksheet.json"
     source.write_text("{}")
     args = ("--id", "estimated-payments", "--label", "Form 1040 estimated payments")
@@ -512,6 +582,7 @@ def test_acknowledged_form_8962_stays_open_while_a_manual_worksheet_is_advisory(
     write_synthetic_filing_law(tmp_path)
 
     def run_gates():
+        write_synthetic_filing_inputs(tmp_path)
         gate = subprocess.run([sys.executable, "-m", "agents.lib.capabilities",
                                "--workspace", str(tmp_path)], capture_output=True, text=True,
                               cwd=FIX_REPO)
@@ -577,7 +648,7 @@ def test_w2_box_outcomes_reach_the_filing_gate(tmp_path, wage, box1_status):
                                   "line_2b_taxable_interest": lines["line_2b_taxable_interest"],
                                   "line_25a_w2_withholding": withholding})
         (tmp_path / "result.json").write_text(json.dumps(data))
-        write_synthetic_filing_law(tmp_path)
+        _prepare_export(tmp_path)
         for gate in ("capabilities", "return_builder"):
             receipt.record(tmp_path, gate, receipt.PASS)
         tying = run("tie_out", "--json")
@@ -720,7 +791,7 @@ def test_same_path_source_correction_requires_reparsing_before_final_export(tmp_
         ledger = parse_records.write_ledger(tmp_path)
         amount = source["key_boxes"]["taxable_interest"]
         (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": amount})))
-        write_synthetic_filing_law(tmp_path)
+        _prepare_export(tmp_path)
         for gate in ("capabilities", "return_builder"):
             receipt.record(tmp_path, gate, receipt.PASS)
         checked = run("tie_out", "--json")
@@ -771,7 +842,7 @@ def test_validated_package_shows_reviewed_source_dispositions(tmp_path):
                                               skipped="exact copy", source_form={"duplicate_of": "kept"}))
     parse_records.write_ledger(tmp_path)
     (tmp_path / "result.json").write_text(json.dumps(_result(form_1040={"line_2b_taxable_interest": 100})))
-    write_synthetic_filing_law(tmp_path)
+    _prepare_export(tmp_path)
     for gate in ("capabilities", "return_builder"):
         receipt.record(tmp_path, gate, receipt.PASS)
     command = [sys.executable, "-m"]
@@ -810,7 +881,7 @@ def test_a_gate_with_no_verdict_stamps_the_package_but_does_not_refuse_it(tmp_pa
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
-    write_synthetic_filing_law(tmp_path)
+    _prepare_export(tmp_path)
     receipt.record(tmp_path, "capabilities", receipt.PASS)
     receipt.record(tmp_path, "tie_out", receipt.PASS)
     receipt.record(tmp_path, "return_builder", receipt.NOT_APPLICABLE)
@@ -829,7 +900,7 @@ def test_a_document_that_arrives_after_the_tie_out_refuses_the_package(tmp_path)
     (tmp_path / "taxpayer_profile.json").write_text("{}")
     (tmp_path / "parse_ledger.json").write_text("{}")
     (tmp_path / "result.json").write_text(json.dumps(_result(schedule_d={"line_16": 5000})))
-    write_synthetic_filing_law(tmp_path)
+    _prepare_export(tmp_path)
     (tmp_path / "documents").mkdir()
     (tmp_path / "documents" / "w2.pdf").write_bytes(b"%PDF-1.4 first")
     for gate in receipt.REQUIRED_GATES:
@@ -966,3 +1037,107 @@ def test_ca_owner_credit_attachments_are_conditional_on_available_credit():
     lines = "\n".join(FP.attachment_checklist(r))
     assert "attach official FTB3510" not in lines
     assert "attach official FTB3804-CR" not in lines
+
+
+# AA113 review: triggers, deduction facts and the outcome checks, pinned
+# directly so a fixture that records whatever is required cannot hide them.
+
+_LAW_2025 = {"tax_year": 2025, "federal": {
+    "filing_statuses": {"mfj": {"standard_deduction": 30000}, "single": {"standard_deduction": 15000}},
+    "niit": {"rate": 0.038, "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}},
+    "additional_medicare_tax": {"rate": 0.009, "threshold": {"single": 200000, "mfj": 250000, "mfs": 125000}}}}
+
+
+def _inputs(form, profile=None, status="MFJ", **sections):
+    result = {"meta": {"tax_year": 2025, "filing_status": status}, "form_1040": form, **sections}
+    return material_evidence._required_filing_inputs(result, profile or {"filing_status": status}, _LAW_2025)
+
+
+def test_a_prior_year_amt_credit_asks_for_the_credit_and_amt_reviews():
+    """`form_8801_carryforward` was read and nothing writes it; rollover writes
+    prior_year.amt_credit_carryforward."""
+    required = _inputs({}, {"filing_status": "MFJ", "prior_year": {"amt_credit_carryforward": 12000}})
+    assert "input.nonrefundable_credits" in required and "input.amt" in required
+    from agents.lib.tax_computations.federal.applicable_law import _federal_figures
+    fields = _federal_figures({"form_1040": {}}, {"prior_year": {"amt_credit_carryforward": 12000}}, {}, 2025, "mfj")
+    assert "federal.amt.exemption.mfj" in fields
+
+
+@pytest.mark.parametrize(("form", "required"), [
+    ({"line_11_agi": 390000, "line_3b_ordinary_dividends": 30000}, True),   # NIIT applies
+    ({"line_11_agi": 240000, "line_3b_ordinary_dividends": 30000}, False),  # under the threshold
+    ({"line_1a_wages": 360000, "line_11_agi": 360000}, True),               # Additional Medicare
+    ({"line_1a_wages": 240000, "line_11_agi": 240000}, False),
+])
+def test_niit_and_additional_medicare_ask_for_the_other_tax_review(form, required):
+    """A line 23 at 0 left both taxes out of a validated $390,000 return."""
+    items = _inputs(form)
+    assert ("input.other_taxes" in items) is required
+    if required:
+        assert items["input.other_taxes"] is True  # not_applicable is refused
+
+
+def test_excess_social_security_needs_the_payment_review():
+    """Nothing compares the excess with W-2 box 4, and it was excluded here."""
+    items = _inputs({"line_31_schedule3_part2": 4000, "schedule_3_line_11_excess_ss": 4000})
+    assert items["input.payments"] is True
+
+
+@pytest.mark.parametrize(("profile", "method", "amount", "accepted"), [
+    ({}, "standard", 30000, True),
+    ({"ca_exemptions": {"primary_blind": True}}, "standard", 30000, False),
+    ({"ca_exemptions": {"spouse_can_be_claimed": True}}, "standard", 30000, False),
+    ({}, "standard_worksheet", 0, False),                                   # the AA113 zero
+    ({}, "standard_worksheet", 32000, False),                               # no fact needs it
+    ({"flags": {"age_65_plus_primary": True}}, "standard_worksheet", 31600, True),
+    ({"flags": {"age_65_plus_primary": True}}, "standard_worksheet", 30000, False),
+    ({"ca_exemptions": {"primary_can_be_claimed": True}}, "standard_worksheet", 4450, True),
+    ({"ca_exemptions": {"primary_can_be_claimed": True}}, "standard_worksheet", 31000, False),
+])
+def test_the_deduction_election_follows_the_profile_facts(profile, method, amount, accepted):
+    result = {"meta": {"filing_status": "MFJ"}, "form_1040": {"line_12_standard_deduction": amount}}
+    problem = material_evidence._deduction_problem(result, {"filing_status": "MFJ", **profile}, _LAW_2025, method)
+    assert (problem == "") is accepted, problem
+
+
+def _captured(form, items, *, worksheet=b"reviewed worksheet"):
+    result = json.dumps({"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": form}).encode()
+    profile = json.dumps({"filing_status": "MFJ", "tax_year": 2025}).encode()
+    law = json.dumps(_LAW_2025).encode()
+    digests = {"result.json": receipt._sha256(result), "taxpayer_profile.json": receipt._sha256(profile),
+               "tax_law_2025.json": receipt._sha256(law), "reviews/worksheet.json": receipt._sha256(worksheet)}
+    built = {key: dict(item, inputs={name: digests[name] for name in item.pop("names")})
+             for key, item in items.items()}
+    evidence = json.dumps({"version": 1, "items": built}).encode()
+    return {"result.json": result, "taxpayer_profile.json": profile, "tax_law_2025.json": law,
+            material_evidence.FILENAME: evidence}
+
+
+_ALL = ["result.json", "taxpayer_profile.json", "tax_law_2025.json"]
+
+
+def _deduction(**extra):
+    return {"input.deduction_election": {"label": "Form 1040 line 12 deduction election", "outcome": "reviewed",
+                                         "deduction_method": "standard", "names": list(_ALL), **extra}}
+
+
+def test_outcome_checks_that_fixtures_cannot_reach():
+    form = {"line_12_standard_deduction": 30000, "line_31_schedule3_part2": 500}
+    payments = {"label": "Form 1040 and Form 2210 payment worksheets", "outcome": "not_applicable",
+                "names": [*_ALL, "reviews/worksheet.json"]}
+    issues = material_evidence.filing_input_issues(_captured(form, {**_deduction(), "input.payments": payments}))
+    assert any("still reports an applicable amount" in issue for issue in issues), issues
+    payments.update(outcome="reviewed", names=list(_ALL))
+    issues = material_evidence.filing_input_issues(_captured(form, {**_deduction(), "input.payments": dict(payments)}))
+    assert any("Attach the reviewed worksheet" in issue for issue in issues), issues
+    stale = _deduction(names=["result.json", "taxpayer_profile.json"])
+    issues = material_evidence.filing_input_issues(_captured({"line_12_standard_deduction": 30000}, stale))
+    assert any("needs fresh review" in issue for issue in issues), issues
+    assert material_evidence.filing_input_issues(_captured({"line_12_standard_deduction": 30000}, _deduction())) == []
+
+
+def test_a_separate_return_whose_spouse_itemizes_cannot_take_the_standard_deduction():
+    result = {"meta": {"filing_status": "MFS"}, "form_1040": {"line_12_standard_deduction": 15000},
+              "schedule_a": {"inputs": {"mfs_spouse_itemizes": True}}}
+    law = {"federal": {"filing_statuses": {"mfs": {"standard_deduction": 15000}}}}
+    assert "spouse itemizes" in material_evidence._deduction_problem(result, {"filing_status": "MFS"}, law, "standard")

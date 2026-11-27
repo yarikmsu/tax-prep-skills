@@ -34,7 +34,7 @@ from agents.lib import parse_records as PR  # noqa: E402
 from agents.lib import receipt as RC  # noqa: E402
 from agents.lib import return_builder as RB  # noqa: E402
 from agents.lib import tie_out as T  # noqa: E402
-from tests.filing_law import write_synthetic_filing_law  # noqa: E402
+from tests.filing_law import write_synthetic_filing_inputs, write_synthetic_filing_law  # noqa: E402
 
 GOLDEN_DIR = REPO / "evals" / "goldens" / "ca_mfj_2026"
 
@@ -1542,7 +1542,7 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
         {"effective_from": f"2026-{quarter}-01", "annual_rate": 0.073}
         for quarter in ("04", "07", "10")
     ] + [{"effective_from": "2027-01-01", "annual_rate": 0.073}]
-    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000}, law=law,
+    ws = _workspace(tmp_path, {"line_23_other_taxes": 4000, "line_12_standard_deduction": 30000}, law=law,
                     extra={"meta": {"tax_year": 2026, "filing_status": "MFJ",
                                     "limitations": ["Synthetic return"]}})
     rows = [
@@ -1570,6 +1570,7 @@ def test_reviewed_estimates_and_carry_in_control_the_penalty_and_settlement(tmp_
     assert form["line_37_amount_owed"] == 2037.24
     assert result["form_2210"]["estimated_payments_total"] == 4000
     assert result["form_2210"]["balance_due_paid"] == 2000
+    write_synthetic_filing_inputs(ws)
     assert RB._main(args + ["--check"]) == T._main(args) == 0
     assert RC.verify(ws, required=("return_builder", "tie_out")).valid
     assert RB._main(args) == 0
@@ -1690,9 +1691,14 @@ def test_schedule_c_dropped_or_duplicated_flows_block_export(tmp_path):
 
     ws = _schedule_c_workspace(tmp_path)
     write_synthetic_filing_law(ws)
+    built = json.loads((ws / "result.json").read_text(encoding="utf-8"))
+    built["form_1040"]["line_12_standard_deduction"] = 30000
+    (ws / "result.json").write_text(json.dumps(built), encoding="utf-8")
     args = ["--workspace", str(ws)]
     package_args = [*args, "--result", "result.json"]
-    assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+    assert RB._main(args) == 0
+    write_synthetic_filing_inputs(ws)
+    assert RB._main(args + ["--check"]) == T._main(args) == 0
     RC.record(ws, "capabilities", RC.PASS)
     assert filing_package._main(package_args) == 0
     path = ws / "result.json"

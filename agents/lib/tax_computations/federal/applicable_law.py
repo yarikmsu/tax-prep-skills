@@ -90,7 +90,7 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
     itemizes = (result.get("schedule_a") or {}).get("use_itemized") is True
     prior = profile.get("prior_year") or {}
     if (itemizes or flags.get("has_iso_exercise") is True or _section_present(result, "form_6251")
-            or _positive(form.get("line_17_schedule2_part1")) or _positive(prior.get("form_8801_carryforward"))):
+            or _positive(form.get("line_17_schedule2_part1")) or _positive(prior.get("amt_credit_carryforward"))):
         amt_key = "single" if status == "hoh" else filing_key
         fields.update({f"federal.amt.exemption.{amt_key}", f"federal.amt.phaseout_start.{amt_key}", "federal.amt.rate_28_breakpoint"})
         if cache._get_path(law, "federal.amt.phaseout_rate") is not None:
