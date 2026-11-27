@@ -3106,11 +3106,15 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
     sums = category_sums(ledger)
     meta = result.get("meta")
     year = (meta.get("tax_year") if isinstance(meta, dict) else None) or (profile or {}).get("tax_year")
+    evidence = evidence_items or {}
     personal_sources = None
     if _business_return(ledger, result, profile or {}):
-        item = (evidence_items or {}).get(material_evidence.PERSONAL_1099K_ITEM) or {}
-        personal_sources = material_evidence.reviewed_personal_1099k_sources(item, ledger_sha256)
-    source_review = source_reconciliation.review(ledger, year, personal_1099k_sources=personal_sources)
+        item = evidence.get(material_evidence.PERSONAL_1099K_ITEM) or {}
+        personal_sources = material_evidence.reviewed_ledger_sources(item, ledger_sha256)
+    overlap_item = evidence.get(material_evidence.BUSINESS_OVERLAP_ITEM) or {}
+    overlap_sources = material_evidence.reviewed_ledger_sources(overlap_item, ledger_sha256)
+    source_review = source_reconciliation.review(
+        ledger, year, personal_1099k_sources=personal_sources, overlap_sources=overlap_sources)
     expected = (profile or {}).get("expected_sources")
     missing_forms = missing_expected_forms(ledger, expected) if expected is not None else []
     source_issues = source_review.problems + tuple(
@@ -4034,10 +4038,10 @@ def _main(argv: list) -> int:
         material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
                                      _w2_outcomes(ledger, ledger_sha256))
         evidence_raw, evidence_items = material_evidence.read(workspace)
-        routing_id = material_evidence.PERSONAL_1099K_ITEM
-        if routing_id in evidence_items and material_evidence.open_items(
-                workspace, {routing_id: evidence_items[routing_id]}, {}):
-            evidence_items.pop(routing_id)
+        for item_id in (material_evidence.PERSONAL_1099K_ITEM, material_evidence.BUSINESS_OVERLAP_ITEM):
+            if item_id in evidence_items and material_evidence.open_items(
+                    workspace, {item_id: evidence_items[item_id]}, {}):
+                evidence_items.pop(item_id)
         if evidence_raw is not None:
             name = material_evidence.FILENAME
             gate_inputs[receipt._entry_key(name)] = {"name": name, "digest": receipt._sha256(evidence_raw)}

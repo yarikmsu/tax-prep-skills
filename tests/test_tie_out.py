@@ -467,11 +467,28 @@ def test_nec_and_k_books_count_receipts_once_with_equal_independent_payments(ove
                 business_receipts=rows, source_form={"tax_year": 2025}, source_sha256="c" * 64)
     ledger = _ledger(nec, k, book)
     files.append(book["file"])
-    assert T.evaluate(ledger, result, files).failed is overlap
-    result["schedule_c"]["line_1_gross_receipts"] = gross
-    report = T.evaluate(ledger, result, files)
+    options = {}
+    if overlap:
+        result["schedule_c"]["line_1_gross_receipts"] = gross
+        refused = T.evaluate(ledger, result, files)
+        assert refused.failed and any("evidence_file" in issue for issue in refused.source_issues)
+        rows[0]["evidence_file"] = "processor-remittance.csv"
+        ledger = _ledger(nec, k, book)
+        options = {"ledger_sha256": "e" * 64, "evidence_items": {
+            "input.business_receipt_overlap": {"outcome": "reviewed", "inputs": {
+                "parse_ledger.json": "e" * 64, "processor-remittance.csv": "d" * 64,
+            }},
+        }}
+        result["schedule_c"]["line_1_gross_receipts"] = 240
+        assert T.evaluate(ledger, result, files, **options).failed
+        result["schedule_c"]["line_1_gross_receipts"] = gross
+    report = T.evaluate(ledger, result, files, **options)
     assert not report.failed
     assert bool(report.source_disclosures) is overlap
+    if overlap:
+        assert "1 receipt, $120.00" in report.source_disclosures[0]
+        options["evidence_items"]["input.business_receipt_overlap"]["inputs"]["processor-remittance.csv"] = "c" * 64
+        assert T.evaluate(ledger, result, files, **options).failed
 
 
 def test_positive_1099k_box_1a_cannot_be_routed_entirely_to_zero():

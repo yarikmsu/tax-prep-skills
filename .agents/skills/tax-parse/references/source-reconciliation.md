@@ -82,7 +82,14 @@ the record only the `self_employment_book_gross` category and
 Unreported receipts have an empty list. Keep a repeated payment on one row
 and give every distinct payment its own local id.
 
+When a row names more than one reporter, set `evidence_file` to the
+workspace-relative processor transaction report or client remittance that
+identifies the shared payment. Review that source alongside the forms and
+record `input.business_receipt_overlap` with `--outcome reviewed`.
+Bind `parse_ledger.json` and every named evidence file with repeatable
+`--input` arguments. Refresh the review when the receipts or evidence change.
+
 For the supported single Schedule C, use the verified book total for line 1.
 Tie-out checks each form's full reported amount against the linked rows and
-the unique payments against line 1. It records the overlap explanation for
-filing export.
+the unique payments against line 1. The filing disclosure includes the count
+and total of overlapping receipts counted once.
