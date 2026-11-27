@@ -143,12 +143,13 @@ engine from the start.)
    says "CORRECTED" in the header). **Supersede the original, don't stack
    it:** the ledger is one-record-per-FILE, so a corrected document under
    a NEW filename ADDS a record while the original's record stays —
-   double-counting that income in the tie-out. Either (a) overwrite the
-   original file in `documents/` with the corrected PDF (same filename →
-   the re-parse upserts the record), or (b) keep both files but DELETE the
-   superseded original from `documents/` before re-parsing (a removed
-   source file drops its ledger record). Never leave the original 1099 and
-   its CORRECTED replacement both live.
+   double-counting that income in the tie-out. Keep both files: mark the
+   original's record `skipped` with `source_form.superseded_by` naming the
+   corrected record, as `/tax-parse`'s source-reconciliation reference
+   describes. The tie-out checks that link and puts it in the package.
+   Overwriting or deleting the original leaves the corrected form with no
+   evidence of what it replaced. Never leave the original 1099 and its
+   CORRECTED replacement both live.
 2. Re-run `/tax-parse` (only the changed/new documents need parsing — the
    upsert semantics keep the rest).
 3. Re-run `/tax-compute` in full (a changed 1099 moves AGI, which moves

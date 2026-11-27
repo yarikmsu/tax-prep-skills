@@ -17,6 +17,20 @@ record and `source_sha256`, including copies and replaced versions.
   is an opaque label for the issuer's account or statement lineage. Use the
   printed corrected indicator or issuer correspondence. Keep distinct ids
   for separate statements, even when the amounts match.
+- Name the correction in `form_type` too: "Form W-2c", or the 1099 with
+  "Corrected". A W-2 is corrected only by a W-2c, so a plain W-2 cannot
+  supersede another.
+- When two or more active forms share the recipient, the form and an issuer
+  name (one name's words contained in the other's), give each a distinct
+  reviewed `series_id`, such as the account or control number's lineage. A
+  download repeated, a PDF beside its CSV export, or a correction does not
+  change the bytes into a different statement. A consolidated 1099 relates to
+  every 1099 from that issuer.
+- A standalone 1099 already reported inside a consolidated statement is a
+  skip with `source_form.included_in` naming the consolidated record.
+- A skipped W-2 or 1099 beside an active one from the same issuer and
+  recipient needs one of `duplicate_of`, `superseded_by` or `included_in`.
+  A reason alone is not checked, and a real second form would vanish.
 - Use the existing `payer`, `person` and `form_type` for the issuer, owner
   and form. Record `source_form.account_last4` only when needed to identify
   an account. Never use SSNs or full account numbers as record ids.
