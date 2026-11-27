@@ -1450,6 +1450,47 @@ def _set_federal_payments(ws, rows, count, total, *, carry=None, config=None, st
     return profile
 
 
+def _waiver_payments(*rows):
+    from agents.lib.tax_computations.federal.payments import FederalPayments
+    return FederalPayments(2026, "MFJ", tuple(rows))
+
+
+@pytest.mark.parametrize(("rows", "allowed"), [
+    ((), False),                                                           # nothing paid
+    (({"kind": "balance_due", "date": "2027-01-29", "amount": 100.0},), False),  # part paid
+    (({"kind": "balance_due", "date": "2027-02-02", "amount": 4000.0},), False),  # paid late
+    (({"kind": "balance_due", "date": "2027-02-01", "amount": 4000.0},), True),   # Jan 31 is a Sunday
+])
+def test_the_january_exception_needs_the_balance_paid_by_january_31(rows, allowed):
+    """§6654(h): filed AND paid in full by January 31. The flag alone zeroed
+    the fourth installment with the balance unpaid, under-stating line 38."""
+    from agents.lib.tax_computations.federal.payments import _check_january_waiver
+    payments = _waiver_payments(*rows)
+    if allowed:
+        _check_january_waiver(payments, 4000.0)
+    else:
+        with pytest.raises(ValueError, match="January 31 exception"):
+            _check_january_waiver(payments, 4000.0)
+    _check_january_waiver(_waiver_payments(), 0.0)  # nothing owed: nothing to pay
+
+
+def test_the_regular_method_needs_the_prior_year_prong():
+    """Leaving out the prior-year tax can only RAISE the required payment, and
+    line 38 is now written to the return from it."""
+    from agents.lib.tax_computations.federal.payments import form_2210_workpaper
+    form = {"line_24_total_tax": 10000, "line_25d_total_withholding": 8000}
+    config = {"method": "regular", "schedule_3_refundable_credits": 0, "excluded_current_year_tax": 0}
+    law = {"federal": {"underpayment_rates": []}}
+    with pytest.raises(ValueError, match="needs the prior-year tax"):
+        form_2210_workpaper(form, _waiver_payments(), config, law)
+    with pytest.raises(ValueError, match="must be a boolean"):
+        form_2210_workpaper(form, _waiver_payments(), dict(config, no_prior_year_return_confirmed="yes"), law)
+    try:
+        form_2210_workpaper(form, _waiver_payments(), dict(config, no_prior_year_return_confirmed=True), law)
+    except ValueError as exc:
+        assert "prior-year tax" not in str(exc)
+
+
 def test_an_unsubstantiated_line_26_refuses_the_builder_and_both_final_gates(tmp_path):
     ws = _workspace(tmp_path, {"line_26_estimated_payments": 15000})
     path = ws / "taxpayer_profile.json"

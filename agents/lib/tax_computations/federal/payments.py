@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from agents.lib.tax_computations._shared import _amount, _normalize_filing_status
 from agents.lib.tax_computations.federal.penalties import compute_form_2210
@@ -126,6 +126,22 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     return FederalPayments(year, status, tuple(sorted(parsed, key=lambda row: (row["date"], row["kind"], row["amount"]))))
 
 
+def _check_january_waiver(payments: FederalPayments, balance: float) -> None:
+    """§6654(h) waives the fourth installment only for a return filed and paid
+    in full by January 31. The flag alone zeroed it with the balance unpaid,
+    so the penalty was under-stated and the amount owed with it."""
+    if balance <= 0:
+        return
+    deadline = date(payments.year + 1, 1, 31)
+    while deadline.weekday() >= 5:  # a weekend deadline moves to Monday
+        deadline += timedelta(days=1)
+    paid = round(sum(row["amount"] for row in payments.rows if row["kind"] == "balance_due"
+                     and date.fromisoformat(row["date"]) <= deadline), 2)
+    if paid < balance:
+        raise ValueError(f"The January 31 exception needs balance-due payments dated by {deadline.isoformat()} "
+                         "that pay the return in full")
+
+
 def form_2210_workpaper(form: dict, payments: FederalPayments, config: dict, tax_law: dict) -> dict:
     """Reprice the reported penalty and settlement using the same payment events."""
     config = _object(config, "estimated_payments.federal_2210")
@@ -147,6 +163,17 @@ def form_2210_workpaper(form: dict, payments: FederalPayments, config: dict, tax
     early_filing = config.get("filed_and_paid_by_jan31", False)
     if type(early_filing) is not bool:
         raise ValueError("Form 2210 early filing and payment confirmation must be a boolean")
+    if early_filing:
+        _check_january_waiver(payments, round(total_tax - withholding - payments.line_26
+                                              - refundable - schedule_3, 2))
+    no_prior_return = config.get("no_prior_year_return_confirmed", False)
+    if type(no_prior_return) is not bool:
+        raise ValueError("Form 2210 no-prior-year-return confirmation must be a boolean")
+    if mode == "regular" and config.get("prior_year_tax") is None and not no_prior_return:
+        # The prior-year prong can only LOWER the required payment, so leaving
+        # it out over-states the penalty written on line 38 (AGENTS.md §4).
+        raise ValueError("Form 2210 regular method needs the prior-year tax, or confirmation that no "
+                         "12-month prior-year return was filed")
     workpaper = compute_form_2210(
         current_year_tax=round(total_tax - excluded - refundable - additional, 2),
         withholding=round(withholding + excess_ss, 2),

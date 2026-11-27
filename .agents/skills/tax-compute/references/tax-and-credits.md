@@ -488,9 +488,15 @@ any required form or special method first. For `excluded_current_year_tax`, use
 the amount included in Form 1040 line 24 that covered-year Form 2210 lines 1–2
 exclude. For `schedule_3_refundable_credits`, record the qualifying Schedule 3
 credits on Form 2210 line 3, leaving Schedule 3 line 11 in withholding. Record
-zero for each field only after its review. Confirm `filed_and_paid_by_jan31`
-for the §6654(h) fourth-installment exception only after confirming timely
-filing and full payment. The builder persists the dated payment workpaper,
+zero for each field only after its review. For `regular`, record
+`prior_year_tax` from the covered-year line 8 instructions, or set
+`no_prior_year_return_confirmed: true` when no 12-month prior-year return was
+filed; without either the penalty would be over-stated, so the builder refuses.
+Confirm `filed_and_paid_by_jan31` for the §6654(h) fourth-installment exception
+only after confirming timely filing and full payment, and record the payment as
+a `balance_due` row: the builder refuses the exception unless those rows, dated
+by January 31 (or the next business day), pay the return in full. The builder
+persists the dated payment workpaper,
 derives line 38, and recalculates settlement. The independent tie-out compares
 the workpaper and both 1040 lines to those inputs before export.
 
