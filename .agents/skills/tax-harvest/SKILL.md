@@ -73,6 +73,9 @@ permissions through the same guarded writer `/tax-scenario` uses.
     "from": "2026-11-15",
     "through": "2026-12-15"
   },
+  "wash_sale_classifications": [
+    {"ticker": "VTSAX", "other_ticker": "VTI", "classification": "identical"}
+  ],
   "lots": [
     {
       "id": "L1",
@@ -97,7 +100,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
   ],
   "recent_transactions": [
     {
-      "ticker": "VTSAX",
+      "ticker": "VTI",
       "account": "Spouse Schwab",
       "date": "2026-12-01",
       "kind": "buy",
@@ -171,6 +174,20 @@ permissions through the same guarded writer `/tax-scenario` uses.
   taxable losing lot** — out of the plan and the savings, under "Held back", with the
   reason in the report's banner — rather than reading a lot as clear. A malformed
   statement, or a `recent_transactions` that is not a list, is refused.
+- **`wash_sale_classifications`** records reviewed decisions for each pair of
+  different tickers. Each row names `ticker`, `other_ticker` and
+  `classification`. Use `identical` when the securities are substantially
+  identical under §1091 and their purchases belong in the same replacement
+  pool. Use `not_identical` when the reviewed purchase should be ignored. The
+  order and case of the two tickers do not matter. Enter each pair once.
+  The data above illustrates the field with a hypothetical decision.
+  An omitted pair with an in-window buy holds the lot's remaining loss out of
+  the savings estimate. Malformed or duplicate entries stop the scan. A lot is also
+  held when a purchase that replaces it was matched to another losing lot that the
+  plan does not sell, that is held back, or that is a different ticker: matching
+  assumes every losing lot is sold, oldest first, so those shares may replace this
+  lot instead. Each held lot names the purchase and the other lot.
+  [IRS Publication 550, Wash Sales](https://www.irs.gov/publications/p550)
 
 ## Steps
 
@@ -211,13 +228,18 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
      `quantity > 0`. The library rejects malformed inputs.
    - Pool all accounts subject to §1091 reach. **Ask the user** which accounts those
      are, and whether each one's purchases across the window are in
-     `recent_transactions`: dividend reinvestments, automatic investments, RSU vests and
-     ESPP purchases of the same stock included. Purchases scheduled for the 30 days
+     `recent_transactions`: record dividend reinvestments, automatic investments,
+     RSU vests and ESPP purchases as buys. Purchases scheduled for the 30 days
      after the sale are planned buys to list, or to stop. Record the answer as
      `transaction_coverage` (schema above). Never write the statement on the user's
      behalf from what the file already holds: an account missing from the file is
      exactly what it exists to catch. If they cannot confirm an account, leave it out;
      the scanner holds the losses back and says why.
+   - Review each losing ticker against the other tickers bought within the window.
+     **Ask the user** for each decision, after they review the securities and the
+     relevant facts. Never write a classification on the user's behalf, and never
+     record `not_identical` to clear a held lot: that is the decision the hold exists
+     to ask for. The report lists unresolved purchases by lot.
 
 3. **Compute.** Run:
    ```bash
@@ -235,9 +257,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
    - **Harvest plan** — ranked eligible lots with per-lot value-per-dollar (ST losses
      rank above LT losses when there is ordinary income to offset).
    - **Wash-sale blocked lots** — what's locked out, by which transaction, until when.
-   - **Held back** — losses held back because the transaction history is not
-     confirmed; the banner names the reason. They are not savings yet: say what would
-     confirm them, then re-run.
+   - **Held back** — losses excluded from savings pending transaction history or
+     review of the purchases listed for the lot. Re-run after resolving the review.
 
 5. **Action plan.** Recommend the user:
    - **Trade by the final trading day of the tax year** (December 31, or the prior
@@ -285,9 +306,8 @@ So a failure to RUN this check IS the blocking condition, never a step to skip.
   scanner can check the trailing window directly (in `recent_transactions`) and the
   forward window only if the user lists planned buys; after harvesting, the user must
   not buy the security in any pooled account for 31 days.
-- **Same-ticker is the "substantially identical" proxy.** Different-CUSIP ETF swaps
-  tracking the same index are NOT flagged (the very strategy users want), but the IRS
-  has no bright-line rule on this — consult guidance for your situation.
+- **Different tickers require a reviewed §1091 decision.** Review the security
+  pair using the facts and circumstances of the transaction.
 - **Accounts are pooled across the file.** The user controls which accounts to include.
   Omitting a spouse account or an IRA hides §1091 reach, which is why a lot is cleared
   only against a `transaction_coverage` statement that covers every account the file

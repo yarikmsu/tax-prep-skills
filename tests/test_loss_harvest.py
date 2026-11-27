@@ -1307,7 +1307,7 @@ def test_account_match_case_insensitive():
     assert lot.wash_sale_status == "clear"
 
 
-def test_proration_pool_exhausted_leaves_later_lots_clear():
+def test_a_fully_blocked_lot_holds_back_a_later_lot_its_purchase_could_replace():
     h = _holdings_with(
         lots=[
             {"id": "first",  "ticker": "ZZZ", "account": "A",
@@ -1325,6 +1325,12 @@ def test_proration_pool_exhausted_leaves_later_lots_clear():
     assert ids["first"].wash_sale_status == "fully_blocked"
     assert ids["second"].wash_sale_status == "clear"
     assert ids["second"].disallowed_loss == 0
+    # The plan does not sell the blocked lot, so the ten shares it absorbed
+    # would replace the second lot's shares instead. Selling only the second
+    # lot, as the plan says, would lose its loss: hold it, never harvest it.
+    assert r.eligible_lot_ids == []
+    assert r.unverified_loss == 500 and r.total_savings == 0
+    assert "also matched lot first" in ids["second"].classification_gaps[0]
 
 
 def test_build_harvest_excludes_gains_from_eligible_set():
@@ -2354,3 +2360,297 @@ def test_the_banner_names_what_is_wrong_with_a_stated_history():
     banner = next(line for line in md.splitlines() if "history not confirmed —" in line)
     assert "Spouse Schwab is not in transaction_coverage.accounts" in banner
     assert "Add `transaction_coverage`" not in banner
+
+
+def _cross_ticker_holdings():
+    return _holdings_with(
+        lots=[{"id": "fund", "ticker": "VTSAX", "account": "Brokerage",
+               "acquired": "2024-01-01", "quantity": 100,
+               "cost_basis": 12000, "current_value": 10000}],
+        txns=[{"ticker": "VTI", "account": "Spouse Plan", "date": "2026-12-01",
+               "quantity": 25}],
+    )
+
+
+def _review_pair(ticker, other_ticker, classification):
+    return {"ticker": ticker, "other_ticker": other_ticker, "classification": classification}
+
+
+def test_cross_ticker_unreviewed_buy_holds_loss_and_names_the_purchase():
+    holdings = _cross_ticker_holdings()
+    report = _build(holdings=holdings)
+    assert report.eligible_lot_ids == []
+    assert report.unverified_loss == 2000
+    assert report.total_savings == 0
+    assert report.wash_sale_blocked_loss == 0
+    md = lh.render_markdown(report)
+    assert "Wash-sale review incomplete" in md
+    row = next(line for line in md.splitlines() if line.startswith("| fund | VTSAX |"))
+    assert "buy of VTI on 2026-12-01" in row
+    assert "Spouse Plan" in row
+    with pytest.raises(lh.LossHarvestError, match="needs a reviewed wash_sale_classifications"):
+        lh.check_wash_sale("VTSAX", holdings["recent_transactions"], TODAY)
+
+
+def test_unreviewed_cross_ticker_buy_holds_only_the_loss_left_after_matching():
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"].append(
+        {"ticker": "VTSAX", "account": "Spouse Plan", "date": "2026-12-01", "quantity": 10},
+    )
+    # Ten same-ticker shares disallow $200 of the $2,000 loss. The unrelated
+    # decision is still open, so the other $1,800 cannot enter the estimate.
+    report = _build(holdings=holdings)
+    assert report.wash_sale_blocked_loss == 200
+    assert report.unverified_loss == 1800
+    assert report.eligible_lot_ids == []
+
+
+@pytest.mark.parametrize("classification,disallowed", [("not_identical", 0), ("identical", 500)])
+def test_cross_ticker_review_drives_the_prorated_loss(classification, disallowed):
+    holdings = _cross_ticker_holdings()
+    holdings["wash_sale_classifications"] = [_review_pair(" vti ", "vtsax", classification)]
+    report = _build(holdings=holdings)
+    assert report.unverified_loss == 0
+    assert report.eligible_lot_ids == ["fund"]
+    # The 25-share purchase is 25% of the 100-share lot's $2,000 loss.
+    assert report.wash_sale_blocked_loss == disallowed
+    assert report.total_loss_harvested == 2000 - disallowed
+    if disallowed:
+        assert report.lots[0].wash_sale_adjustments[0]["replacement_ticker"] == "VTI"
+    decisions = lh._wash_sale_classifications(holdings)
+    qty, _ = lh.check_wash_sale("VTSAX", holdings["recent_transactions"], TODAY,
+                               classifications=decisions)
+    assert qty == (25 if disallowed else 0)
+
+
+@pytest.mark.parametrize("date,held", [("2026-11-15", True), ("2026-11-14", False),
+                                      ("2027-01-14", True), ("2027-01-15", False)])
+def test_cross_ticker_buy_review_observes_both_window_boundaries(date, held):
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"][0]["date"] = date
+    assert _build(holdings=holdings).unverified_loss == (2000 if held else 0)
+
+
+def test_employer_stock_vest_in_plan_account_uses_same_ticker_pool():
+    holdings = _cross_ticker_holdings()
+    holdings["lots"][0]["ticker"] = "EMPLOYER"
+    holdings["recent_transactions"][0].update(ticker="EMPLOYER", kind="buy",
+                                             account_type="other_tax_advantaged")
+    report = _build(holdings=holdings)
+    assert report.wash_sale_blocked_loss == 500
+    assert report.total_loss_harvested == 1500
+    assert report.unverified_loss == 0
+
+
+@pytest.mark.parametrize("rows", [
+    None, "identical", [{"ticker": "VTI", "other_ticker": "VTSAX"}],
+    [_review_pair("VTI", "VTSAX", "different")],
+    [_review_pair("VTI", " vti ", "identical")],
+    [_review_pair("VTI", "VTSAX", "identical"), _review_pair("vtsax", "vti", "not_identical")],
+    [{**_review_pair("VTI", "VTSAX", "identical"), "note": "reviewed"}],
+    ["VTI/VTSAX identical"],
+])
+def test_malformed_wash_sale_classification_refused(rows):
+    holdings = _cross_ticker_holdings()
+    holdings["wash_sale_classifications"] = rows
+    with pytest.raises(lh.LossHarvestError, match="wash_sale_classifications"):
+        _build(holdings=holdings)
+
+
+def test_reviewed_purchase_shares_are_only_allocated_once_across_tickers():
+    holdings = _cross_ticker_holdings()
+    holdings["lots"].append({**holdings["lots"][0], "id": "etf", "ticker": "VTI",
+                              "acquired": "2025-01-01"})
+    holdings["wash_sale_classifications"] = [_review_pair("VTSAX", "VTI", "identical")]
+    report = _build(holdings=holdings)
+    assert report.wash_sale_blocked_loss == 500
+    # The VTSAX lot used 25 VTI shares. Unless it is sold first, those shares
+    # replace the VTI lot instead, so the VTI loss is held, not harvested.
+    assert report.total_loss_harvested == 1500
+    assert report.unverified_loss == 2000
+
+
+def test_reviewed_buy_matched_to_a_blocked_other_ticker_cannot_clear_a_sale():
+    holdings = _cross_ticker_holdings()
+    holdings["lots"].append({**holdings["lots"][0], "id": "etf", "ticker": "VTI",
+                              "acquired": "2020-01-01", "quantity": 25})
+    holdings["wash_sale_classifications"] = [_review_pair("VTSAX", "VTI", "identical")]
+    report = _build(holdings=holdings)
+    assert report.wash_sale_blocked_loss == 2000
+    assert report.unverified_loss == 2000
+    assert report.eligible_lot_ids == []
+
+
+def _losing_lot(lot_id, ticker, acquired, quantity, account="Brokerage"):
+    # $20 of loss per share.
+    return {"id": lot_id, "ticker": ticker, "account": account, "acquired": acquired,
+            "quantity": quantity, "cost_basis": 120 * quantity, "current_value": 100 * quantity}
+
+
+def _in_window_buy(ticker, quantity, account="Spouse Plan", date="2026-12-01"):
+    return {"ticker": ticker, "account": account, "date": date, "quantity": quantity}
+
+
+def _scan(lots, txns, pairs=()):
+    holdings = _holdings_with(lots=lots, txns=txns)
+    holdings["wash_sale_classifications"] = [_review_pair(*pair) for pair in pairs]
+    report = _build(holdings=holdings)
+    return report, {lot.id: lot for lot in report.lots}
+
+
+def test_an_identical_purchase_absorbed_by_another_ticker_holds_the_later_lot():
+    # The VTI buy fully blocks the older VTSAX lot only because the pair was
+    # reviewed identical. Without the hold, the newer VTSAX lot would clear.
+    report, lots = _scan([_losing_lot("A", "VTSAX", "2023-01-01", 10),
+                          _losing_lot("B", "VTSAX", "2024-01-01", 100)],
+                         [_in_window_buy("VTI", 10)], [("VTSAX", "VTI", "identical")])
+    assert lots["A"].wash_sale_status == "fully_blocked"
+    assert lots["B"].held_back and report.eligible_lot_ids == []
+
+
+def test_a_purchase_matched_across_tickers_holds_its_own_tickers_later_lot():
+    report, lots = _scan([_losing_lot("A", "VTSAX", "2023-01-01", 10),
+                          _losing_lot("B", "VTI", "2024-01-01", 100)],
+                         [_in_window_buy("VTI", 10)], [("VTSAX", "VTI", "identical")])
+    assert lots["B"].held_back and report.eligible_lot_ids == []
+
+
+def test_an_identical_decision_never_raises_the_harvest():
+    # Reviewing a pair as identical only adds replacements, so it can never
+    # leave more loss to harvest than not_identical does.
+    lots = [{"id": "A", "ticker": "VTSAX", "account": "Brokerage", "acquired": "2020-01-01",
+             "quantity": 200, "cost_basis": 2200, "current_value": 2000},
+            {"id": "B", "ticker": "VTI", "account": "Brokerage", "acquired": "2024-01-01",
+             "quantity": 100, "cost_basis": 15000, "current_value": 10000}]
+    harvested = {decision: _scan(lots, [_in_window_buy("VTI", 100)],
+                                 [("VTSAX", "VTI", decision)])[0].total_loss_harvested
+                 for decision in ("not_identical", "identical")}
+    assert harvested == {"not_identical": 200, "identical": 100}
+
+
+def test_the_order_of_purchases_in_the_file_does_not_change_the_harvest():
+    lots = [_losing_lot("old", "VTSAX", "2022-06-01", 10),
+            _losing_lot("new", "VTSAX", "2024-01-01", 100)]
+    same, cross = _in_window_buy("VTSAX", 20), _in_window_buy("VTI", 5)
+    results = []
+    for txns in ([cross, same], [same, cross]):
+        report, _ = _scan(lots, txns, [("VTSAX", "VTI", "identical")])
+        results.append((report.eligible_lot_ids, report.total_loss_harvested,
+                        report.unverified_loss))
+    # 15 of the newer lot's 100 shares are replaced; the rest is held because
+    # the older, fully blocked lot is not in the plan.
+    assert results[0] == results[1] == ([], 0, 1700)
+
+
+def test_a_held_lot_holds_back_a_later_lot_sharing_its_purchase():
+    # Lot A is held for its unreviewed ABC purchase and is not sold, so the ten
+    # VTSAX shares it absorbed may replace the VTI lot instead.
+    report, lots = _scan([_losing_lot("A", "VTSAX", "2023-01-01", 100),
+                          _losing_lot("B", "VTI", "2024-01-01", 100)],
+                         [_in_window_buy("VTSAX", 10), _in_window_buy("ABC", 5)],
+                         [("VTSAX", "VTI", "identical"), ("VTI", "ABC", "not_identical")])
+    assert lots["A"].held_back and lots["B"].held_back
+    assert report.eligible_lot_ids == []
+
+
+def test_an_identical_purchase_that_bought_another_losing_lot_holds_the_loss():
+    # The VTI buy acquired the VTI lot; those shares are substantially
+    # identical to VTSAX and may replace it even though the VTI lot is sold.
+    _, lots = _scan([_losing_lot("fund", "VTSAX", "2024-01-01", 100),
+                     _losing_lot("etf", "VTI", "2026-12-01", 25)],
+                    [_in_window_buy("VTI", 30, account="Brokerage")],
+                    [("VTSAX", "VTI", "identical")])
+    assert lots["fund"].held_back
+    assert "also bought another losing lot" in lots["fund"].classification_gaps[0]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("quantity", float("inf")), ("quantity", float("nan")), ("quantity", "inf"),
+    ("quantity", 10 ** 400), ("cost_basis", float("nan")), ("current_value", float("inf")),
+])
+def test_non_finite_lot_numbers_refused(field, value):
+    holdings = _cross_ticker_holdings()
+    holdings["lots"][0][field] = value
+    with pytest.raises(lh.LossHarvestError, match="must be a finite number"):
+        _build(holdings=holdings)
+
+
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), "inf", 10 ** 400])
+def test_non_finite_replacement_quantity_refused(quantity):
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"][0]["quantity"] = quantity
+    with pytest.raises(lh.LossHarvestError, match=r"recent_transactions\[0\].*quantity"):
+        _build(holdings=holdings)
+
+
+def test_in_window_buy_without_a_ticker_refused():
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"][0]["ticker"] = " "
+    with pytest.raises(lh.LossHarvestError, match=r"recent_transactions\[0\]"):
+        _build(holdings=holdings)
+
+
+@pytest.mark.parametrize("kind", ["reinvest", "drip", "", 1])
+def test_unknown_transaction_kind_refused(kind):
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"][0]["kind"] = kind
+    with pytest.raises(lh.LossHarvestError, match="kind must be buy or sell"):
+        _build(holdings=holdings)
+
+
+def test_a_transaction_kind_is_read_whatever_its_case_and_spacing():
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"][0].update(ticker="VTSAX", kind=" Buy ")
+    assert _build(holdings=holdings).wash_sale_blocked_loss == 500
+
+
+def test_unreviewed_pair_error_masks_an_identifier_shaped_ticker():
+    # Nine digits, built here so the committed text holds no identifier shape.
+    ticker = "1234" + "56789"
+    with pytest.raises(lh.LossHarvestError) as exc:
+        lh.check_wash_sale(ticker, [_in_window_buy("VTI", 5)], TODAY)
+    assert ticker not in str(exc.value)
+
+
+def test_each_hold_banner_states_the_loss_its_own_reason_holds():
+    holdings = _holdings_with(lots=[_losing_lot("A", "VTSAX", "2023-01-01", 100),
+                                    _losing_lot("B", "AAPL", "2023-01-01", 100)],
+                              txns=[_in_window_buy("VTI", 10)])
+    holdings["wash_sale_classifications"] = [_review_pair("AAPL", "VTI", "not_identical"),
+                                             _review_pair("AAPL", "VTSAX", "not_identical")]
+    holdings["transaction_coverage"]["from"] = "2026-11-20"
+    md = lh.render_markdown(_build(holdings=holdings))
+    assert "Wash-sale history not confirmed — $4,000 of losses held back" in md
+    assert "Wash-sale review incomplete — $2,000 of losses held back" in md
+    assert "are not in the plan or the savings until `holdings.json` fixes that" in md
+    assert "## Held back for wash-sale review" in md
+
+
+def test_held_table_escapes_labels_and_keeps_the_holding_period():
+    report, _ = _scan([_losing_lot("A", "VTSAX", "2023-01-01", 100, account="Joint | Spouse")],
+                      [_in_window_buy("VTI", 10, account="Plan | Spouse")])
+    row = next(line for line in lh.render_markdown(report).splitlines()
+               if line.startswith("| A | VTSAX |"))
+    assert r"Joint \| Spouse" in row and r"Plan \| Spouse" in row
+    # Six cells: every unescaped pipe is a column boundary.
+    assert row.replace(r"\|", "").count("|") == 7
+    assert "| LONG |" in row
+
+
+def test_the_basis_plan_names_the_replacement_ticker():
+    holdings = _cross_ticker_holdings()
+    holdings["wash_sale_classifications"] = [_review_pair("VTSAX", "VTI", "identical")]
+    md = lh.render_markdown(_build(holdings=holdings))
+    assert "| Sold lot | Replacement ticker |" in md
+    assert any(line.startswith("| fund | VTI | 2026-12-01 |") for line in md.splitlines())
+
+
+def test_an_unknown_kind_is_refused_outside_the_window_too():
+    # The file is checked as a whole: a row the window does not reach today
+    # reaches it on the next run with a later as_of.
+    holdings = _cross_ticker_holdings()
+    holdings["recent_transactions"].append({"ticker": "VTI", "account": "Spouse Plan",
+                                            "date": "2025-06-01", "kind": "reinvest"})
+    del holdings["transaction_coverage"]  # the coverage check reads kinds too
+    with pytest.raises(lh.LossHarvestError, match=r"recent_transactions\[1\] kind"):
+        _build(holdings=holdings)
