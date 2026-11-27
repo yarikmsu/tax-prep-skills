@@ -457,6 +457,8 @@
 
   "form_8959_additional_medicare": {
     "_include_if": "Combined Medicare wages and Schedule SE earnings exceed the filing-status threshold, or the covered-year Form 8959 instructions require it",
+    "computed_tax_year": null,
+    "_note_computed": "Set by the return builder when it derives Part II from Schedule SE. A computed section the builder no longer derives is refused, like a Schedule SE left behind.",
     "line_1_medicare_wages": 0,
     "line_2_unreported_tips": 0,
     "line_3_form_8919_wages": 0,

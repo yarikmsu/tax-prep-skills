@@ -358,6 +358,11 @@ line 17. Exclude all Form 8959 tax from `schedule_se.inputs.remaining_other_taxe
 and confirm with `other_taxes_exclude_additional_medicare: true`. The builder
 derives Part II from Schedule SE line 6 for each filer and Form 8959 line 4,
 and carries Form 8959 line 18 through Schedule 2 line 11 to Form 1040 line 23.
+It refuses a line 4 below the parsed box 5 amounts plus boxes 3 and 7 of any
+W-2 without box 5, lines 2 and 3 below the Form 4137 and Form 8919 amounts on
+Schedule SE, and a line 17 below the tax on listed RRTA compensation. A
+computed Form 8959 the builder no longer derives is refused too; remove its
+computed lines.
 For wage-only returns, compute Form 8959 when the instructions require it.
 [IRS Form 8959 instructions, TY2025](https://www.irs.gov/pub/irs-prior/i8959--2025.pdf)
 

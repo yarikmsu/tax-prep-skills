@@ -1796,7 +1796,8 @@ def test_form_8959_part_ii_comes_from_schedule_se_and_medicare_wages(tmp_path):
     form = built["form_8959_additional_medicare"]
     # Schedule SE line 6 is $300,000 x .9235. Form 8959 line 11 is
     # $200,000 - $100,000. Line 13 is .009 x ($277,050 - $100,000).
-    assert form == {"line_1_medicare_wages": 100000, "line_4_total_medicare_wages": 100000,
+    assert form == {"computed_tax_year": 2026,
+                    "line_1_medicare_wages": 100000, "line_4_total_medicare_wages": 100000,
                     "line_5_mfj_threshold": 200000, "line_7_additional_tax": 0,
                     "line_8_se_income": 277050, "line_9_threshold": 200000,
                     "line_10_medicare_wages": 100000, "line_11_remaining_threshold": 100000,
@@ -1808,6 +1809,73 @@ def test_form_8959_part_ii_comes_from_schedule_se_and_medicare_wages(tmp_path):
     result_path.write_text(json.dumps(built))
     assert RB._main(args + ["--check"]) == T._main(args) == 2
     assert RB._main(args) == RB._main(args + ["--check"]) == T._main(args) == 0
+
+
+def _medicare_inputs(tmp_path, net=300000, records=(), **owner):
+    ws = _schedule_c_workspace(tmp_path, net=net, other_taxes=0, records=records)
+    result, profile, ledger, tax_law, _ = RB.load(ws)
+    inputs = result["schedule_se"]["inputs"]
+    inputs["by_owner"]["primary"].update(owner)
+    inputs["other_taxes_exclude_additional_medicare"] = True
+
+    def settle():
+        return RB.schedule_c.business_tax_workpapers(result, profile, ledger, tax_law,
+                                                     require_other_taxes=True)
+    return result, settle
+
+
+def test_a_w2_without_box_5_sets_a_floor_under_form_8959_line_4(tmp_path):
+    # Box 5 is never below box 3, so a reviewed line 4 of zero would drop
+    # $100,000 of wages and raise line 11 by as much.
+    result, settle = _medicare_inputs(tmp_path, records=({"wages": 100000, "ss_wages": 100000},),
+                                      ss_wages=100000)
+    result["form_8959_additional_medicare"] = {"line_4_total_medicare_wages": 0}
+    with pytest.raises(ValueError, match="line 4 disagrees"):
+        settle()
+    result["form_8959_additional_medicare"]["line_4_total_medicare_wages"] = 100000
+    assert settle()[1]["line_10_medicare_wages"] == 100000
+
+
+@pytest.mark.parametrize("field,line", [("line_8b_form_4137", "line_2_unreported_tips"),
+                                        ("line_8c_form_8919", "line_3_form_8919_wages")])
+def test_form_8959_lines_2_and_3_include_the_schedule_se_wages(tmp_path, field, line):
+    result, settle = _medicare_inputs(
+        tmp_path, records=({"wages": 100000, "ss_wages": 100000, "medicare_wages": 100000},),
+        ss_wages=110000, **{field: 10000})
+    with pytest.raises(ValueError, match="lines 2 and 3"):
+        settle()
+    result["form_8959_additional_medicare"] = {line: 10000}
+    assert settle()[1]["line_4_total_medicare_wages"] == 110000
+
+
+def test_form_8959_line_17_includes_the_rrta_tax_on_listed_compensation(tmp_path):
+    result, settle = _medicare_inputs(tmp_path, net=10000, ss_wages=300000,
+                                      rrta_compensation=300000)
+    with pytest.raises(ValueError, match="line 17"):
+        settle()
+    # .009 x ($300,000 - the $250,000 joint threshold)
+    result["form_8959_additional_medicare"] = {"line_17_rrta_additional_tax": 450}
+    assert settle()[1]["line_18_total_additional_tax"] == 450
+
+
+def test_a_computed_form_8959_left_behind_is_refused(tmp_path):
+    # Under the threshold and unconfirmed, the builder derives no Form 8959.
+    result, settle = _medicare_inputs(tmp_path, net=40000)
+    result["schedule_se"]["inputs"]["other_taxes_exclude_additional_medicare"] = False
+    assert settle()[1] is None
+    # A computed Part I left behind (the confirmation withdrawn) still read $450.
+    result["form_8959_additional_medicare"] = {"computed_tax_year": 2026,
+                                               "line_7_additional_tax": 450,
+                                               "line_18_total_additional_tax": 450}
+    with pytest.raises(ValueError, match="computed Form 8959 remains"):
+        settle()
+    # A typed wage-only Form 8959 is the user's, not a computed one.
+    result["form_8959_additional_medicare"] = {"line_7_additional_tax": 90}
+    assert settle()[1] is None
+    del result["schedule_c"], result["schedule_se"]
+    result["form_8959_additional_medicare"] = {"computed_tax_year": 2026, "line_8_se_income": 277050}
+    with pytest.raises(ValueError, match="computed Form 8959 remains"):
+        settle()
 
 
 @pytest.mark.parametrize(("net", "exempt", "tax", "deduction"), [

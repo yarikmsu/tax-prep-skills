@@ -218,7 +218,12 @@ def flow_differences(result: dict, workpaper: dict | None) -> list[str]:
     return differences
 
 
-def _medicare_wages(form: dict, ledger: Iterable) -> float:
+def _owner_total(by_owner: dict, field: str) -> float:
+    return round(sum(_amount(item.get(field, 0), f"Schedule SE {field}")
+                     for item in by_owner.values() if isinstance(item, dict)), 2)
+
+
+def _medicare_wages(form: dict, ledger: Iterable, by_owner: dict) -> float:
     """Use reviewed Form 8959 line 4 or derive it from the listed W-2 amounts."""
     wage_boxes = []
     for record in ledger:
@@ -228,9 +233,20 @@ def _medicare_wages(form: dict, ledger: Iterable) -> float:
             wage_boxes.append(boxes)
     w2_medicare = round(sum(boxes.get("medicare_wages", 0) for boxes in wage_boxes), 2)
     complete_w2 = bool(wage_boxes) and all("medicare_wages" in boxes for boxes in wage_boxes)
+    # Box 5 is never below boxes 3 and 7 (Medicare wages have no base), so a
+    # W-2 without box 5 still sets a floor; counting it as zero let a reviewed
+    # line 4 drop the wages and raise line 11.
+    unread_floor = round(sum(boxes.get("ss_wages", 0) + boxes.get("ss_tips", 0)
+                             for boxes in wage_boxes if "medicare_wages" not in boxes), 2)
     tips = _amount(form.get("line_2_unreported_tips", 0), "Form 8959 line 2")
     other = _amount(form.get("line_3_form_8919_wages", 0), "Form 8959 line 3")
-    known = round(w2_medicare + tips + other, 2)
+    # Form 4137 line 6 and Form 8919 line 6 include the Social Security
+    # portions Schedule SE lines 8b and 8c already carry.
+    if (tips < _owner_total(by_owner, "line_8b_form_4137")
+            or other < _owner_total(by_owner, "line_8c_form_8919")):
+        raise ValueError("Form 8959 lines 2 and 3 must include the Form 4137 and Form 8919 wages "
+                         "listed on Schedule SE")
+    known = round(w2_medicare + unread_floor + tips + other, 2)
     reviewed = form.get("line_4_total_medicare_wages")
     if reviewed is not None:
         wages = _amount(reviewed, "Form 8959 line 4")
@@ -261,7 +277,8 @@ def _medicare_for_se(result: dict, business: dict, ledger: Iterable, tax_law: di
     form = existing or {}
     if not earnings and not confirmed and not form.get("line_13_se_additional_tax"):
         return None
-    wages = _medicare_wages(form, ledger)
+    by_owner = business["inputs"].get("by_owner") or {}
+    wages = _medicare_wages(form, ledger, by_owner)
     federal = tax_law.get("federal") or {}
     law = federal.get("additional_medicare_tax") or {}
     thresholds = law.get("threshold") or {}
@@ -278,9 +295,15 @@ def _medicare_for_se(result: dict, business: dict, ledger: Iterable, tax_law: di
     part_i = compute_additional_medicare(wages, 0, threshold, 0, rate)
     part_ii = compute_additional_medicare(0, earnings, remaining, 0, rate)
     rrta = _amount(form.get("line_17_rrta_additional_tax", 0), "Form 8959 line 17")
+    # Part III taxes RRTA compensation over the same threshold, apart from wages.
+    rrta_floor = round(rate * max(0.0, _owner_total(by_owner, "rrta_compensation") - threshold), 2)
+    if rrta < rrta_floor:
+        raise ValueError("Form 8959 line 17 must include the Additional Medicare Tax on the RRTA "
+                         "compensation listed on Schedule SE")
     tips = _amount(form.get("line_2_unreported_tips", 0), "Form 8959 line 2")
     other_wages = _amount(form.get("line_3_form_8919_wages", 0), "Form 8959 line 3")
-    return {**form, "line_1_medicare_wages": round(wages - tips - other_wages, 2),
+    return {**form, "computed_tax_year": business["computed_tax_year"],
+            "line_1_medicare_wages": round(wages - tips - other_wages, 2),
             "line_4_total_medicare_wages": wages, "line_5_mfj_threshold": threshold,
             "line_7_additional_tax": part_i["additional_tax"],
             "line_8_se_income": earnings, "line_9_threshold": threshold,
@@ -295,11 +318,19 @@ def business_tax_workpapers(result: dict, profile: dict, ledger: Iterable, tax_l
     """Settle Schedule SE and include Form 8959 in the checked line 23 total."""
     business = schedule_se_workpaper(result, profile, ledger, tax_law,
                                     require_other_taxes=require_other_taxes)
+    medicare = None
+    if business is not None:
+        status = _normalize_filing_status((result.get("meta") or {}).get("filing_status")
+                                          or profile.get("filing_status"))
+        medicare = _medicare_for_se(result, business, ledger, tax_law, status)
+    stored = result.get(FORM_8959)
+    if medicare is None and isinstance(stored, dict) and stored.get("computed_tax_year") is not None:
+        # The Schedule SE guard's twin: a computed Form 8959 left behind kept
+        # its Part II in the package after line 23 dropped it.
+        raise ValueError("A computed Form 8959 remains that Schedule SE no longer supports; remove "
+                         "its computed lines or restore the Schedule SE inputs")
     if business is None:
         return None, None
-    status = _normalize_filing_status((result.get("meta") or {}).get("filing_status")
-                                      or profile.get("filing_status"))
-    medicare = _medicare_for_se(result, business, ledger, tax_law, status)
     other = business["line_23_other_taxes"]
     if medicare is not None and other is not None:
         business["line_23_other_taxes"] = round(other + medicare["line_18_total_additional_tax"], 2)
