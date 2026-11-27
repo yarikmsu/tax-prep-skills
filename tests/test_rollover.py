@@ -614,6 +614,40 @@ def test_expected_sources_foreign_account_dedup():
     assert fa.prior_value[0]["institution"] == "Foreign Bank EU"
 
 
+def test_rollover_keeps_separate_expected_accounts_and_owners_at_one_bank(tmp_path):
+    import shutil
+    from agents.lib.tie_out import load_ledger, missing_expected_forms
+
+    archive = tmp_path / "archive"
+    shutil.copytree(FIXTURES / "prior_2024_clean", archive)
+
+    def record(number, person, last4):
+        return {"doc_id": f"interest-{number}", "file": f"documents/interest-{number}.pdf",
+                "payer": "Example Bank", "person": person, "form_type": "1099-INT",
+                "source_form": {"account_last4": last4}, "key_boxes": {"taxable_interest": 10}}
+
+    records = [record(1, "primary", "1011"), record(2, "primary", "1012"),
+               record(3, "spouse", "1011")]
+    (archive / "parse_ledger.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+    prior = load_prior(archive, 2024)
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"expected_sources"}, tax_law_new=current.tax_law)
+    sources = next(change.prior_value for change in diff["expected_sources"]
+                   if change.json_path == "expected_sources.interest_payers")
+    bank_rows = [row for row in sources if row["name"] == "Example Bank"]
+    assert [(row["person"], row["account_last4"]) for row in bank_rows] == [
+        ("primary", "1011"), ("primary", "1012"), ("spouse", "1011"),
+    ]
+    expected = {"interest_payers": bank_rows}
+    assert missing_expected_forms(load_ledger({"records": records[:1]}), expected) == [
+        ("interest reporting", "Example Bank"), ("interest reporting", "Example Bank"),
+    ]
+    assert missing_expected_forms(load_ledger({"records": records[:2]}), expected) == [
+        ("interest reporting", "Example Bank"),
+    ]
+    assert not missing_expected_forms(load_ledger({"records": records}), expected)
+
+
 from agents.lib.rollover import apply_changes, WritePaths
 
 
@@ -1184,3 +1218,67 @@ def test_a_negative_line_36_is_refused_not_made_positive():
     current = R.CurrentState(result={}, profile={"filing_status": "single", "tax_year": 2026}, tax_law={})
     with pytest.raises(R.RolloverError, match="line 36"):
         R._diff_carryforwards(prior, current)
+
+
+def _archive_with_ledger(tmp_path, records):
+    import shutil
+    archive = tmp_path / "archive"
+    shutil.copytree(FIXTURES / "prior_2024_clean", archive)
+    (archive / "parse_ledger.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+    return archive
+
+
+def _expected_interest(archive):
+    prior = load_prior(archive, 2024)
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"expected_sources"}, tax_law_new=current.tax_law)
+    return prior, diff["expected_sources"]
+
+
+def _interest_record(number, payer="Example Bank", **extra):
+    return {"doc_id": f"interest-{number}", "file": f"documents/interest-{number}.pdf",
+            "payer": payer, "form_type": "1099-INT", "key_boxes": {"taxable_interest": 10}, **extra}
+
+
+def test_an_archived_ledger_todays_rules_refuse_still_rolls_over(tmp_path):
+    # A 1099-G from before the government-benefits block fails today's ledger
+    # rules. Rollover of everything else used to stop with it.
+    records = [_interest_record(1, person="primary"),
+               {"doc_id": "g-ftb", "file": "documents/1099g.pdf", "form_type": "1099-G",
+                "payer": "Franchise Tax Board", "person": "primary",
+                "key_boxes": {"state_refund_1099g": 800}}]
+    prior, changes = _expected_interest(_archive_with_ledger(tmp_path, records))
+    assert prior.ledger == [] and prior.ledger_unreadable
+    ask = next(change for change in changes if change.json_path == "expected_sources")
+    assert ask.action_suggested == "ask" and "could not be read" in ask.reason
+    assert any(change.json_path == "expected_sources.interest_payers" for change in changes)
+
+
+def test_a_lone_form_carries_no_owner_or_account_to_match_exactly(tmp_path):
+    from agents.lib.tie_out import load_ledger, missing_expected_forms
+
+    # No person on the archived record defaults to joint; a last four that next
+    # year's form omits would fail that form as well.
+    record = _interest_record(1, source_form={"account_last4": "1011"})
+    _, changes = _expected_interest(_archive_with_ledger(tmp_path, [record]))
+    rows = next(change.prior_value for change in changes
+                if change.json_path == "expected_sources.interest_payers")
+    bank = [row for row in rows if row["name"] == "Example Bank"]
+    assert bank and all("person" not in row and "account_last4" not in row for row in bank)
+    received = load_ledger({"records": [_interest_record(2, person="primary")]})
+    assert missing_expected_forms(received, {"interest_payers": bank}) == []
+
+
+def test_two_forms_from_one_bank_told_apart_by_series_stay_two_entries(tmp_path):
+    from agents.lib.tie_out import load_ledger, missing_expected_forms
+
+    records = [_interest_record(n, person="primary", source_form={"series_id": f"s{n}"})
+               for n in (1, 2)]
+    _, changes = _expected_interest(_archive_with_ledger(tmp_path, records))
+    rows = next(change.prior_value for change in changes
+                if change.json_path == "expected_sources.interest_payers")
+    bank = [row for row in rows if row["name"] == "Example Bank"]
+    assert len(bank) == 2
+    received = load_ledger({"records": [_interest_record(3, person="primary")]})
+    assert missing_expected_forms(received, {"interest_payers": bank}) == [
+        ("interest reporting", "Example Bank")]

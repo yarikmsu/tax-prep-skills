@@ -12,11 +12,14 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from agents.lib.secure_fs import (  # noqa: E402
-    HalfApplied, PublishedButNotSecured, atomic_paths, first_non_finite, redact)
+    HalfApplied, PublishedButNotSecured, atomic_paths, first_non_finite, is_reparse_point, redact)
+
+if TYPE_CHECKING:
+    from agents.lib.tie_out import LedgerRecord
 
 
 class RolloverError(Exception):
@@ -210,6 +213,8 @@ class PriorReturn:
     year: int
     result: dict
     profile: dict
+    ledger: list["LedgerRecord"] = field(default_factory=list)
+    ledger_unreadable: bool = False
 
 
 # --- I/O ------------------------------------------------------------------
@@ -267,7 +272,27 @@ def load_prior(archive_dir: Path, year: int, *, allow_imported: bool = False) ->
             verify_source(archive_dir.parent.parent, result)
         except (ImportError, ValueError, TypeError, KeyError) as exc:
             raise RolloverError("Imported prior return is pending review or has changed; confirm it before rollover") from exc
-    return PriorReturn(year=year, result=result, profile=profile)
+    ledger, unreadable = _archived_ledger(archive_dir / "parse_ledger.json")
+    return PriorReturn(year=year, result=result, profile=profile, ledger=ledger,
+                       ledger_unreadable=unreadable)
+
+
+def _archived_ledger(path: Path) -> tuple[list["LedgerRecord"], bool]:
+    """The archived intake ledger, or ([], True) when it cannot be read.
+
+    Only expected sources use it. A ledger written before today's ledger rules
+    stopped rollover, the year-over-year diff and the projection with it; the
+    prior payer lists still serve, and the diff asks about the gap instead.
+    """
+    if is_reparse_point(path):
+        return [], True
+    if not path.exists():
+        return [], False
+    from agents.lib.tie_out import TieOutError, load_ledger
+    try:
+        return load_ledger(_read_json(path)), False
+    except (OSError, RolloverError, TieOutError, TypeError, ValueError):
+        return [], True
 
 
 @dataclass
@@ -955,6 +980,42 @@ def _diff_dependents(prior: PriorReturn, current: CurrentState, tax_law_new: dic
     return out
 
 
+def _expected_from_intake(ledger: list["LedgerRecord"], key: str, legacy: list[dict]) -> list[dict]:
+    from agents.lib.tie_out import _has_expected_kind, _payer_tokens
+    from agents.lib.tax_computations.federal.source_reconciliation import form_code
+
+    label = "institution" if key == "foreign_accounts" else "name"
+    legacy_tokens = [_payer_tokens(row[label]) for row in legacy]
+    # Capital proceeds from a personal sale do not identify a brokerage.
+    records = [record for record in ledger
+               if record.skipped is None and _has_expected_kind(record, key)
+               and not (key == "brokerages" and "1099K" in form_code(record.form_type))]
+    payers = [_payer_tokens(record.payer) for record in records]
+    covered: set[int] = set()
+    entries = []
+    for record, payer in zip(records, payers, strict=True):
+        account = (record.source_form or {}).get("account_last4")
+        matches = [
+            index for index, (row, tokens) in enumerate(zip(legacy, legacy_tokens, strict=True))
+            if payer and tokens and (payer <= tokens or tokens <= payer)
+            and row.get("person") in (None, record.person)
+            and row.get("account_last4") in (None, account)
+        ]
+        entry = dict(legacy[matches[0]]) if matches else {}
+        entry[label] = record.payer
+        # Owner and account tell apart forms from one payer; on a lone form a
+        # "joint" default, or a last four next year's form omits, became an
+        # exact match that the same payer's form then failed.
+        if sum(1 for other in payers if payer and other and (payer <= other or other <= payer)) > 1:
+            if record.person in ("primary", "spouse"):
+                entry["person"] = record.person
+            if account is not None:
+                entry["account_last4"] = account
+        entries.append(entry)
+        covered.update(matches)
+    return entries + [row for index, row in enumerate(legacy) if index not in covered]
+
+
 def _diff_expected_sources(prior: PriorReturn, current: CurrentState) -> list[Change]:
     pr = prior.result
     w2_employers = []
@@ -987,16 +1048,28 @@ def _diff_expected_sources(prior: PriorReturn, current: CurrentState) -> list[Ch
                 })
 
     rows = [
-        ("expected_sources.w2_employers", w2_employers),
-        ("expected_sources.interest_payers", interest_payers),
-        ("expected_sources.dividend_payers", dividend_payers),
-        ("expected_sources.brokerages", []),
-        ("expected_sources.foreign_accounts", foreign_accounts),
+        ("w2_employers", w2_employers),
+        ("interest_payers", interest_payers),
+        ("dividend_payers", dividend_payers),
+        ("brokerages", []),
+        ("foreign_accounts", foreign_accounts),
     ]
     out: list[Change] = []
-    for path, value in rows:
+    if prior.ledger_unreadable:
+        out.append(Change(
+            category="expected_sources", json_path="expected_sources",
+            target_file="taxpayer_profile.json", prior_value=None,
+            current_value=_get_path(current.profile, "expected_sources", default=None),
+            action_suggested="ask",
+            reason=("The archived parse_ledger.json could not be read, so expected forms come from "
+                    "the prior payer lists alone. Ask whether any payer sent more than one form "
+                    "(two accounts, or one per spouse) and list each one."),
+        ))
+    for key, legacy in rows:
+        value = _expected_from_intake(prior.ledger, key, legacy) if prior.ledger else legacy
         if not value:
             continue
+        path = f"expected_sources.{key}"
         current_value = _get_path(current.profile, path, default=[])
         action = "ask" if current_value else "apply"
         out.append(Change(
@@ -1006,7 +1079,8 @@ def _diff_expected_sources(prior: PriorReturn, current: CurrentState) -> list[Ch
             prior_value=value,
             current_value=current_value,
             action_suggested=action,
-            reason="Derived from prior result.json payer/account lists",
+            reason=("Derived from archived intake and prior payer/account lists" if prior.ledger
+                    else "Derived from prior result.json payer/account lists"),
         ))
     return out
 

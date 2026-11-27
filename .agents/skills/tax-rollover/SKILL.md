@@ -73,6 +73,13 @@ sh agents/lib/run.sh -m agents.lib.rollover diff \
 
 Where `{current_year}` is read from `result.json` `meta.tax_year`. Parse the JSON output.
 
+For expected forms, rollover uses the archived parse ledger when available:
+one entry per form the prior year received. Where two or more forms share a
+payer, each entry keeps its recorded owner (primary or spouse) and account last
+four digits, so one form this year cannot clear both. The archived payer lists
+serve older returns, entries missing from the ledger, and a ledger today's
+rules cannot read; the diff then asks whether any payer sent more than one form.
+
 ### 3. Present each category and ask the user
 
 Rental `schedule_e_rentals.carryforward` becomes

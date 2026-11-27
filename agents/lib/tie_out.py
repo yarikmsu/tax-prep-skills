@@ -976,40 +976,63 @@ def missing_expected_forms(ledger: list[LedgerRecord], expected_sources: dict) -
         raise TieOutError("expected_sources must be an object")
     missing = []
     for key, values in expected_sources.items():
-        if key.startswith("_"):
-            continue
-        if not isinstance(values, list):
-            raise TieOutError(f"expected_sources.{key} must be a list")
-        if key not in _EXPECTED_FORM_LABELS:
-            raise TieOutError("expected_sources contains an unrecognized source kind")
-        for v in values:
-            # /tax-rollover writes OBJECT entries — {"name", "ein"} for
-            # employers, {"name", "country_code"} for payers,
-            # {"institution", "country_code", "account_last4"} for foreign
-            # accounts. Plain strings are accepted for hand-maintained lists.
-            name = _expected_payer_name(v, f"expected_sources.{key}")
-            detail = v if isinstance(v, dict) else {}
-            if detail.get("resolution") == "issuer_confirmed_no_form":
-                continue
-            if "resolution" in detail:
-                raise TieOutError("expected-source resolution must be issuer_confirmed_no_form or absent")
-            tokens = _payer_tokens(name)
-            person = detail.get("person")
-            last4 = detail.get("account_last4")
-            if person is not None and person not in ("primary", "spouse", "joint"):
-                raise TieOutError("expected-source person must be primary, spouse or joint")
-            if last4 is not None and (not isinstance(last4, str) or not re.fullmatch(r"[0-9]{4}", last4)):
-                raise TieOutError("expected-source account_last4 must contain four account digits")
-            for record in ledger:
-                payer = _payer_tokens(record.payer)
-                if (record.skipped is None and tokens and payer and (tokens <= payer or payer <= tokens)
-                        and (person is None or record.person == person)
-                        and (last4 is None or last4 == (record.source_form or {}).get("account_last4"))
-                        and _has_expected_kind(record, key)):
-                    break
-            else:
-                missing.append((_EXPECTED_FORM_LABELS[key], name))
+        missing.extend(_missing_of_kind(ledger, key, values))
     return missing
+
+
+def _missing_of_kind(ledger: list[LedgerRecord], key: str, values) -> list[tuple[str, str]]:
+    """Each received form clears at most one expected entry of its kind.
+
+    One 1099-INT used to clear every entry naming its bank, so a second
+    account's missing form passed. Entries are matched to forms as a maximum
+    matching, so the order of either list cannot leave one unmatched that
+    another assignment would have cleared.
+    """
+    if key.startswith("_"):
+        return []
+    if not isinstance(values, list):
+        raise TieOutError(f"expected_sources.{key} must be a list")
+    if key not in _EXPECTED_FORM_LABELS:
+        raise TieOutError("expected_sources contains an unrecognized source kind")
+    received = [record for record in ledger if record.skipped is None and _has_expected_kind(record, key)]
+    expected, candidates = [], []
+    for v in values:
+        # /tax-rollover writes OBJECT entries — {"name", "ein"} for
+        # employers, {"name", "country_code"} for payers,
+        # {"institution", "country_code", "account_last4"} for foreign
+        # accounts. Plain strings are accepted for hand-maintained lists.
+        name = _expected_payer_name(v, f"expected_sources.{key}")
+        detail = v if isinstance(v, dict) else {}
+        if detail.get("resolution") == "issuer_confirmed_no_form":
+            continue
+        if "resolution" in detail:
+            raise TieOutError("expected-source resolution must be issuer_confirmed_no_form or absent")
+        tokens = _payer_tokens(name)
+        person = detail.get("person")
+        last4 = detail.get("account_last4")
+        if person is not None and person not in ("primary", "spouse", "joint"):
+            raise TieOutError("expected-source person must be primary, spouse or joint")
+        if last4 is not None and (not isinstance(last4, str) or not re.fullmatch(r"[0-9]{4}", last4)):
+            raise TieOutError("expected-source account_last4 must contain four account digits")
+        expected.append(name)
+        candidates.append([
+            index for index, record in enumerate(received)
+            if tokens and (payer := _payer_tokens(record.payer)) and (tokens <= payer or payer <= tokens)
+            and (person is None or record.person == person)
+            and (last4 is None or last4 == (record.source_form or {}).get("account_last4"))])
+    holder: dict[int, int] = {}
+
+    def assign(entry: int, tried: set[int]) -> bool:
+        for index in candidates[entry]:
+            if index not in tried:
+                tried.add(index)
+                if index not in holder or assign(holder[index], tried):
+                    holder[index] = entry
+                    return True
+        return False
+
+    matched = {entry for entry in range(len(expected)) if assign(entry, set())}
+    return [(_EXPECTED_FORM_LABELS[key], name) for entry, name in enumerate(expected) if entry not in matched]
 
 
 def missing_expected_payers(ledger: list[LedgerRecord], expected_sources: dict) -> list[str]:
