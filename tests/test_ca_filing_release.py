@@ -173,6 +173,19 @@ def test_same_path_correction_requires_new_intake(workspace):
     assert "Line 35a — refund $1,338.00" in _pdf_lines(workspace)
 
 
+def test_box_5_wages_trigger_other_tax_review_for_final_export(workspace):
+    release.compute(workspace)
+    _assert_ready(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    w2 = next(record for record in ledger["records"] if record["form_type"] == "W-2")
+    assert w2["key_boxes"]["wages"] == 138000
+    w2["key_boxes"]["medicare_wages"] = 205000
+    release.write_json(ledger_path, ledger)
+    release.validate(workspace)
+    _assert_refused(workspace, "Open material item: Schedule 2 Part II other-tax worksheets")
+
+
 def test_unread_w2_box_blocks_final_until_recovered(workspace):
     release.compute(workspace, unread_box_2=True)
     note = "Open material item: W-2 #1 Box 2"

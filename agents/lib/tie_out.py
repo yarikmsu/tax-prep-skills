@@ -2123,6 +2123,26 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
+def filing_medicare_wages(ledger: list[LedgerRecord], fallback) -> float:
+    """The wages that decide whether the Additional Medicare review applies.
+
+    Box 5 raises the screen above line 1a (pre-tax deferrals) but never lowers
+    it: nothing ties box 5 to a source, so a misread box 5 would clear a review
+    line 1a requires. A W-2 without box 5 counts the larger of box 1 and
+    boxes 3 and 7. This screens for a review; it is not Form 8959 line 4.
+    """
+    total = 0.0
+    for record in ledger:
+        boxes = dict(record.key_boxes)
+        if record.skipped is None and _is_w2(record.form_type, boxes):
+            total += (boxes["medicare_wages"] if "medicare_wages" in boxes else
+                      max(boxes.get("wages", 0), boxes.get("ss_wages", 0) + boxes.get("ss_tips", 0)))
+    total = round(total, 2)
+    if isinstance(fallback, (int, float)) and not isinstance(fallback, bool) and math.isfinite(fallback):
+        return max(total, fallback)
+    return total
+
+
 # New York's localities that withhold income tax, by name with its spacing
 # and punctuation dropped: a row pairing one with another state's code would
 # otherwise hide it from a computed New York return.

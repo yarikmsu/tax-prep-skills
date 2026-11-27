@@ -216,7 +216,7 @@ class TestTheCli:
 
     def _workspace(self, tmp_path, *, validated):
         (tmp_path / "taxpayer_profile.json").write_text("{}")
-        (tmp_path / "parse_ledger.json").write_text("{}")
+        (tmp_path / "parse_ledger.json").write_text('{"records": []}')
         (tmp_path / "result.json").write_text(json.dumps(_result()))
         if validated:
             write_synthetic_filing_law(tmp_path)

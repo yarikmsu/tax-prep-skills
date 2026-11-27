@@ -511,7 +511,7 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
 
 
 def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
-                           result_bytes: bytes | None) -> list[str]:
+                           result_bytes: bytes | None, ledger: list) -> list[str]:
     from agents.lib.tax_computations.federal.applicable_law import filing_issues
 
     result_name = "result.json"
@@ -543,7 +543,7 @@ def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
         law = json.loads(law_raw)
         if not isinstance(law, dict):
             return [f"Could not validate applicable law in {name}."]
-        return filing_issues(result, profile, law)
+        return filing_issues(result, profile, law, ledger=ledger)
     except (OSError, ValueError, RolloverError):
         return ["Could not read the return inputs for the applicable tax-law check."]
 
@@ -574,8 +574,22 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
                                   if material and "tie_out" in required else ({}, []))
     if for_filing:
         from agents.lib.material_evidence import filing_input_issues
-        material_reasons += _applicable_law_checks(workspace, captured, result_bytes)
-        material_reasons += filing_input_issues(captured)
+        from agents.lib.tie_out import TieOutError, load_ledger
+        ledger = []
+        try:
+            # Read as the profile is, and bound with the other captured bytes
+            # so the checks and the receipt describe one ledger. A key holding
+            # None would read as a deleted file.
+            ledger_path = _validate_subpath(workspace / "parse_ledger.json", workspace)
+            if ledger_path.exists() and not ledger_path.is_file():
+                raise ValueError("ledger must be a regular file")
+            if ledger_path.is_file():
+                captured["parse_ledger.json"] = raw_ledger = ledger_path.read_bytes()
+                ledger = load_ledger(json.loads(raw_ledger))
+        except (OSError, ValueError, RolloverError, TieOutError):
+            material_reasons.append("Could not validate parse_ledger.json for filing evidence.")
+        material_reasons += _applicable_law_checks(workspace, captured, result_bytes, ledger)
+        material_reasons += filing_input_issues(captured, ledger=ledger)
         material_reasons = list(dict.fromkeys(material_reasons))
     data = _read(workspace)
     if not data:
