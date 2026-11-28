@@ -39,7 +39,8 @@ from agents.lib.tax_computations.federal.payments import reviewed_balance_due  #
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
 )
-from agents.lib.tax_computations.charitable import form_8283_required  # noqa: E402
+from agents.lib.tax_computations.charitable import (  # noqa: E402
+    form_1098c_attached, form_8283_required)
 from agents.lib.projection import _section_computed  # noqa: E402
 from agents.lib.yoy_diff import _section_present  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
@@ -445,6 +446,9 @@ def attachment_checklist(result: dict, *, tax_law: dict | None = None) -> list:
     if form_8283_required(result, tax_law or {}):
         lines.append("Complete and attach the covered-year Form 8283. Attach appraisal copies when its instructions "
                      "require them and retain the written acknowledgments with the tax records.")
+    if form_1098c_attached(result):
+        lines.append("Attach Copy B of each Form 1098-C (or the donee's other contemporaneous written acknowledgment) "
+                     "for a donated vehicle whose deduction is limited to the donee's sale proceeds.")
     f1040 = result.get("form_1040") or {}
     rental = result.get("schedule_e_rentals") or {}
     if type(rental.get("computed_tax_year")) is int:

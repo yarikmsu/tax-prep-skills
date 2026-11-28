@@ -80,7 +80,7 @@ def _medicare_figures(status: str) -> set[str]:
 
 
 def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: str) -> set[str]:
-    from agents.lib.tax_computations.charitable import SUBSTANTIATION_LIMITS, current_itemized_gifts
+    from agents.lib.tax_computations.charitable import SUBSTANTIATION_LIMITS, substantiated_gifts
     from agents.lib.tax_computations.federal.schedule_c import schedule_c_net
 
     flags = profile.get("flags") or {}
@@ -107,9 +107,10 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
             fields.add("federal.amt.phaseout_rate")
     if itemizes:
         fields.add("federal.salt_cap.mfs_amount" if status == "mfs" else "federal.salt_cap.amount")
-        gifts = current_itemized_gifts(result)
-        if gifts is None or any(gifts):
-            fields.update(f"federal.charitable_substantiation.{key}" for key in SUBSTANTIATION_LIMITS)
+    # Federal or California-only itemized gifts: both rest on these limits.
+    gifts = substantiated_gifts(result)
+    if gifts is None or any(gifts):
+        fields.update(f"federal.charitable_substantiation.{key}" for key in SUBSTANTIATION_LIMITS)
     if flags.get("has_hsa") is True or _section_present(result, "form_8889_hsa"):
         fields.update({"federal.hsa_limits.self_only", "federal.hsa_limits.family", "federal.hsa_limits.catch_up_55_plus"})
     if flags.get("has_ira_contributions") is True or _section_present(result, "ira_contribution"):

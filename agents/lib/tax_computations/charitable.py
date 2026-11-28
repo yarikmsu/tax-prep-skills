@@ -16,32 +16,65 @@ CATEGORIES = {"cash_public", "cash_other", "noncash_appreciated_public",
               "noncash_other", "conservation"}
 
 SUBSTANTIATION_LIMITS = ("acknowledgment_minimum", "form_8283_threshold", "qualified_appraisal_threshold")
+# Form 8283 Section A takes a vehicle at any claimed value when its deduction
+# is limited to the gross proceeds of the donee's sale and the donor has the
+# contemporaneous written acknowledgment (Form 1098-C): no appraisal applies.
+VEHICLE_SOLD_BY_DONEE = "vehicle_sold_by_donee"
+GIFT_KINDS = ("cash", "noncash", "publicly_traded_securities", VEHICLE_SOLD_BY_DONEE)
+_NONCASH_CATEGORIES = tuple(sorted(c for c in CATEGORIES if not c.startswith("cash")))
+
+
+def _claimed_gifts(section: dict, inputs) -> tuple[float, float] | None:
+    """Cash and noncash gifts behind one itemized charitable deduction."""
+    if not isinstance(inputs, dict):
+        return None
+    cash = inputs.get("charitable_cash")
+    noncash = inputs.get("charitable_noncash")
+    if cash is None and noncash is None and not section.get("charitable_deductible"):
+        return 0.0, 0.0
+    try:
+        cash, noncash = _amount(cash), _amount(noncash)
+        claimed = _amount(section.get("charitable_deductible", 0))
+    except (ValueError, OverflowError):
+        return None
+    # The builder separately reconciles a recorded vintage settlement. With
+    # no such settlement, the current gifts must cover the deduction.
+    if claimed > round(cash + noncash, 2) and not section.get("charitable_ledger"):
+        return None
+    return cash, noncash
 
 
 def current_itemized_gifts(result: dict) -> tuple[float, float] | None:
-    """Cash and noncash gifts before income limits. None means unknown."""
+    """Federal cash and noncash gifts before income limits. None means unknown."""
     schedule = result.get("schedule_a") or {}
     if not isinstance(schedule, dict):
         return None
     if schedule.get("use_itemized") is not True:
         return 0.0, 0.0
-    inputs = schedule.get("inputs") or {}
-    if not isinstance(inputs, dict):
+    return _claimed_gifts(schedule, schedule.get("inputs") or {})
+
+
+def substantiated_gifts(result: dict) -> tuple[float, float] | None:
+    """Gifts behind a federal OR California itemized deduction. None means unknown.
+
+    Schedule CA (540) Part II starts from the federal Schedule A amounts and
+    adjusts only the differences it lists, none of them substantiation, so a
+    California-only itemizer's gifts need the same evidence. One inventory
+    serves both: the federal gifts when the federal return deducts them.
+    """
+    federal = current_itemized_gifts(result)
+    ca = result.get("schedule_ca_itemized") or {}
+    if not isinstance(ca, dict):
         return None
-    cash = inputs.get("charitable_cash")
-    noncash = inputs.get("charitable_noncash")
-    if cash is None and noncash is None and not schedule.get("charitable_deductible"):
-        return 0.0, 0.0
-    try:
-        cash, noncash = _amount(cash), _amount(noncash)
-        claimed = _amount(schedule.get("charitable_deductible", 0))
-    except (ValueError, OverflowError):
+    if federal is None or ca.get("use_itemized") is not True:
+        return federal
+    inputs = ca.get("charitable_inputs")
+    if inputs is None:
+        inputs = (result.get("schedule_a") or {}).get("inputs") or {}
+    state = _claimed_gifts(ca, inputs)
+    if state is None:
         return None
-    # The builder separately reconciles a recorded vintage settlement. With
-    # no such settlement, the current gifts must cover the deduction.
-    if claimed > round(cash + noncash, 2) and not schedule.get("charitable_ledger"):
-        return None
-    return cash, noncash
+    return federal if any(federal) else state
 
 
 def substantiation_limit(tax_law: dict, key: str) -> float:
@@ -54,7 +87,30 @@ def substantiation_limit(tax_law: dict, key: str) -> float:
     return limit
 
 
+def _positive(value) -> bool:
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and value > 0)
+
+
+def _noncash_carryover_used(schedule: dict) -> bool:
+    """A prior-year noncash vintage deducted this year (section 170(d))."""
+    ledger = schedule.get("charitable_ledger")
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("entries"), list):
+        return False
+    year = ledger.get("as_of_year")
+    return type(year) is int and any(
+        isinstance(row, dict) and row.get("category") in _NONCASH_CATEGORIES
+        and type(row.get("origin_year")) is int and row["origin_year"] < year
+        and _positive(row.get("used_this_year")) for row in ledger["entries"])
+
+
 def form_8283_required(result: dict, tax_law: dict) -> bool:
+    """Form 8283 for this year's noncash gifts over the threshold, and for
+    any carryover year described in section 170(d) (its "When To File")."""
+    schedule = result.get("schedule_a")
+    if (isinstance(schedule, dict) and schedule.get("use_itemized") is True
+            and _noncash_carryover_used(schedule)):
+        return True
     gifts = current_itemized_gifts(result)
     if gifts is None or gifts[1] <= 0:
         return False
@@ -66,8 +122,21 @@ def form_8283_required(result: dict, tax_law: dict) -> bool:
         return False
 
 
-def substantiation_issues(result: dict, law: dict, sources: set[str]) -> list[str]:
+def form_1098c_attached(result: dict) -> bool:
+    """A deducted vehicle limited to the donee's sale proceeds: the return
+    carries its Form 1098-C (or other contemporaneous acknowledgment)."""
     gifts = current_itemized_gifts(result)
+    rows = (result.get("schedule_a") or {}).get("charitable_substantiation")
+    return (gifts is not None and any(gifts) and isinstance(rows, list)
+            and any(isinstance(row, dict) and row.get("kind") == VEHICLE_SOLD_BY_DONEE for row in rows))
+
+
+def _bound(path, sources: set[str]) -> bool:
+    return isinstance(path, str) and path in sources
+
+
+def substantiation_issues(result: dict, law: dict, sources: set[str]) -> list[str]:
+    gifts = substantiated_gifts(result)
     if gifts is None:
         return ["Record Schedule A's current cash and noncash gifts separately from carryovers."]
     try:
@@ -83,8 +152,9 @@ def substantiation_issues(result: dict, law: dict, sources: set[str]) -> list[st
     totals: dict[str, list[float]] = {"cash": [], "noncash": []}
     groups: dict[str, list[tuple[int, float, object]]] = {}
     for number, row in enumerate(rows, 1):
-        if not isinstance(row, dict) or row.get("kind") not in ("cash", "noncash", "publicly_traded_securities"):
-            return [f"Classify charitable gift #{number} as cash, noncash or publicly traded securities."]
+        if not isinstance(row, dict) or row.get("kind") not in GIFT_KINDS:
+            return [f"Classify charitable gift #{number} as cash, noncash, publicly traded securities "
+                    "or a vehicle sold by the donee."]
         kind = row["kind"]
         try:
             amount = _amount(row.get("amount"))
@@ -93,22 +163,29 @@ def substantiation_issues(result: dict, law: dict, sources: set[str]) -> list[st
         if amount <= 0:
             return [f"Record a positive amount for charitable gift #{number}."]
         totals["cash" if kind == "cash" else "noncash"].append(amount)
-        evidence = "acknowledgment_ref" if amount >= acknowledgment else "source_ref"
-        path = row.get(evidence)
-        if not isinstance(path, str) or path not in sources:
-            document = "contemporaneous written acknowledgment" if evidence == "acknowledgment_ref" else "supporting record"
+        refs: tuple[str, ...]
+        if kind == VEHICLE_SOLD_BY_DONEE:
+            refs, document = ("acknowledgment_ref",), "Form 1098-C or other contemporaneous written acknowledgment"
+        elif amount >= acknowledgment:
+            refs, document = ("acknowledgment_ref",), "contemporaneous written acknowledgment"
+        else:
+            # Below the minimum, the donee's letter is as good a record as any.
+            refs, document = ("source_ref", "acknowledgment_ref"), "supporting record"
+        if not any(_bound(row.get(ref), sources) for ref in refs):
             issues.append(f"Bind the {document} for charitable gift #{number}.")
         if kind == "noncash":
             group = row.get("similar_group")
             if not isinstance(group, str) or not group.strip():
                 return [f"Assign a reviewed similar-property group to charitable gift #{number}."]
-            groups.setdefault(group, []).append((number, amount, row.get("appraisal_ref")))
+            # A similar-property group is a category, not a spelling.
+            key = " ".join(group.split()).casefold()
+            groups.setdefault(key, []).append((number, amount, row.get("appraisal_ref")))
     if (round(math.fsum(totals["cash"]), 2), round(math.fsum(totals["noncash"]), 2)) != gifts:
         issues.append("Reconcile the gift inventory to the current cash and noncash Schedule A amounts.")
     for members in groups.values():
         if round(math.fsum(amount for _, amount, _ in members), 2) > appraisal:
             for number, _, path in members:
-                if not isinstance(path, str) or path not in sources:
+                if not _bound(path, sources):
                     issues.append(f"Bind the qualified appraisal for charitable gift #{number}, including its similar-property group.")
     return issues
 

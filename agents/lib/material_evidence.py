@@ -202,7 +202,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     from agents.lib.tax_law_fetcher import _get_path
     from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding, has_special_rate_gains
     from agents.lib.yoy_diff import _section_present
-    from agents.lib.tax_computations.charitable import current_itemized_gifts
+    from agents.lib.tax_computations.charitable import substantiated_gifts
 
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
@@ -271,7 +271,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     if (has_other_payment or needs_manual_penalty or flags_set("filed_extension")
             or has_rrta_tier1_withholding(ledger or [])):
         required["input.payments"] = has_other_payment or needs_manual_penalty
-    gifts = current_itemized_gifts(result)
+    gifts = substantiated_gifts(result)
     if gifts is None or any(gifts):
         required[CHARITABLE_SUBSTANTIATION_ITEM] = True
     return required

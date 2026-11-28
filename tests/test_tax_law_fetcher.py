@@ -168,6 +168,21 @@ def test_empty_underpayment_rates_not_flagged(tmp_path):
     assert not any("underpayment_rates" in f for f in result["null_fields"])
     assert result["status"] == "FRESH"
 
+def test_unfetched_charitable_substantiation_limits_are_not_a_freshness_gap(tmp_path):
+    """AA133: the applicable-law gate requires these only for current
+    itemized gifts, so a null block is the default for everyone else."""
+    from agents.lib.tax_computations.charitable import SUBSTANTIATION_LIMITS
+
+    _write_cache(tmp_path, 2025)
+    path = tmp_path / "tax_law_2025.json"
+    data = json.loads(path.read_text())
+    data["federal"]["charitable_substantiation"] = dict.fromkeys(SUBSTANTIATION_LIMITS)
+    path.write_text(json.dumps(data))
+    result = check_freshness(2025, str(tmp_path))
+    assert not any("charitable_substantiation" in f for f in result["null_fields"]), result
+    assert result["status"] == "FRESH"
+
+
 def test_absent_itemized_phaseout_flagged_for_ca(tmp_path):
     """Codex P2 (PR #33): a pre-D1 CA cache has no itemized_phaseout key —
     the walker only visits present keys, so without the explicit guard it
@@ -1385,6 +1400,18 @@ class TestSetFigureWritesOneValidatedFigure:
         # E7: the cache-wide stamp is NOT re-dated by a per-block write.
         assert data["_meta"]["fetched"] == datetime(2026, 8, 1).isoformat()
         assert data["tax_year"] == 2026
+
+    @pytest.mark.parametrize("key", ["acknowledgment_minimum", "form_8283_threshold",
+                                     "qualified_appraisal_threshold"])
+    def test_charitable_substantiation_limits_are_positive_whole_dollars(self, tmp_path, key):
+        _fresh_cache(tmp_path)
+        before = (tmp_path / "tax_law_2026.json").read_text()
+        for value, message in ((0, "amount of zero"), (250.5, "positive whole-dollar")):
+            with pytest.raises(TaxLawSetError, match=message):
+                _set(tmp_path, f"federal.charitable_substantiation.{key}", value)
+        assert (tmp_path / "tax_law_2026.json").read_text() == before
+        _set(tmp_path, f"federal.charitable_substantiation.{key}", 250)
+        assert _read(tmp_path)["federal"]["charitable_substantiation"][key] == 250
 
     def test_the_year_must_match_the_cache(self, tmp_path):
         _fresh_cache(tmp_path)

@@ -1418,12 +1418,12 @@ def _itemized_gifts(cash, noncash, rows=()):
             "charitable_substantiation": list(rows)}
 
 
-def _gift_issues(schedule, sources=(), *, outcome="reviewed"):
+def _gift_issues(schedule, sources=(), *, outcome="reviewed", law=_GIFT_LAW, **sections):
     captured = _captured({"line_12_standard_deduction": 35000}, {
         _GIFT_REVIEW: {"label": "Gift evidence", "outcome": outcome,
                        "names": [*_ALL, "reviews/worksheet.json", *sources]},
         **_deduction(deduction_method="itemized", names=[*_ALL, "reviews/worksheet.json"]),
-    }, sections={"schedule_a": schedule}, law_data=_GIFT_LAW, extra_sources=sources)
+    }, sections={"schedule_a": schedule, **sections}, law_data=law, extra_sources=sources)
     return [issue for issue in material_evidence.filing_input_issues(captured)
             if "Schedule A charitable substantiation" in issue]
 
@@ -1461,13 +1461,123 @@ def test_similar_noncash_gifts_are_grouped_across_recipients_for_appraisal():
                for issue in _gift_issues(_itemized_gifts(0, 9000, rows), [first, second, appraisal]))
 
 
+def _vintage(category, used, *, origin=2024):
+    return {"as_of_year": 2025, "entries": [{"origin_year": origin, "category": category, "used_this_year": used,
+                                             "source_ref": "prior-worksheet"}]}
+
+
+def _lists_form_8283(schedule):
+    result = _result(schedule_a=schedule)
+    listed = any(item["sequence"] == "36" for item in FP.assembly_order(result, tax_law=_GIFT_LAW))
+    assert listed == any("Form 8283" in line for line in FP.attachment_checklist(result, tax_law=_GIFT_LAW))
+    return listed
+
+
 def test_carryover_alone_or_a_standard_deduction_needs_no_current_gift_review():
-    looked_up_vintage = {"entries": [{"origin_year": 2024, "used_this_year": 3000, "source_ref": "prior-worksheet"}]}
-    carryover = _itemized_gifts(0, 0) | {"charitable_deductible": 3000, "charitable_ledger": looked_up_vintage}
+    """A carryover's evidence stays with its vintage, so no current-year item.
+    Form 8283's "When To File" still asks for the form "for any carryover
+    year described in section 170(d)" when a noncash vintage is deducted."""
+    carryover = _itemized_gifts(0, 0) | {"charitable_deductible": 3000,
+                                         "charitable_ledger": _vintage("noncash_appreciated_public", 3000)}
     standard = _itemized_gifts(1000, 1000) | {"use_itemized": False}
     for schedule in (carryover, standard):
         assert _GIFT_REVIEW not in _inputs({}, schedule_a=schedule)
-        assert all(item["sequence"] != "36" for item in FP.assembly_order(_result(schedule_a=schedule), tax_law=_GIFT_LAW))
+    assert _lists_form_8283(carryover)
+    assert not _lists_form_8283(standard)
+    for category in ("noncash_other", "conservation"):
+        assert _lists_form_8283(carryover | {"charitable_ledger": _vintage(category, 3000)})
+    # Cash, an unused vintage, this year's own entry, or a standard-deduction
+    # absorption is not a noncash deduction carried into this year.
+    for ledger in (_vintage("cash_public", 3000), _vintage("noncash_other", 0),
+                   _vintage("noncash_other", 3000, origin=2025)):
+        assert not _lists_form_8283(carryover | {"charitable_ledger": ledger})
+    assert not _lists_form_8283(carryover | {"use_itemized": False})
+
+
+def test_similar_property_groups_ignore_case_and_spacing():
+    """Similar items are "of the same general category or type" (Form 8283
+    instructions): a label's spelling must not split one group in two."""
+    first, second = "reviews/first.json", "reviews/second.json"
+    rows = [{"kind": "noncash", "amount": 3000, "similar_group": group, "acknowledgment_ref": ref}
+            for group, ref in (("used books", first), (" Used  BOOKS ", second))]
+    issues = _gift_issues(_itemized_gifts(0, 6000, rows), [first, second])
+    assert sum("qualified appraisal" in issue for issue in issues) == 2, issues
+    rows[1]["similar_group"] = "paintings"
+    assert not _gift_issues(_itemized_gifts(0, 6000, rows), [first, second])
+
+
+def test_a_vehicle_sold_by_the_donee_needs_its_1098c_and_no_appraisal():
+    """Form 8283 Section A takes "A vehicle ... if your deduction for the
+    vehicle is limited to the gross proceeds from its sale and you obtained a
+    contemporaneous written acknowledgment" even over $5,000, and the return
+    attaches the Form 1098-C."""
+    form_1098c, bank = "reviews/1098-c.json", "reviews/bank.json"
+    vehicle = {"kind": "vehicle_sold_by_donee", "amount": 7000, "acknowledgment_ref": form_1098c}
+    schedule = _itemized_gifts(0, 7000, [vehicle])
+    assert not _gift_issues(schedule, [form_1098c])
+    assert any("Bind the Form 1098-C" in issue for issue in _gift_issues(schedule, [bank]))
+    # The acknowledgment is the exemption's condition at any amount.
+    small = {"kind": "vehicle_sold_by_donee", "amount": 200, "source_ref": bank}
+    assert any("Bind the Form 1098-C" in issue for issue in _gift_issues(_itemized_gifts(0, 200, [small]), [bank]))
+    result = _result(schedule_a=schedule)
+    assert any(item["sequence"] == "36" for item in FP.assembly_order(result, tax_law=_GIFT_LAW))
+    assert any("Form 1098-C" in line for line in FP.attachment_checklist(result, tax_law=_GIFT_LAW))
+    as_noncash = _itemized_gifts(0, 7000, [vehicle | {"kind": "noncash", "similar_group": "vehicles"}])
+    assert any("qualified appraisal" in issue for issue in _gift_issues(as_noncash, [form_1098c]))
+    assert not any("Form 1098-C" in line for line in FP.attachment_checklist(_result(schedule_a=as_noncash),
+                                                                              tax_law=_GIFT_LAW))
+
+
+def test_a_small_gift_may_rest_on_its_acknowledgment():
+    letter = "reviews/letter.json"
+    schedule = _itemized_gifts(100, 0, [{"kind": "cash", "amount": 100, "acknowledgment_ref": letter}])
+    assert not _gift_issues(schedule, [letter])
+    assert any("supporting record for charitable gift #1" in issue for issue in _gift_issues(schedule))
+
+
+def test_a_california_only_itemizer_substantiates_the_same_gifts():
+    """Schedule CA (540) Part II column A is the federal Schedule A, adjusted
+    only for the differences its instructions list; substantiation is not one."""
+    from agents.lib.tax_computations.federal.applicable_law import _federal_figures
+
+    letter = "reviews/letter.json"
+    federal = _itemized_gifts(9000, 0, [{"kind": "cash", "amount": 9000, "acknowledgment_ref": letter}])
+    federal |= {"use_itemized": False, "charitable_deductible": 0}
+    ca = {"use_itemized": True, "itemized_total": 20000, "charitable_deductible": 9000}
+    assert _GIFT_REVIEW in _inputs({}, schedule_a=federal, schedule_ca_itemized=ca)
+    fields = _federal_figures({"form_1040": {}, "schedule_a": federal, "schedule_ca_itemized": ca}, {}, {}, 2025, "mfj")
+    assert "federal.charitable_substantiation.acknowledgment_minimum" in fields
+    assert any("written acknowledgment for charitable gift #1" in issue
+               for issue in _gift_issues(federal, schedule_ca_itemized=ca))
+    assert not _gift_issues(federal, [letter], schedule_ca_itemized=ca)
+    unrecorded = {"use_itemized": False, "inputs": {}}
+    assert any("separately from carryovers" in issue
+               for issue in _gift_issues(unrecorded, schedule_ca_itemized=ca))
+    assert _GIFT_REVIEW not in _inputs({}, schedule_a=federal, schedule_ca_itemized=ca | {"use_itemized": False})
+    # Itemizing on both, the inventory is the federal one, though California
+    # recorded fewer gifts (the College Access Tax Credit subtraction).
+    both = federal | {"use_itemized": True, "charitable_deductible": 9000}
+    fewer = ca | {"charitable_inputs": {"charitable_cash": 8000, "charitable_noncash": 0}, "charitable_deductible": 8000}
+    assert not _gift_issues(both, [letter], schedule_ca_itemized=fewer)
+
+
+def test_gift_review_needs_fetched_limits_and_a_reviewed_outcome():
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    letter = "reviews/letter.json"
+    schedule = _itemized_gifts(1000, 0, [{"kind": "cash", "amount": 1000, "acknowledgment_ref": letter}])
+    assert any(issue.endswith("Fetch the covered-year charitable substantiation limits.")
+               for issue in _gift_issues(schedule, [letter], law=_LAW_2025))
+    assert any(issue.endswith("Record the gift inventory and its evidence as reviewed.")
+               for issue in _gift_issues(schedule, [letter], outcome="computed"))
+    missing = [f"federal.charitable_substantiation.{key}: required covered-year figure is missing."
+               for key in ("acknowledgment_minimum", "form_8283_threshold", "qualified_appraisal_threshold")]
+    result = {"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": {}, "schedule_a": schedule}
+    profile = {"filing_status": "MFJ", "tax_year": 2025}
+    assert set(missing) <= set(filing_issues(result, profile, _LAW_2025))
+    assert not set(missing) & set(filing_issues(result, profile, _GIFT_LAW | {"tax_year": 2025}))
+    assert not set(missing) & set(filing_issues(dict(result, schedule_a=schedule | {"use_itemized": False}),
+                                                profile, _LAW_2025))
 
 
 def test_zero_gift_inputs_cannot_clear_a_deduction_without_a_carryover_ledger():

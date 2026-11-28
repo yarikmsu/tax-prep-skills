@@ -147,7 +147,10 @@ Read taxpayer's state from `taxpayer_profile.json`. Compute state return:
    function makes the election: **the CA election is independent of the
    federal one** — with CA's small standard deduction, itemizing CA-only
    is the norm for the persona. Write the `schedule_ca_itemized` section
-   when itemizing.
+   when itemizing. A California-only itemizer with gifts still keeps
+   `schedule_a.inputs` and the `schedule_a.charitable_substantiation`
+   inventory that `income-and-agi.md` describes; the final package holds
+   until `input.charitable_substantiation` is reviewed.
    **Charitable vintages:** pass the separate CA opening ledger and reviewed
    CA worksheet as `charitable_prior_ledger` / `charitable_worksheet`.
    Persist `charitable_ledger` AND `charitable_inputs` in
