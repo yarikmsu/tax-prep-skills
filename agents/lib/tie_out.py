@@ -2228,9 +2228,10 @@ def has_rrta_tier1_withholding(ledger: list[LedgerRecord]) -> bool:
 _EMPLOYEE_ROLE = {"primary": "the taxpayer's", "spouse": "the spouse's"}
 
 
-def _review_employer_ein(person: str) -> str:
+def _review_employer_ein(person: str, *, railroad: bool = False) -> str:
+    forms = "W-2s" if railroad else "Social Security W-2s"
     return (f"Review W-2 Box b and record the employer EIN on each of {_EMPLOYEE_ROLE.get(person, 'the')} "
-            "Social Security W-2s.")
+            f"{forms}.")
 
 
 def _employer_ein(record: LedgerRecord) -> str | None:
@@ -2408,15 +2409,52 @@ def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: fl
     return credit
 
 
-def _rrta_bound(ledger: list[LedgerRecord], person: str, base: float, rate: float) -> float:
-    """The most Topic 608 credits a railroad employee: Social Security and
-    Tier 1 tax withheld together, less one year's maximum at the shared base."""
-    withheld = sum(dict(record.key_boxes).get(category, 0)
-                   for record in ledger
-                   if record.skipped is None and record.person == person
-                   and _is_w2(record.form_type, dict(record.key_boxes))
-                   for category in ("ss_tax_withheld", "rrta_tier1_tax_withheld"))
-    return max(0.0, round(withheld - base * rate, 2))
+def _rrta_bound(ledger: list[LedgerRecord], person: str, base: float, rate: float,
+                employer_sources: dict[str, str],
+                related: list[tuple[LedgerRecord, LedgerRecord]]) -> float:
+    """The most Topic 608 credits a railroad employee.
+
+    Each employer's Social Security tax counts up to its rate on that
+    employer's own Box 3 and 7 wages, as `compute_excess_ss_withholding`
+    counts it; its Tier 1 tax is added and the two are capped together at one
+    year's maximum (Topic 608: an employer's own over-withholding is that
+    employer's to refund). The bound is their sum less one maximum. The ledger
+    has no RRTA compensation, so Tier 1 is taken as withheld. W-2 pairs a
+    mistyped Box b may have split from one employer go to `related`.
+    """
+    forms = []
+    for record in ledger:
+        if record.skipped is not None or record.person != person:
+            continue
+        boxes = dict(record.key_boxes)
+        if _is_w2(record.form_type, boxes) and (
+                _ss_wages(boxes) or boxes.get("ss_tax_withheld", 0) or boxes.get("rrta_tier1_tax_withheld", 0)):
+            forms.append((record, boxes))
+    if any(_ss_wages(boxes) == 0 and boxes.get("ss_tax_withheld", 0) > 0 for _, boxes in forms):
+        raise ValueError("Review W-2 Boxes 3 and 7 for the reported Social Security withholding.")
+    if any(_ss_wages(boxes) and "ss_tax_withheld" not in boxes for _, boxes in forms):
+        raise ValueError("Review W-2 Box 4 for every employer before claiming the excess.")
+    # A W-2 carrying neither tax cannot move the bound, so it needs no EIN.
+    if any(_employer_ein(record) is None for record, _ in forms):
+        raise ValueError(_review_employer_ein(person, railroad=True))
+    maximum = round(base * rate, 2)
+
+    def bound(groups: list[list[dict]]) -> float:
+        capped = 0.0
+        for group in groups:
+            social = min(sum(boxes.get("ss_tax_withheld", 0) for boxes in group),
+                         round(rate * min(sum(_ss_wages(boxes) for boxes in group), base), 2))
+            capped += min(maximum, social + sum(boxes.get("rrta_tier1_tax_withheld", 0) for boxes in group))
+        return max(0.0, round(capped - maximum, 2))
+
+    found = bound(_employer_groups(forms))
+    if found:
+        def lowers(matches: tuple[tuple[int, int], ...]) -> bool:
+            return bound(_employer_groups(forms, assumed_matches=matches)) < found
+
+        records = [record for record, _ in forms]
+        related.extend((records[i], records[j]) for i, j in _related_ein_pairs(forms, employer_sources, lowers))
+    return found
 
 
 def _wage_base_and_rate(tax_law: dict) -> tuple[float, float]:
@@ -2450,21 +2488,27 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
     try:
         claimed = _amount(form.get("schedule_3_line_11_excess_ss", 0), "Schedule 3 line 11")
         employees = _social_security_w2s(ledger)
+        railroad = _rrta_people(ledger)
         joint = employees.get("joint", [])
         # Checked before anything is skipped: a spouse's W-2s on a separate
         # return, or W-2s with no employee, cannot support a credit at all.
         if ((joint and (claimed or sum(map(len, employees.values())) > 1))
-                or (employees.get("spouse") and not _joint_return(result, profile))):
-            return ["Schedule 3 line 11 needs the employee on each Social Security W-2 for this return."]
-        railroad = _rrta_people(ledger)
+                or (claimed and "joint" in railroad)
+                or ((employees.get("spouse") or "spouse" in railroad) and not _joint_return(result, profile))):
+            return ["Schedule 3 line 11 needs the employee on each W-2 used for Social Security or Tier 1 railroad tax."]
         if not claimed and not any(len(forms) > 1 for forms in employees.values()):
             return []
         base, rate = _wage_base_and_rate(tax_law)
         related: list[tuple[LedgerRecord, LedgerRecord]] = []
         credit = round(sum(_person_excess(person, forms, base, rate, employer_sources or {}, related)
                            for person, forms in employees.items() if person not in railroad), 2)
+        # Only a claim that includes railroad credit needs its EINs and upper
+        # bound. The payments review still checks the worksheet.
+        bound = (round(credit + sum(_rrta_bound(ledger, person, base, rate, employer_sources or {}, related)
+                                    for person in sorted(railroad)), 2)
+                 if railroad and claimed > credit else None)
         if related:
-            # Both spouses' pairs at once, so one outcome binds every form.
+            # Every employee's pairs, both paths, at once: one outcome binds every form.
             numbers = {record.file: number for number, record in enumerate(ledger, 1)}
             sources = employer_sources or {}
             named = {record.file for pair in related for record in pair}
@@ -2472,13 +2516,11 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
                     and record.source_sha256 and sources.get(record.file) == record.source_sha256]
             raise ValueError(_related_employers_message(related, numbers, kept))
         if railroad:
-            # The combined Social Security and Tier 1 worksheet is the payments
-            # review's; the ledger still bounds it, and the other spouse's
-            # figure is checked as usual.
-            bound = round(credit + sum(_rrta_bound(ledger, person, base, rate) for person in railroad), 2)
-            if claimed > bound:
-                return ["Schedule 3 line 11 exceeds the Social Security and Tier 1 railroad tax the "
-                        "W-2s report withheld above one year's maximum."]
+            if claimed < credit:
+                return ["Schedule 3 line 11 is less than the other employee's supported Social Security credit."]
+            if bound is not None and claimed > bound:
+                return ["Schedule 3 line 11 exceeds the employer-capped upper bound for Social Security "
+                        "and Tier 1 railroad tax."]
         elif credit != round(claimed, 2):
             # Only an employee with two W-2s can have a credit an EIN would
             # reveal; a spouse's single W-2 without one is not the error.

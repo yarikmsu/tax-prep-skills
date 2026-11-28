@@ -1225,7 +1225,8 @@ def test_two_social_security_w2s_for_one_employee_require_the_wage_base():
 
 def test_railroad_tax_source_requires_the_manual_combined_payment_review():
     record = tie_out.LedgerRecord("rrta", "documents/rrta-w2.pdf", "W-2", "Railroad", "primary",
-                                  (("rrta_tier1_tax_withheld", 2000),), None)
+                                  (("rrta_tier1_tax_withheld", 2000),), None,
+                                  source_form={"employer_ein": "12-0000001"})
     result = {"meta": {"filing_status": "Single"}, "form_1040": {}}
     inputs = material_evidence._required_filing_inputs(result, {}, _LAW_2025, ledger=[record])
     assert inputs["input.payments"] is False   # A reviewed inapplicable credit is legitimate.
@@ -1239,7 +1240,8 @@ def test_railroad_tax_source_requires_the_manual_combined_payment_review():
     assert checked([record], 400)
     # A second railroad employer: $12,000 withheld less the $10,918.20 maximum.
     second = tie_out.LedgerRecord("rrta-2", "documents/rrta-w2-2.pdf", "W-2", "Short Line", "primary",
-                                  (("rrta_tier1_tax_withheld", 10000),), None)
+                                  (("rrta_tier1_tax_withheld", 10000),), None,
+                                  source_form={"employer_ein": "12-0000002"})
     assert not checked([record, second], 1081.80)
     assert checked([record, second], 1081.81)
 
@@ -1264,9 +1266,20 @@ def test_a_spouses_railroad_tax_leaves_the_other_spouses_credit_checked():
     primary = [_ss_w2("a", "Alpha", "primary", 100000, 6200, employer_ein="12-0000001"),
                _ss_w2("b", "Beta", "primary", 100000, 6200, employer_ein="12-0000002")]
     railroad = tie_out.LedgerRecord("rr", "documents/rr.pdf", "W-2", "Railroad", "spouse",
-                                    (("rrta_tier1_tax_withheld", 2000),), None)
+                                    (("rrta_tier1_tax_withheld", 2000),), None,
+                                    source_form={"employer_ein": "12-0000003"})
     assert not _line_11([*primary, railroad], 1481.80)
-    assert _line_11([*primary, railroad], 5000)
+    # With the EIN recorded, the bound (one employer, none) refuses it.
+    assert any("upper bound" in issue for issue in _line_11([*primary, railroad], 5000))
+
+
+@pytest.mark.parametrize("person,status", [("joint", "MFJ"), ("spouse", "Single")])
+def test_railroad_only_w2_requires_an_employee_on_this_return(person, status):
+    forms = [tie_out.LedgerRecord(
+        doc_id, f"documents/{doc_id}.pdf", "W-2", payer, person,
+        (("rrta_tier1_tax_withheld", 6200),), None, source_form={"employer_ein": ein})
+        for doc_id, payer, ein in (("rr", "Railroad", "12-0000001"), ("sl", "Short Line", "12-0000002"))]
+    assert any("needs the employee" in issue for issue in _line_11(forms, 1481.80, status=status))
 
 
 def test_one_employer_under_two_names_is_one_employer():

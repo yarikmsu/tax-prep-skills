@@ -430,6 +430,29 @@ def test_interrupted_compute_blocks_final_until_validated_retry(workspace):
     _assert_lines(release.read_json(workspace / "result.json")["form_1040"], FEDERAL)
 
 
+def test_one_railroad_employers_overwithholding_cannot_support_filing(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    first, second = (record for record in ledger["records"] if record["form_type"] == "W-2")
+    first["source_form"]["employer_ein"] = "12-0000001"
+    second["source_form"]["employer_ein"] = "12-0000002"
+    first["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=12000)
+    # A Box 4 the second W-2 never recorded is refused first; record its $0.
+    second["key_boxes"].setdefault("ss_tax_withheld", 0)
+    release.write_json(ledger_path, ledger)
+
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"].update(schedule_3_line_11_excess_ss=1081.80, line_31_schedule3_part2=1081.80)
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "exceeds the employer-capped" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
 def test_dropped_excess_social_security_credit_blocks_release(workspace):
     release.add_second_w2_and_estimate(workspace)
     release.compute(workspace)
