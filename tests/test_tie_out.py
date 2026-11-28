@@ -1145,6 +1145,9 @@ def test_unrelated_merge_cannot_offset_a_reduction_from_a_related_employer_pair(
     ("Acme Hldgs Inc", "Acme Holdings Inc"), ("Acme Grp Inc", "Acme Group Inc"),
     ("St Marys Hospital", "Saint Marys Hospital"), ("Acme Technologies Internatio", "Acme Technologies International"),
     ("AcmeCorp West", "Acme Corp West"), ("J Smith Co", "John Smith Co"),
+    ("IBM Corp", "International Business Machines Corp"),
+    # Equal word counts: only one direction matched, so ledger order decided.
+    ("Acme International Zeta", "Acme Intl Int"),
 ])
 def test_company_form_spellings_of_one_employer_need_the_review(first_name, second_name):
     # A word set nesting in the other's missed each pair, so one employer's
@@ -1191,6 +1194,20 @@ def test_a_pair_whose_merge_changes_nothing_is_not_named():
     report = _ss_return(*records, claimed=6441.80)
     assert any("Documents #1 and #2 are W-2s" in item for item in report.missing_result_targets), \
         report.missing_result_targets
+
+
+def test_a_refusal_keeps_the_forms_the_current_outcome_binds():
+    # The outcome binds the primary's pair; the spouse's pair, newly in play,
+    # is named, and so are the bound forms, since recording replaces inputs.
+    records = [_ss_w2(1, 100000, 6200, payer="Acme"), _ss_w2(2, 100000, 6200, payer="Acme Inc"),
+               _ss_w2(3, 100000, 6200, payer="Beta", person="spouse"),
+               _ss_w2(4, 100000, 6200, payer="Beta Corp", person="spouse")]
+    evidence = _review_ss_employers(*records[:2])
+    for index, record in enumerate(records[2:], 3):
+        record["source_sha256"] = f"{index:064x}"
+    report = _ss_return(*records, claimed=2963.60, evidence=evidence)
+    assert any("Documents #3 and #4 are W-2s" in item and "keeping documents #1, #2 it already binds" in item
+               for item in report.missing_result_targets), report.missing_result_targets
 
 
 def test_both_spouses_related_pairs_are_named_in_one_refusal():

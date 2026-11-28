@@ -2301,12 +2301,13 @@ _COMPANY_FORM_WORDS = frozenset({
 _MAX_RELATED_PAIRS = 12
 
 
-def _review_name(name: str) -> frozenset:
+def _review_name(name: str) -> tuple[str, ...]:
     """A looser employer name for the EIN review alone, where a false match
-    costs one review: its words without company-form words, so "Acme Corp"
-    and "Acme Corporation", "Acme LLC" and "Acme L.L.C." read as one name."""
+    costs one review: its words in order without company-form words, so
+    "Acme Corp" and "Acme Corporation", "Acme LLC" and "Acme L.L.C." read as
+    one name."""
     words = "".join(ch if ch.isalnum() else " " for ch in name.casefold()).split()
-    return frozenset(words) - _COMPANY_FORM_WORDS
+    return tuple(word for word in words if word not in _COMPANY_FORM_WORDS)
 
 
 def _abbreviates(first: str, second: str) -> bool:
@@ -2318,10 +2319,17 @@ def _abbreviates(first: str, second: str) -> bool:
     return short == long or short[0] == long[0] and all(ch in letters for ch in short)
 
 
-def _review_related(first: frozenset, second: frozenset) -> bool:
-    """Every word of the shorter name abbreviates a word of the other."""
-    small, large = sorted((first, second), key=len)
-    return bool(small) and all(any(_abbreviates(word, other) for other in large) for word in small)
+def _covers(name: tuple[str, ...], other: tuple[str, ...]) -> bool:
+    """Every word of `name` abbreviates a word of `other`, or is the initials
+    of a run of its words ("IBM", "International Business Machines")."""
+    runs = {"".join(word[0] for word in other[start:end])
+            for start in range(len(other)) for end in range(start + 2, len(other) + 1)}
+    return all(word in runs or any(_abbreviates(word, candidate) for candidate in other) for word in name)
+
+
+def _review_related(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    # Either way round: ledger order must not decide whether the review asks.
+    return bool(first and second) and (_covers(first, second) or _covers(second, first))
 
 
 def _related_ein_pairs(forms: list[tuple[LedgerRecord, dict]], sources: dict[str, str],
@@ -2355,11 +2363,16 @@ def _related_ein_pairs(forms: list[tuple[LedgerRecord, dict]], sources: dict[str
 
 
 def _related_employers_message(related: list[tuple[LedgerRecord, LedgerRecord]],
-                               numbers: dict[str, int]) -> str:
+                               numbers: dict[str, int], kept: list[int]) -> str:
     documents = ", ".join(f"#{numbers[first.file]} and #{numbers[second.file]}" for first, second in related)
-    return (f"Documents {documents} are W-2s with related employer names and different EINs. Re-read "
-            f"Box b on each; if the employers differ, record {material_evidence.EXCESS_SS_EMPLOYERS_ITEM} "
-            "bound to the forms and parse ledger.")
+    message = (f"Documents {documents} are W-2s with related employer names and different EINs. Re-read "
+               f"Box b on each; if the employers differ, record {material_evidence.EXCESS_SS_EMPLOYERS_ITEM} "
+               "bound to the forms and parse ledger")
+    # Recording the outcome replaces its inputs: a form it binds now and drops
+    # would be named again by the next run, and the review would go in circles.
+    if kept:
+        message += ", keeping documents " + ", ".join(f"#{number}" for number in kept) + " it already binds"
+    return message + "."
 
 
 def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: float, rate: float,
@@ -2453,7 +2466,11 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         if related:
             # Both spouses' pairs at once, so one outcome binds every form.
             numbers = {record.file: number for number, record in enumerate(ledger, 1)}
-            raise ValueError(_related_employers_message(related, numbers))
+            sources = employer_sources or {}
+            named = {record.file for pair in related for record in pair}
+            kept = [number for number, record in enumerate(ledger, 1) if record.file not in named
+                    and record.source_sha256 and sources.get(record.file) == record.source_sha256]
+            raise ValueError(_related_employers_message(related, numbers, kept))
         if railroad:
             # The combined Social Security and Tier 1 worksheet is the payments
             # review's; the ledger still bounds it, and the other spouse's
