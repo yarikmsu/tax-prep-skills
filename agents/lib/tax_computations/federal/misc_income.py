@@ -15,7 +15,8 @@ def classify_misc_income(raw) -> dict:
               "box_7", "box_8", "box_9", "box_10", "box_11", "box_15",
               "other_business_gross", "other_federal_withholding"}
     if not isinstance(raw, dict) or set(raw) != fields:
-        raise ValueError("misc_income requires the covered year/revision, every reviewed income box and explicit box3 split")
+        raise ValueError("misc_income requires the covered year/revision, every reviewed income box and explicit box3 split "
+                         "(all zero for a statement whose MISC section reports nothing)")
     year = raw["tax_year"]
     if type(year) is not int or year not in _REVISIONS:
         raise ValueError("1099-MISC form year has not been reviewed")

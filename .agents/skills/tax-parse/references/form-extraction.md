@@ -37,8 +37,8 @@ Security credit. Keep the reviewed employer name in `payer`.
 If tie-out flags related employer names with different EINs, re-read Box b on
 both original W-2s. Correct any transcription error and rebuild the ledger.
 If the EINs are genuinely different, record `input.excess_ss_employers` with
-`material_evidence --outcome reviewed`, binding `parse_ledger.json` and each
-flagged W-2 as `--input` files. Rerun tie-out after recording the review.
+`material_evidence --outcome reviewed`, binding `parse_ledger.json`, each
+flagged W-2 and every W-2 the refusal says to keep as `--input` files. Rerun tie-out after recording the review.
 Record Tier 1 railroad retirement tax withheld as
 `key_boxes.rrta_tier1_tax_withheld` when present in the covered-year W-2's
 railroad reporting box. The amount triggers a manual Schedule 3 line 11 review.

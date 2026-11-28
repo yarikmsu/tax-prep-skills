@@ -55,7 +55,10 @@ def _base_form(name: str) -> str:
 # "Miscellaneous Income 1099"), unless the number already carries another
 # form's letters ("1099-B Miscellaneous", "1099-INT Seneca").
 _FORM_NAME_WORDS = {"NEC": "1099NEC", "NONEMPLOYEE": "1099NEC", "MISC": "1099MISC", "MISCELLANEOUS": "1099MISC"}
-_NUMBER_WORDS = {"1099", "FORM", "CORRECTED", "SUBSTITUTE"}
+# The other 1099 forms' letters: any other short word after the number
+# ("Copy", "Tax", "2025") is not a form, and the label's NEC or MISC still counts.
+_OTHER_1099_LETTERS = {"A", "B", "C", "CAP", "DA", "DIV", "G", "H", "INT", "K", "LS", "LTC", "OID", "PATR",
+                       "Q", "QA", "R", "S", "SA", "SB"}
 
 
 def _named_by_word(name: str) -> str | None:
@@ -63,7 +66,7 @@ def _named_by_word(name: str) -> str | None:
     if "1099" not in words:
         return None
     after = words[words.index("1099") + 1:words.index("1099") + 2]
-    if after and after[0] not in _NUMBER_WORDS and after[0] not in _FORM_NAME_WORDS and len(after[0]) <= 4:
+    if after and after[0] in _OTHER_1099_LETTERS:
         return None  # "1099-B", "1099-INT", "1099-DIV": the number's own letters
     found = {_FORM_NAME_WORDS[word] for word in words if word in _FORM_NAME_WORDS}
     return found.pop() if len(found) == 1 else None

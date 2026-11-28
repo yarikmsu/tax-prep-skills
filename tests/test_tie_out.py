@@ -509,6 +509,8 @@ def test_a_misc_source_from_another_year_is_refused_on_either_side(side):
     # A bare 1099 named by a word elsewhere.
     ("1099 Form NEC", "1099NEC"), ("1099 Nonemployee Comp (NEC)", "1099NEC"), ("1099 Form MISC", "1099MISC"),
     ("Miscellaneous Income 1099", "1099MISC"), ("1099 Form NEC and MISC", None),
+    ("1099 Copy B NEC", "1099NEC"), ("1099 Tax Form NEC", "1099NEC"), ("Form 1099 Rev 2025 NEC", "1099NEC"),
+    ("1099 for Nonemployee Compensation", "1099NEC"),
 ])
 def test_a_form_name_counts_only_beside_the_number(label, form):
     # "CONNECT" holds the letters NEC: read anywhere, a 1099-K left both 1099-K rules.
