@@ -39,8 +39,9 @@ record and `source_sha256`, including copies and replaced versions.
   consolidated record carries the combined gross for the included business
   forms in `key_boxes.self_employment_gross`. The included amounts serve as
   evidence and the retained record contributes the gross to the return.
-  If one statement includes both positive 1099-NEC and 1099-K amounts, use
-  separate active business source records so the books can track overlap.
+  If one statement includes both positive 1099-NEC and 1099-K amounts, its
+  own 1099-K section included, use separate active business source records so
+  the books can track overlap. Copies of one included form record one amount.
   A second copy or the superseded original of an included form names that
   included form in `duplicate_of` or `superseded_by`, never the consolidated
   record; the statement's receipts then count once.
@@ -94,8 +95,8 @@ and each affected 1099-K with repeatable `--input` arguments. Include
 supporting transaction records when used. Refresh the review after a source
 or its ledger entry changes.
 
-When one recipient has both business forms, active or included, ledger the
-accounting source with the
+When one recipient has both business forms, active or included (a form
+recorded for both spouses counts for each), ledger the accounting source with the
 same taxpayer `person` and a `source_form.tax_year` matching the return. Give
 the record only the `self_employment_book_gross` category and
 `business_receipts` rows with `payment_id`, `amount`, and `reported_by`.

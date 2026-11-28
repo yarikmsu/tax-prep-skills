@@ -226,6 +226,11 @@ def _included_in_active(records: dict, record: LedgerRecord) -> bool:
     return target is not None and target[1].skipped is None
 
 
+def _own_1099k_section(record: LedgerRecord) -> bool:
+    """A statement other than a Form 1099-K that reports Box 1a itself."""
+    return _base_form(record.form_type) != "1099K" and dict(record.key_boxes).get(K_REPORTED_GROSS, 0) > 0
+
+
 def _review_forms(ledger: list[LedgerRecord], year: object,
                   personal_sources: dict[str, str] | None
                   ) -> tuple[list[str], list[str], set[tuple[str, str]]]:
@@ -320,8 +325,13 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
         kept_number, kept = records[kept_id]
         numbers = ", ".join(f"#{number}" for number, _, _, _ in included)
         amount = dict(kept.key_boxes).get(BUSINESS_GROSS)
-        # One download saved twice is one form: its receipts count once.
-        receipts = {digest: cents for _, _, cents, digest in included}
+        # One download saved twice is one form: its receipts count once, and
+        # copies that disagree cannot both be its reading.
+        receipts: dict[str | None, int] = {}
+        if any(receipts.setdefault(digest, cents) != cents for _, _, cents, digest in included):
+            problems.append(f"Consolidated document #{kept_number}: copies of one included form "
+                            f"in documents {numbers} record different amounts.")
+            continue
         try:
             covered = amount is not None and _cents(amount) >= sum(receipts.values())
         except ValueError as exc:
@@ -333,6 +343,10 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
                             "original of an included form names that form in duplicate_of or superseded_by.")
             continue
         classes = {form for _, form, cents, _ in included if cents}
+        # The statement's own Form 1099-K section shares its gross with the
+        # included forms, so Box 1a matched with a 1099-NEC's receipts in it.
+        if _own_1099k_section(kept):
+            classes.add("1099K")
         if _BUSINESS_FORMS <= classes:
             problems.append(f"Consolidated document #{kept_number} includes both Forms 1099-NEC and 1099-K "
                             f"in documents {numbers}. Keep the business forms active separately to trace overlap.")
@@ -394,10 +408,13 @@ def _book_total(ledger: list[LedgerRecord], year: object,
         classes[person].add(form)
     for r in reported.values():
         if dict(r.key_boxes)[BUSINESS_GROSS] > 0:
-            classes[r.person].add(_base_form(r.form_type))
+            classes[r.person].add("1099K" if _own_1099k_section(r) else _base_form(r.form_type))
+    # A form recorded for both spouses may report a payment either one's form
+    # reports too.
+    joint = classes.pop("joint", set())
     books = [r for r in ledger if r.business_receipts]
     if not books:
-        if any(_BUSINESS_FORMS <= forms for forms in classes.values()):
+        if any(_BUSINESS_FORMS <= forms | joint for forms in [*classes.values(), set()]):
             raise ValueError("Reconcile business Forms 1099-NEC and 1099-K to a receipt-level book before final export.")
         return None, 0, 0
     if type(year) is not int or any((r.source_form or {}).get("tax_year") != year for r in books):

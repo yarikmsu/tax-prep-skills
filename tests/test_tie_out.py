@@ -583,6 +583,44 @@ def test_spouses_business_forms_need_no_shared_book():
     assert any("receipt-level book" in issue for issue in issues)
 
 
+@pytest.mark.parametrize("amounts", [(8000, 100), (100, 8000)])
+def test_copies_of_an_included_form_cannot_disagree(amounts):
+    """Keyed by digest, the last copy's amount won: 8,000 then 100 passed
+    against a statement carrying 100."""
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=100)
+    first = _included_business_form("1099-NEC", amount=amounts[0])
+    copy = _included_business_form("1099-NEC", doc_id="copy", amount=amounts[1])
+    issues, _ = _issues(consolidated, first, copy)
+    assert any("record different amounts" in issue for issue in issues)
+
+
+@pytest.mark.parametrize("gross", [20000, 28000])
+def test_a_statements_own_1099_k_section_cannot_share_gross_with_an_included_nec(gross):
+    """Box 1a of 20,000 matched a gross of 20,000 that also held an included
+    1099-NEC's 8,000, so 8,000 of receipts left Schedule C."""
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         form_1099k_box_1a=20000, self_employment_gross=gross)
+    nec = _included_business_form("1099-NEC", amount=8000)
+    issues, _ = _issues(consolidated, nec)
+    assert any("includes both Forms 1099-NEC and 1099-K" in issue for issue in issues)
+
+
+def test_a_statements_own_1099_k_section_counts_for_the_books_gate():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         form_1099k_box_1a=20000, self_employment_gross=20000)
+    nec = _form("nec", "1099-NEC", "Client", "b" * 64, self_employment_gross=8000)
+    issues, _ = _issues(consolidated, nec)
+    assert any("receipt-level book" in issue for issue in issues)
+
+
+def test_a_joint_business_form_counts_for_each_spouses_books_gate():
+    nec = _form("nec", "1099-NEC", "Client", "a" * 64, person="joint", self_employment_gross=120)
+    k = _form("k", "1099-K", "Processor", "b" * 64, self_employment_gross=120, form_1099k_box_1a=120)
+    issues, _ = _issues(nec, k)
+    assert any("receipt-level book" in issue for issue in issues)
+
+
 def test_a_fraction_of_a_cent_in_the_consolidated_gross_is_named():
     consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
                          self_employment_gross=120.001)
