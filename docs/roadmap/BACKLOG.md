@@ -70,9 +70,14 @@ planning fix whose value ends on a fixed date, such as a December 31 decision,
 goes ahead of filing work that cannot be used before that date.
 
 **Shipped from the owner's 2026-11-26 queue:** AA127 step 2 (#146), AA138 (#147),
-AA137 (#148-#151) and AA139 (#152-#155), each fixed in review before merge. What
-review left is AA127's tier-0 paragraph and AA140; the next queue is the owner's
-to set.
+AA137 (#148-#151) and AA139 (#152-#155), each fixed in review before merge.
+
+**Next for implementation (owner, 2026-11-27):** AA127 step 2b; AA140 steps 1-3;
+AA122 step 1; AA134 step 1; AA133; AA124 steps 1-2; AA122 step 2; AA134 step 2;
+AA121; AA120 steps 1-2 — in that order, each step a pull request of its own.
+Their entries name the code, the behavior, the tests and when each is done, and
+none waits on a publication or a ruling. Each tier-1 fix adds its AA115 negative
+case. Tiers 5-7 are not yet written to that standard.
 
 **Engineering: the original V, W and X queue is complete.** The 2026-10-03
 review of the retired design directory recovered useful, unimplemented extensions;
@@ -97,11 +102,11 @@ Trigger and range behavior is documented in
 
 | When | What | Why |
 |---|---|---|
-| **0. Before 2026-12-31: small, dated planning fixes** | **AA127** — what step 2's review left: an unflagged tax-advantaged lot, a spouse's lots on a separate return, a quantity-less purchase beside a gain lot, and same-day lots. **AA84** the day FTB's missing inputs publish. | Q18. A 2026 harvest sale cannot be made after December 31, and each gap over-states the savings a filer acts on. TY2026 filing work cannot be used before that year's documents arrive. AA84 is blocked (blocked table). |
-| **1. Filing quality on every return, before TY2026 documents arrive** | **AA140** — employer identity for excess Social Security, a 1099 inside a consolidated statement, and near-duplicate payments. **AA115** gains one negative case per fix. | AA137, AA138 and AA139 shipped in #147-#155; AA140 is what their review left that can over-state a filed return. W-2s arrive by January 31; corrected 1099s often in March. |
+| **0. Before 2026-12-31: small, dated planning fixes** | **AA127** step 2b — four gaps #146's review reproduced: a lot with no `tax_advantaged` flag, a spouse's lots on a separate return, a quantity-less purchase beside a gain lot, and same-day lots matched in file order. **AA84** the day FTB's missing inputs publish. | Q18. A 2026 harvest sale cannot be made after December 31, and each gap over-states the savings a filer acts on. TY2026 filing work cannot be used before that year's documents arrive. AA84 is blocked (blocked table). |
+| **1. Filing quality on every return, before TY2026 documents arrive** | **AA140** — employer identity for excess Social Security, a 1099 inside a consolidated statement, and near-duplicate and separate-return payments, one step each. **AA115** gains one negative case per fix. | AA137, AA138 and AA139 shipped in #147-#155; AA140 is what their review left that can over-state a filed return. W-2s arrive by January 31; corrected 1099s often in March. |
 | **2. Filing quality: as FTB and the IRS publish** | **AA83** — the TY2026 Form 540. **AA80** — the TY2026 part-year return. **AA48** — the TY2026 Form 8949 boxes. **Y8** — the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables. | AA83 decides whether any CA resident can file a TY2026 return here. AA48 blocks every TY2026 crypto import. AA80 serves fewer filers. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed, so Y8 is the reminder to fetch it. The blocked table dates each check. |
-| **3. Filing quality for investors and itemizers** | **AA122** — special-rate gains, a capability rule first. **AA124** — Form 1116. **AA133** — charitable substantiation. **AA134** — Form 8938. **AA121** — the federal Tax Table. | REIT and international funds, gifts of appreciated stock and foreign accounts are what a brokerage household holds, and the $40,000 SALT cap brings more CA filers to Schedule A. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
-| **4. Filing quality: mandatory forms with low reach** | **AA120** — Form 8962 and every mandatory form. | P0 for a filer it reaches, but no current user is known to have Marketplace coverage. It is small once AA136 exists, and moves to tier 1 the day such a filer appears. |
+| **3. Filing quality for investors and itemizers** | **AA122** step 1 — special-rate gains block a final package. **AA134** step 1 — a missing Form 8938 value is refused. **AA133** — charitable substantiation. **AA124** — the simplified election, then Form 1116. AA122 step 2 — the Schedule D Tax Worksheet. AA134 step 2 — the asset inventory. **AA121** — the federal Tax Table. | In that order (owner, 2026-11-27): the two small refusals first, since each stops a wrong answer the engine gives today. REIT and international funds, gifts of appreciated stock and foreign accounts are what a brokerage household holds, and the $40,000 SALT cap brings more CA filers to Schedule A. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
+| **4. Filing quality: mandatory forms with low reach** | **AA120** — the advance-payment question, then a reviewed Form 8962 on its Form 1040 path. | P0 for a filer it reaches, but no current user is known to have Marketplace coverage. Since #132 such a filer is held to a draft; what is missing is the route to a final package. It moves to tier 1 the day such a filer appears. |
 | **5. After-tax outcome** | AA127 step 3 — the post-sale window and the effects breakout. AA125 in full. **AA126** — Medicare costs in the single-year ladder. **AA123** — screened refundable credits. | Q16 sets AA123's shape. AA126 reaches filers about 63 and older. |
 | **6. Ease of use** | **AA118** — setup and the support table from one coverage source. **AA117** — one document inventory. **AA119** — one finalization command. **AA135** — evidence-based review. | AA117's Windows path defect blocks every Windows tie-out rather than passing a wrong return. |
 | **7. Parser maintenance and other states** | **AA116** — the cross-cell false mask, now recoverable by local transcription. **AA110** — residual identifier layouts. **AA111** — parse cost. **AA79** — TY2026 NY and NC payment forecasts. | AA110 and AA111 measure identifier protection, lost figures and false refusals together. No current user files in New York or North Carolina; AA79 is read the day those instructions publish, since the last 2026 estimate is due 2027-01-15. |
@@ -293,62 +298,124 @@ Trigger and range behavior is documented in
   publishes the same values, and drafts stay visibly marked. Found by the 2026-11-18
   external review.
 
-- **AA120 (P0, M): Require completed mandatory forms for final export (Q15).** In a
-  synthetic Marketplace case, acknowledging `marketplace_insurance` let the
-  filing-package CLI report `validated: true`, with no header, while required Form
-  8962 was missing; only page 1's limitations manifest named it. A return with
-  advance credit paid and no Form 8962 is incomplete: the IRS holds the refund and
-  writes for the form. Per Q15, an acknowledged MANDATORY form allows a draft and
-  stays an open AA136 item. The final package needs the form's result on its Form
-  1040 path, the net credit on Schedule 3 or the excess advance payments on Schedule
-  2, and the form on the attachment list. The same rule covers every mandatory-form
-  capability rule, and AGENTS.md §4's acknowledgment sentence changes with it. Test
-  a return with no Marketplace requirement, refusal with only an acknowledgment, and
-  final export after a complete reconciliation, including a TY2026 case with excess
-  advance payments under the covered-year repayment rules. Form 8962 is mandatory only
-  when advance credit was paid or the credit is claimed, while AA136 keys the item
-  on `has_marketplace_insurance`: ask about advance payments in the interview, and
-  let a filer with neither reach a final package (#132's review). Found by the 2026-11-18
-  external review; confirmed from the code. [IRS Form 8962 instructions,
+- **AA120 (P0, M): Give Form 8962 its route to a final package (Q15).** Since
+  AA136 (#132) the filing-package CLI no longer reports `validated: true` for an
+  acknowledged Marketplace case: `capabilities.required_form_items` registers
+  `form.marketplace_insurance` (the one rule with `required_form=True`), and
+  `material_evidence.open_items` reports every required form open whatever its
+  record says, while `record` refuses `form.` ids. What is left is the other
+  half of Q15: no filer with Marketplace coverage can reach a final package at
+  all, and one with neither advance credit nor a claim never needed Form 8962.
+  A return with advance credit paid and no Form 8962 is incomplete: the IRS
+  holds the refund and writes for the form. Two steps, each one pull request.
+  **Step 1, ask about advance payments.** `tax-setup/references/interview.md`
+  asks only "Marketplace health insurance? (Form 1095-A)". Ask whether Form
+  1095-A column C shows advance credit and whether the filer will claim the
+  credit, as two profile flags in `taxpayer_profile_template.json` (the
+  capability flag test requires both places), and key the required form on
+  either being true. A filer with Marketplace coverage and neither reaches a
+  final package. AGENTS.md §4's sentence on acknowledging a limitation gains
+  Q15's rule: an acknowledged mandatory form allows a draft only. Tests in
+  `tests/test_capabilities.py` and `tests/test_filing_package.py`: coverage with
+  neither (final package), advance credit with an acknowledgment only (draft,
+  refused final), and an unanswered question (held, never read as no).
+  **Step 2, a reviewed Form 8962.** The engine does not compute Form 8962; it
+  records a reviewed one. Add a `form_8962` section to `result_template.json`
+  with lines 24 (total credit), 25 (advance payments), 26 (net credit) and 27-29
+  (excess, repayment limitation, repayment), each a figure from the worked form;
+  check 26 = max(0, 24 - 25), 27 = max(0, 25 - 24) and 29 = min(27, 28) where
+  the covered-year rules give a limitation, and line 25 against Form 1095-A's
+  column C, which `tax-parse` does not read today: record its annual total as a
+  ledger category (`tie_out.CATEGORY_TARGETS`). `return_builder` carries line 26
+  into Schedule 3 line 9 (inside line 31, so `_check_the_payments` counts it
+  beside lines 10 and 11) and line 29 into Schedule 2 line 2 (line 17 becomes
+  the AMT plus line 29, so `_check_the_amt` stops refusing it). The
+  `form.marketplace_insurance` item closes when the section is complete and the
+  receipt binds it to the result; `filing_package._FEDERAL_SEQUENCE` lists Form
+  8962 and the attachment checklist names Form 1095-A. Tests: a net credit, an
+  excess repayment, and line 25 disagreeing with the 1095-A (refused). A TY2026
+  case with excess advance payments under the covered-year repayment rules
+  joins when the TY2026 instructions publish; it does not hold the step. Done
+  when each check turns a test red when reverted.
+  **Not queued:** `household_employees` (Schedule H), `kiddie_tax` (Form 8615),
+  `pfic_taxable_event` (Form 8621), `rental_income` (Schedule E) and
+  `foreign_asset_reporting` (Form 8938) name forms a return must include but
+  carry no `required_form`; marking each makes its filers draft-only until it
+  has a route of its own, so each goes with its route. Found by the 2026-11-18
+  external review and the code. [IRS Form 8962 instructions,
   TY2025](https://www.irs.gov/pub/irs-prior/i8962--2025.pdf)
 
 - **AA121 (P2, M): Apply the federal Tax Table where Form 1040 requires it (Q19).**
-  In a TY2025 single-filer case with $30,000 of taxable income, the builder returns
-  $3,361.50 from brackets; the TY2025 Tax Table returns $3,365. Per Q19, filed
-  returns leave the exact-bracket convention `return_builder.py`'s docstring
-  records, and the docstring changes with it: use the covered year's table for line
-  16 and for both ordinary-tax lines of the Qualified Dividends and Capital Gain Tax
-  Worksheet, which reach an investor whose ordinary income is under $100,000 even
-  when total taxable income is above it. Planning keeps exact brackets, so marginal
-  answers have no $50 steps. The CA and NY engines already apply their tables;
-  follow NY's method, the schedule at each row's midpoint rounded to the dollar, from
-  fetched row widths and ceiling and checked against published rows, and share only
-  the row arithmetic, since NY's function carries NY-only recapture. The difference
-  runs a few dollars either way, but the IRS recomputes line 16 from the table, so
-  the return as filed is not the return as processed, and tax-verify's $1 tolerance
-  flags every such return, which teaches the filer to ignore mismatches. TY2026
-  needs its rows from the TY2026 Publication 1040 at season open. Validate that the
-  cache supplies the method and data; test the published row, row boundaries, the
-  switch to the Tax Computation Worksheet, and a worksheet case with a table
-  component. Found by the 2026-11-18 external review. [IRS Form 1040 instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i1040gi--2025.pdf) · [IRS Publication
-  1040, TY2025 Tax and EIC
+  One pull request. In a TY2025 single-filer case with $30,000 of taxable
+  income, `compute_bracket_tax` returns $3,361.50 from brackets; the Tax Table
+  row ($30,000-$30,050) prices its midpoint, $30,025, at $3,364.50, which rounds
+  to $3,365. Per Q19, filed returns leave the exact-bracket convention
+  `return_builder.py`'s docstring records, and the docstring changes with it.
+  The IRS recomputes line 16 from the table, so the return as filed is not the
+  return as processed, and tax-verify's $1 tolerance flags every such return.
+  **Cache.** No federal `tax_table` key exists. Add one to
+  `tax_law_fetcher.create_empty_tax_law` with the ceiling ($100,000) and the
+  row segments by width, each row "at least" its floor "but less than" its
+  ceiling as the table prints it, a `_TABLE_VALIDATORS` entry, the fetch step
+  in `tax-setup`'s law-fetch reference, and its row in
+  `docs/contributing/tax-law-cache.md`. Pin a few printed rows per status from
+  the covered year's table and check the computed rows against them at fetch,
+  as `tax-law-fetch.md` does for New York.
+  **Arithmetic.** Share only the row arithmetic with New York: the segment
+  lookup, the midpoint and half-up rounding to the dollar in
+  `state/ny.py::_ny_table_tax`. Its `table_bases` and the recapture in
+  `compute_ny_tax` stay New York's.
+  **Filing only.** `compute_qdcg_tax` and `compute_bracket_tax` also serve
+  `compute_scenario` and `projection.project_federal_tax`, and planning keeps
+  exact brackets so marginal answers have no $50 steps: the table is opt-in,
+  used by `return_builder._tax` for line 16 below the ceiling and for both
+  ordinary-tax lines of the Qualified Dividends and Capital Gain Tax Worksheet
+  (lines 22 and 24), each below the ceiling on its own amount, which reaches an
+  investor whose ordinary income is under $100,000 while total taxable income
+  is above it. `applicable_law._federal_figures` requires the table whenever one
+  of those amounts is under the ceiling. Tests: the $30,000 row, both edges of
+  a row, $99,999 against $100,000 (the Tax Computation Worksheet), a worksheet
+  case with a table component, and a planning call unchanged. TY2026 needs its
+  rows from the TY2026 table at season open. Done when each rule turns a test
+  red when reverted. Found by the 2026-11-18 external review. [IRS Form 1040
+  instructions, TY2025](https://www.irs.gov/pub/irs-prior/i1040gi--2025.pdf) ·
+  [IRS Publication 1040, TY2025 Tax and EIC
   Tables](https://www.irs.gov/pub/irs-prior/p1040--2025.pdf)
 
 - **AA122 (P1, M): Price special-rate gains with the Schedule D Tax Worksheet.**
-  Known since V1 and written down in `tax-gotchas.md` and `return_builder.py`'s
-  docstring, but no capability rule flags it, so a REIT fund's 1099-DIV box 2b
-  unrecaptured §1250 gain, a box 2d collectibles gain, or a sale reported as
-  collectibles (gold and silver ETFs) is priced at the 0/15/20% rates and the tax is
-  under-stated with every gate green. Two steps. First (S): a capability rule,
-  settled like Q15, that blocks a final package when any of those amounts, or a sale
-  of depreciated real property, is present until a reviewed worksheet's tax is on
-  line 16, with `tax-parse` reading boxes 2b and 2d. Then (M): preserve the
-  categories and route Schedule D lines 18 and 19 and any investment-interest
-  election to the Schedule D Tax Worksheet. Test a REIT distribution, a case with
-  both categories, short-term loss netting that changes the worksheet inputs, and an
-  ordinary long-term control. Found by the 2026-11-18 external review. [IRS Schedule
-  D instructions, TY2025](https://www.irs.gov/pub/irs-prior/i1040sd--2025.pdf)
+  Known since V1 and written in `tax-gotchas.md` and `return_builder.py`'s
+  docstring, but nothing flags it: a REIT fund's 1099-DIV box 2b unrecaptured
+  §1250 gain, a box 2d collectibles gain, a 1099-B sale marked collectibles
+  (gold and silver ETFs) or a sale of depreciated real property is priced by
+  `compute_qdcg_tax` at 0/15/20%, and the tax is under-stated with every gate
+  green. Two steps, each one pull request.
+  **Step 1, hold the final package.** `tax-parse` reads 1099-DIV boxes 1a, 1b,
+  2a, 5, 12 and 14-16 (`references/form-extraction.md`) and the 1099-B
+  collectibles box only on the crypto path. Record boxes 2b and 2d, and the
+  1099-B collectibles box, as ledger categories in `tie_out.py`
+  (`_INFORMATIONAL`, the SKILL.md category table, `_ALL_CATEGORIES`). Add a
+  profile flag for a sale of depreciated real property, in
+  `taxpayer_profile_template.json` and the `tax-setup` interview beside the
+  rental and home-sale questions. Then add `input.schedule_d_tax_worksheet` to
+  `material_evidence._FILING_INPUT_LABELS` and `_required_filing_inputs`,
+  required when any of them is positive. This is an `input.` item, not a
+  `required_form` rule: nothing can close a `form.` item until AA120 step 2.
+  Closing it as `reviewed` attaches the worked worksheet; its tax is recorded as
+  `schedule_d.tax_worksheet_tax`, and `return_builder._tax` takes it for line 16,
+  refusing a figure below `compute_qdcg_tax` or above `compute_bracket_tax` on
+  the same taxable income. A draft keeps the 0/15/20% figure with the banner.
+  Tests: a REIT distribution with box 2b (held, then closed with a worksheet),
+  a box 2d case, a recorded tax outside the two bounds (refused), and an
+  ordinary long-term control (no item).
+  **Step 2, compute the worksheet.** Carry the 28% and unrecaptured §1250
+  amounts as Schedule D lines 18 and 19 in `result_template.json`'s
+  `schedule_d`, net them as the covered-year Schedule D instructions direct, and
+  compute the Schedule D Tax Worksheet in `tax_computations` with the
+  investment-interest election (Form 4952 line 4g, not modeled today) as an
+  input; the item then closes as `computed`. Tests: both categories together,
+  short-term loss netting that changes the worksheet inputs, and the ordinary
+  long-term control. Found by the 2026-11-18 external review. [IRS Schedule D
+  instructions, TY2025](https://www.irs.gov/pub/irs-prior/i1040sd--2025.pdf)
 
 - **AA123 (P2, M): Screen the federal and California refundable credits (Q16).** AA1
   discloses the federal EIC, CalEITC, Young Child and Foster Youth credits rather
@@ -368,18 +435,38 @@ Trigger and range behavior is documented in
   Tables](https://www.irs.gov/pub/irs-prior/p1040--2025.pdf) · [FTB 3514
   instructions, 2025](https://www.ftb.ca.gov/forms/2025/2025-3514-booklet.html)
 
-- **AA124 (P1, M): Require Form 1116 evidence or a verified simplified election.**
-  `compute_ftc_limitation` divides foreign-source income by AGI and applies no
-  qualified-dividend adjustment, so its error runs in either direction, and the
-  skill's simplified-election test checks the dollar limit and passive sources but
-  not the qualified payee statement. International index funds put brokerage holders
-  past the simplified limit. Require the covered year's Form 1116 taxable-income
-  inputs and separate categories, using a reviewed external form where needed; check
-  every condition of the simplified election; track carryovers by category and
-  origin year. Test a qualifying brokerage statement, a case within the dollar limit
-  that lacks a qualifying statement, and a multi-category case with a carryover,
-  verifying the credit on Schedule 3. Found by the 2026-11-18 external review. [IRS
-  Form 1116 instructions, TY2025](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
+- **AA124 (P1, M): Require Form 1116 evidence or a verified simplified
+  election.** `compute_ftc_limitation` in
+  `agents/lib/tax_computations/federal/international.py` divides foreign-source
+  income by the figure it is given, AGI by its docstring, with no
+  qualified-dividend adjustment, so its error runs in either direction, and
+  nothing in the engine calls it: the agent
+  fills `form_1116_ftc` and Schedule 3 line 1 (`line_20_schedule3_line8`'s
+  component) by hand, under keys that do not match the function's output. The
+  simplified election lives only in `tax-compute/references/tax-and-credits.md`,
+  which compares the credit to `foreign_tax_credit_simplified` and checks passive
+  sources only. International index funds put brokerage holders past the
+  simplified limit. Two steps, each one pull request.
+  **Step 1, the simplified election and the source amount.** Record foreign tax
+  paid from 1099-DIV box 7 and 1099-INT box 6 as a ledger category
+  (`tax-parse` and `tie_out.CATEGORY_TARGETS`), so the tie-out catches a dropped
+  amount. Add an engine check for §904(j): all foreign-source income passive
+  and reported on a payee statement, foreign tax paid (not the credit) within
+  $300, or $600 on a joint return only (`applicable_law` reads `max_mfj` for a
+  surviving spouse today), and no carryover into or out of the year. A credit
+  without Form 1116 is refused unless every condition holds. Tests: a
+  qualifying brokerage statement, a case within the dollar limit with no payee
+  statement, a surviving spouse at $450, and a carryover in.
+  **Step 2, Form 1116.** Require the covered year's Form 1116 inputs: taxable
+  income with the qualified-dividend and capital-gain adjustments, each
+  category separately, and carryovers by category and origin year. One
+  carryover path: `rollover._transform_ftc_unused` writes a single total while
+  `prior_return._ftc_baskets` imports baskets by category and origin year, and
+  nothing in compute reads either. A reviewed external Form 1116 is acceptable
+  where the engine cannot compute a line. Tests: a multi-category case with a
+  carryover, the credit reaching Schedule 3 line 1. Found by the 2026-11-18
+  external review. [IRS Form 1116 instructions,
+  TY2025](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
 
 - **AA125 (P3, M): Compare eligible elections on the full return.** The summed
   "Total potential savings" line was removed in #130. Federal standard versus
@@ -412,48 +499,117 @@ Trigger and range behavior is documented in
   ticker inside the window needs a reviewed `wash_sale_classifications`
   decision, and a lot whose replacement purchase another lot also matched is
   held when that lot is fully blocked, held back or a different ticker.
-  **What step 2's review left, each over-stating the plan (tier 0):** a lot in a
-  tax-advantaged account recorded without `tax_advantaged` is harvested, and its
-  account's same-day buy stops counting as a replacement; on a separate return a
-  spouse's lots count as the filer's, since a lot has no owner; a quantity-less
-  purchase at a losing lot's date and account is taken to be that lot alone, so a
-  gain lot bought with it frees an older lot; and lots acquired the same day are
-  matched in file order. Test each, holding or refusing rather than guessing.
+  **Step 2b, before 2026-12-31 (tier 0), one pull request:** four gaps #146's
+  review reproduced in `agents/lib/loss_harvest.py`, each over-stating the plan.
+  Hold or refuse; never guess.
+  1. *A lot with no `tax_advantaged` flag is taxable.* `parse_holdings` reads it
+     with `_optional_bool(..., default=False)`, so a Roth IRA lot with no flag
+     and a $1,000 loss enters the plan and `fed_savings`, and also fills the
+     own-purchase budget in `_apply_wash_sale_prorate`, so a same-day IRA buy in
+     that account stops replacing taxable lots (Rev. Rul. 2008-5). Require the
+     boolean on every lot, the error naming the lot id and the field. Rewrite
+     `test_parse_holdings_defaults_tax_advantaged_to_false`, which pins the
+     default, as the refusal, and add the field where a test file or
+     `tests/fixtures/harvest/holdings.json` omits it.
+  2. *A lot has no owner.* On a separate return a spouse's losses are the
+     spouse's, but `HoldingLot` has no owner (only buys carry
+     `owner_is_taxpayer`), and SKILL.md tells the filer to list the spouse's
+     accounts. An MFS filer listing `{"id": "S1", "account": "Spouse Schwab",
+     "cost_basis": 5000, "current_value": 4000, ...}` has the $1,000 counted as
+     their own. When `build_harvest`'s filing status is MFS, require `owner`
+     (`"taxpayer"` or `"spouse"`) on every lot, refusing a missing or other
+     value. A spouse's lot is never in the plan or the savings and earns no
+     own-purchase exclusion; the spouse's purchases still count as replacements,
+     as Publication 550 says. Report the spouse's losses as their own total, the
+     way `tax_advantaged_loss` is reported. Other statuses may omit `owner`.
+  3. *A purchase with no quantity is taken to be the losing lots at its key.*
+     In `_apply_wash_sale_prorate`, a quantity-less buy whose date, account and
+     ticker match a losing lot claims the whole own-purchase budget. Lots X
+     (VTI, "Brokerage", 2025-03-01, 50 shares, $3,000 loss), L1 (same account,
+     2026-12-01, 10 shares at a loss) and L2 (same account and date, 90 shares at
+     a gain) with one quantity-less VTI buy on 2026-12-01: X shows clear with
+     $3,000, while the same buy with `quantity: 100` adds 90 replacement shares
+     and fully blocks X. When any other lot of that ticker (at a gain, or a
+     spouse's) shares the buy's date and account, the quantity-less buy is an
+     unknown-quantity replacement, as one matching no lot already is. Keep
+     `test_inf_qty_buy_matching_lot_acquisition_assumed_self` (no other lot) green.
+  4. *Same-day lots are matched in file order.* `losing_lots` sorts by
+     `acquired` alone. VTI lot A (2024-01-01, 10 shares, $10 loss) and lot B
+     (same date, another account, 10 shares, $1,000 loss) with one 5-share VTI
+     buy: [A, B] makes $1,005 eligible and [B, A] $510. Treas. Reg. §1.1091-1(b)
+     applies §1091 in the order of sale, and the plan does not fix that order.
+     Among lots acquired the same day, match the one with the larger loss per
+     share first, which disallows the most and so is never the over-statement,
+     and have the report state the sale order its figures assume. Test both file
+     orders giving $510.
+  Done when each rule turns its test red when reverted, the four cases above
+  are tests, and `tax-harvest` SKILL.md describes `tax_advantaged` as required
+  and `owner` on a separate return. `docs/contributing/test-invariants.md` and
+  `skill-catalog.md` change where they describe the holdings file.
   **Step 3 (tier 5):** name the date the post-sale window closes, and break out
-  current-year, carryforward and replacement-basis effects.
+  current-year, carryforward and replacement-basis effects. The scan assumes
+  the sale happens on `as_of`; an omitted `as_of` and a sale later in December
+  move a listed buy into the window.
   Found by the 2026-11-18 external review and #146's review.
-  [IRS Publication 550, TY2025](https://www.irs.gov/pub/irs-prior/p550--2025.pdf)
+  [IRS Publication 550, TY2025](https://www.irs.gov/pub/irs-prior/p550--2025.pdf) ·
+  [Treas. Reg. §1.1091-1](https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1/subject-group-ECFR4a3aa9fd5a8fa4c/section-1.1091-1)
 
-- **AA133 (P1, M): Hold the final package until each gift is substantiated (Q17).**
-  Reproduced 2026-11-18: a noncash gift recorded without its written acknowledgment
-  stays deducted in full, with a note; `compute_schedule_a` calls that "a preparer
-  stop, not a disallowance". The package's form table has no Form 8283, and no
-  capability rule covers noncash gifts. Per Q17, a draft keeps the gift with a
-  banner, and the final package needs, for each gift of $250 or more, the
-  contemporaneous written acknowledgment recorded as an AA136 outcome or the gift
-  removed, and lists Form 8283 for noncash gifts over $500 with any appraisal the
-  covered-year instructions require. Never remove a gift automatically: the
-  acknowledgment can still be obtained before filing. Test an unsupported gift,
-  appreciated stock that needs Form 8283, aggregation of similar noncash items, and
-  a carryover with its prior-year evidence. Found by the 2026-11-18 external review.
+- **AA133 (P1, M): Hold the final package until each gift is substantiated
+  (Q17).** One pull request. `compute_schedule_a`
+  (`agents/lib/tax_computations/__init__.py`) takes cash and noncash totals and
+  one boolean, `charitable_over_250_substantiated`, which no skill passes, so
+  every itemizer with gifts gets the "SUBSTANTIATION UNKNOWN" note and a
+  deduction in full, and "noncash gifts over $500 require Form 8283 (not
+  modeled)" is a note only. Per Q17, add `input.charitable_substantiation` to
+  `material_evidence._FILING_INPUT_LABELS` and `_required_filing_inputs`,
+  required when `schedule_a.use_itemized` is true and the year's gifts are
+  positive. `filing_input_issues` then refuses `not_applicable` while a gift is
+  deducted and asks for the evidence as sources: the contemporaneous written
+  acknowledgment of each gift of $250 or more, and for noncash gifts over $5,000
+  the qualified appraisal the covered-year Form 8283 instructions require. An
+  open item holds the final package and keeps the draft banner, through the
+  existing reasons; nothing removes a gift. Add Form 8283 to
+  `filing_package._FEDERAL_SEQUENCE` and the attachment checklist when noncash
+  gifts exceed $500. A carryover alone needs no current-year acknowledgment; its
+  vintage keeps the `source_ref` the ledger already requires. Tests: an
+  unsupported cash gift (draft only), appreciated stock that needs Form 8283
+  (listed), several similar noncash items over $5,000 together (appraisal
+  asked), a carryover with no current gifts (no item), and a standard-deduction
+  filer (no item). Done when each rule turns a test red when reverted, and
+  `tax-compute/references/income-and-agi.md` replaces its "record the answer in
+  answers.md" step with the outcome. Found by the 2026-11-18 external review.
   [IRS Schedule A instructions,
   TY2025](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf) · [IRS Form 8283
   instructions, Rev. 12/2025](https://www.irs.gov/pub/irs-prior/i8283--2025.pdf)
 
-- **AA134 (P1, M): Require a reviewed asset inventory for Form 8938.** Reproduced
-  2026-11-18: an account with a year-end value and no maximum value reads as
-  `required: False`, because the check substitutes zero for an omitted maximum, and
-  the tax-fbar skill tells the agent to decide the requirement with it. The inputs
-  hold no owner, joint flag or valuation method. First step (XS): refuse a missing
-  maximum value. Then preserve owner, year-end and maximum value evidence and the
-  valuation method for each specified asset, and apply the covered-year rules for
-  the threshold and for reporting the asset, including when they differ for spouses
-  filing separately. Test a missing maximum, joint filing, the regulation's
-  separately filing spouse example, and that a required form reaches the package. P1
-  for filers with foreign accounts. Found by the 2026-11-18 external review. [IRS
-  Form 8938 instructions, Rev.
-  11/2021](https://www.irs.gov/pub/irs-prior/i8938--2021.pdf) · [IRB 2014-53, T.D.
-  9706 and its joint-ownership example](https://www.irs.gov/irb/2014-53_IRB)
+- **AA134 (P1, M): Require a reviewed asset inventory for Form 8938.** Two
+  steps, each one pull request.
+  **Step 1 (XS), the missing value.** `check_form_8938_required` in
+  `agents/lib/tax_computations/federal/international.py` reads
+  `acct.get("max_value_usd", 0)` and `acct.get("year_end_value_usd", 0)`, so
+  `[{"year_end_value_usd": 40000}]` for a single filer returns `required: False`
+  however high the account ran during the year, and `_coerce_numeric` lets
+  `"nan"` and a negative value through. Refuse an account missing either value,
+  naming the field and the account, and a non-finite or negative value
+  (AGENTS.md §8). `filing_package` lists Form 8938 when the section is present
+  rather than when `form_8938_fatca.required` is true: list it on `required`,
+  and refuse a `required: true` block without its accounts. Tests in
+  `TestCheckForm8938Required` (`tests/test_tax_computations.py`) and
+  `tests/test_filing_package.py`.
+  **Step 2, the inventory.** Each specified asset records its owner
+  (`taxpayer`, `spouse` or `joint`), year-end and maximum values with the
+  valuation method and source, and the covered-year rules apply: on a joint
+  return a jointly owned asset counts once; on a separate return the Form 8938
+  instructions count half of an asset owned jointly with a spouse toward the
+  threshold and report its whole value. Give `form_8938_fatca.accounts` that
+  row shape and replace the "realistic simultaneous peak" sentence in
+  `tax-fbar/SKILL.md` and `tax-compute/references/international-and-optimization.md`
+  with the instructions' valuation rule. Tests: joint filing with a joint asset,
+  the separately filing spouse example, and a required form reaching the
+  package. P1 for filers with foreign accounts. Found by the 2026-11-18 external
+  review. [IRS Form 8938 instructions, Rev.
+  11/2021](https://www.irs.gov/pub/irs-prior/i8938--2021.pdf) · [IRB 2014-53,
+  T.D. 9706 and its joint-ownership example](https://www.irs.gov/irb/2014-53_IRB)
 
 - **AA135 (P3, M): Replace the overall audit-risk rating with evidence-based
   findings.** The tax-review report rates an overall risk level of low, medium or
@@ -469,23 +625,57 @@ Trigger and range behavior is documented in
   audits](https://www.irs.gov/businesses/small-businesses-self-employed/irs-audits)
 
 - **AA140 (P2, M): Close what the reviews of #147-#155 left that over-states a
-  return.** Each gap one pull request, in order of reach.
-  **Employer identity for excess Social Security.** The tie-out groups W-2s by
-  related payer names, so one employer's "Acme Corp" and "Acme Corporation"
-  W-2s read as two employers, and that employer's own over-withholding, which
-  the employer refunds, is accepted on Schedule 3 line 11. Record the employer's
-  EIN (W-2 box b) on each W-2 and group by it, refusing a positive credit
-  without it. An excess typed into line 31 without line 11 is not compared.
-  **A 1099 inside a consolidated statement.** A skipped 1099-K or 1099-NEC
-  `included_in` a consolidated 1099 whose record carries none of its amounts
-  leaves Schedule C line 1 without it; require the container to carry the
-  included form's business gross.
-  **Payments.** A balance-due row one day or one cent from an estimate is still
-  read as a separate remittance, so Form 2210 can count one payment twice, and a
-  joint Form 4868 payment typed into line 10 of a separate return has no
-  allocation check.
-  Each gap is done when its rule turns a test red when reverted. Found by the
-  reviews of #147, #151 and #152.
+  return.** Three steps, each one pull request, in order of reach.
+  **Step 1, employer identity for excess Social Security.** `_employer_groups`
+  in `agents/lib/tie_out.py` joins W-2s whose `_payer_tokens` are subsets of
+  one another, so "Acme Corp" and "Acme Corporation" read as two employers and
+  that employer's own over-withholding, which the employer refunds (Topic 608),
+  is accepted on Schedule 3 line 11. Record the employer's EIN (W-2 box b) as
+  `source_form.employer_ein` on each W-2 record (`tax-parse/references/
+  form-extraction.md` and the ledger schema; an EIN is a public business
+  identifier, kept whole, as the profile template's payer comment says), and
+  group by it in `_employer_groups`, validating the `NN-NNNNNNN` shape. A
+  person's positive credit, claimed or computed, needs an EIN on each of their
+  Social Security W-2s; without one, refuse rather than fall back to names. Keep
+  the name rule only for the zero-credit path. Tests in `tests/test_tie_out.py`:
+  two "Acme" spellings with one EIN over the wage base (no credit), two EINs
+  (credit), a missing EIN with a positive line 11 (refused), and a railroad
+  employee unchanged. The PII gate reads bare nine-digit runs, so write test
+  EINs hyphenated or build them at runtime.
+  **Step 2, a 1099 inside a consolidated statement.** In
+  `source_reconciliation.py`'s ledger review (the `included_in` branch beside
+  "is reported within consolidated document"), a skipped 1099-K or 1099-NEC
+  linked to a consolidated 1099 is accepted whatever the container records, so
+  a container with none of its amounts leaves the business gross off Schedule C
+  line 1. Accept the link only when the container's key boxes carry
+  `self_employment_gross` at least the included form's amount (its Box 1a or
+  NEC box 1, recorded on the skipped record), and for a 1099-K the Box 1a
+  routing #152 requires; refuse otherwise, naming both documents. Test a
+  container without the amount (refused), with it (passes and the disclosure
+  still prints), and a 1099-INT inside a consolidated 1099 (unchanged).
+  **Step 3, payments.** In `tax_computations/federal/payments.py`,
+  `reviewed_payments` asks for `distinct_payment_confirmed` only when a
+  balance-due row has an estimate's exact date and amount, so one remittance
+  typed a day or a cent apart counts twice for Form 2210. Between January 1 and
+  April 15 of the following year the two kinds differ only by their label:
+  require the confirmation on every balance-due row when any estimate is dated
+  in that period. On a return that is not joint, a positive Schedule 3 line 10
+  has no allocation check: a joint Form 4868 payment may be split between the
+  spouses' separate returns in any agreed amounts, but not claimed whole on
+  both. Require `form_1040.schedule_3_line_10_joint_4868` (true or false) when
+  line 10 is positive and the status is not MFJ, and with true require
+  `schedule_3_line_10_allocation_confirmed`, as `_payment_row` does for a joint
+  estimate. `return_builder._check_the_payments` and the result template carry
+  the fields. Tests: an estimate on January 15 and a balance-due row on January
+  16 with one cent's difference (refused, then confirmed), an MFS return with a
+  joint Form 4868 and no allocation (refused), and an MFJ return (unchanged).
+  `tax-compute/references/tax-and-credits.md` describes the new fields.
+  Not queued: an excess typed into line 31 with line 11 at zero is checked only
+  by the reviewed `input.payments` outcome.
+  Each step is done when its rule turns a test red when reverted and AA115
+  gains its negative case. Found by the reviews of #147, #151 and #152.
+  [IRS Topic 608](https://www.irs.gov/taxtopics/tc608) ·
+  [Form 4868, 2025](https://www.irs.gov/pub/irs-prior/f4868--2025.pdf)
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
