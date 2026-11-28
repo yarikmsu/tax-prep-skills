@@ -495,9 +495,10 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   `late_credit_confirmed: true` only when the IRS account shows the payment
   credited to this return year as an estimated tax payment. The next year's
   first installment is due April 15, so a payment on that date is usually the
-  next year's. An estimate in the following year with the same amount as
-  Schedule 3 line 10 needs `distinct_payment_confirmed: true` after confirming
-  separate remittances: line 31 already counts the extension payment.
+  next year's. When Schedule 3 line 10 is positive, every estimate dated in
+  the following year needs `distinct_payment_confirmed: true` after confirming
+  separate remittances, whatever its amount: line 31 already counts the
+  extension payment.
 - `carry_in` for a prior-year overpayment applied to this tax year. Reconcile
   the combined carry-in to `prior_year.estimated_payments_applied` (pre-filled
   from the prior return by rollover, then confirmed). If the previous return
@@ -507,10 +508,11 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   the effective date.
 - `balance_due` for a reviewed payment already made with an early-filed balance-due
   return, using the covered-year Table 1 effective date. It affects Form
-  2210 timing and the remaining remittance in the filing checklist. When
-  the effective date and amount match an estimate, confirm separate
-  remittances before setting `distinct_payment_confirmed: true` on the
-  balance-due row.
+  2210 timing and the remaining remittance in the filing checklist. When an
+  estimate is dated after the third installment's due date (September 15, or
+  the next business day), confirm each balance-due row is a separate
+  remittance and set `distinct_payment_confirmed: true` on each one: a payment
+  typed twice a day or a cent apart differs only by its label.
   Record the reviewed federal extension payment in
   `form_1040.schedule_3_line_10_extension_payment` and include it in
   Form 1040 line 31. If line 31 includes payments besides excess Social
@@ -518,6 +520,13 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   payment before recording any balance-due rows. When line 10 is positive,
   verify each balance-due row is a separate remittance and mark it
   `not_extension_payment_confirmed: true`.
+  For a positive line 10 on a return that is not joint in result.json meta
+  and the profile alike, set
+  `form_1040.schedule_3_line_10_joint_4868` to `true` or `false` after
+  checking the original extension. If the extension was joint, record only
+  the agreed share belonging to this return and set
+  `form_1040.schedule_3_line_10_allocation_confirmed: true`.
+  [2025 Form 4868 instructions](https://www.irs.gov/pub/irs-prior/f4868--2025.pdf)
 
 For a separate return, include only the taxpayer's own amounts and confirmed
 allocations from joint payments. Record `allocation_confirmed: true` on each

@@ -113,6 +113,35 @@ def test_next_year_estimate_requires_credit_review_before_release(workspace):
     _assert_ready(workspace)
 
 
+def test_early_payment_near_a_posted_estimate_blocks_release(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    profile_path = workspace / "taxpayer_profile.json"
+    profile = release.read_json(profile_path)
+    rows = profile["estimated_payments"]["federal"]
+    rows[0]["date"] = "2026-01-15"
+    rows.append({"payment_id": "early-remittance", "kind": "balance_due", "amount": 600.01,
+                 "date": "2026-01-16", "person": "primary", "tax_year": release.YEAR})
+    release.write_json(profile_path, profile)
+
+    for module, args in (("return_builder", ("--check",)), ("tie_out", ("--json",))):
+        assert "distinct_payment_confirmed" in release.run(workspace, module, *args, expected=2)
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
+def test_unallocated_joint_extension_payment_blocks_non_joint_release(workspace):
+    release.compute(workspace)
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"].update(schedule_3_line_10_extension_payment=500,
+                              line_31_schedule3_part2=500, schedule_3_line_10_joint_4868=True)
+    release.write_json(result_path, result)
+
+    for module, args in (("return_builder", ("--check",)), ("tie_out", ("--json",))):
+        assert "schedule_3_line_10_allocation_confirmed" in release.run(workspace, module, *args, expected=2)
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
 def test_overlapping_business_receipts_release(workspace):
     release.add_overlapping_business(workspace)
     release.compute(workspace)
