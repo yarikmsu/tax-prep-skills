@@ -369,7 +369,6 @@ def create_empty_tax_law(year: int) -> dict:
             # the itemize-or-standard choice does for an itemizer with gifts
             # too). amount = non-joint; joint_amount = MFJ.
             "charitable_non_itemizer": {"amount": None, "joint_amount": None},
-            "charitable_substantiation": dict.fromkeys(SUBSTANTIATION_LIMITS),
             # §70105 minimum QBI deduction (OBBBA, TY2026+). OPT-IN: taxpayer-
             # favorable, so compute_qbi_deduction DEGRADES (no floor) when this
             # is unfetched rather than guessing an indexed figure.
@@ -2635,7 +2634,8 @@ def cache_schema(data: dict, year: int, *, requested_federal_block: str = "") ->
     seed = create_empty_tax_law(year)
     federal = data.get("federal")
     present = federal.keys() if isinstance(federal, dict) else ()
-    optional = {"tax_table": {"max_taxable_income": None}}
+    optional = {"tax_table": {"max_taxable_income": None},
+                "charitable_substantiation": dict.fromkeys(SUBSTANTIATION_LIMITS)}
     for key, block in optional.items():
         if key in present or key == requested_federal_block:
             seed["federal"][key] = block
