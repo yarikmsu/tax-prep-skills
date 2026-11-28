@@ -5205,3 +5205,111 @@ and #118's backlog edits left to this record.
 - Review: a profile saying MFS beside result meta saying MFJ skipped the
   ownership check; the window's own edges let a duplicate a day apart through;
   and an estimate a cent off line 10 counted the extension payment twice.
+
+## AA141 — two balance-due rows, first step (#164)
+
+- With two or more `balance_due` rows, each needs `distinct_payment_confirmed`,
+  estimates or not.
+- Review: two unflagged rows let the new rule refuse every case of the
+  date-edge test, so a cutoff ignoring estimates after April 15 passed. A
+  one-row test carries those dates again, and the refusal names the rule and
+  each unflagged row.
+
+## AA141 — a mistyped EIN, second step (#165)
+
+- Two W-2s with related employer names and different EINs need a reviewed
+  `input.excess_ss_employers` outcome, bound to the ledger and each W-2, when
+  treating them as one employer lowers the credit.
+- Review: names related only when one's words held the other's, so "Acme
+  Corp" and "Acme Corporation", "Intl" and "International", or "IBM" and
+  "International Business Machines" read as two employers. Company-form words
+  now drop, and abbreviations and initials relate. Merging one pair could raise
+  the credit and hide a pair whose merge lowers it, so every subset is tried, up
+  to twelve pairs. One refusal names both spouses' pairs on both paths, with
+  the forms the current outcome binds.
+
+## AA141 — a railroad employee's bound by employer, third step (#166)
+
+- Each employer's Social Security and Tier 1 withholding is capped at one
+  year's maximum before one maximum is subtracted. Line 11 must be at least the
+  other employees' exact credit, and a claim above it needs an EIN on each of
+  the railroad employee's W-2s.
+- Review: a Social Security employer's tax counted in full, so its own
+  over-withholding, $6,200 on $50,000 of wages, fit inside a $1,481.80 bound.
+  It now counts up to the rate on that employer's Box 3 and 7 wages. Box 4
+  without Box 3 or 7 is refused, and the mistyped-EIN review runs on this path
+  too.
+
+## AA141 — a 1099-MISC inside a consolidated statement, fourth step (#167)
+
+- An included 1099-MISC carries its reviewed `misc_income`, which the
+  statement's key boxes must cover by category, one amount per digest. Box 1
+  rents on an included form are refused.
+- Review: "NEC" read anywhere in a label made "Stripe Connect 1099-K" a
+  1099-NEC, which skipped both 1099-K rules; read only beside the number, it
+  dropped the receipts of a "1099 Form NEC" inside a statement. A NEC or MISC
+  name now counts beside the number, or beside a bare "1099" carrying no other
+  form's letters. The rents refusal says to leave the amounts off the
+  statement, which otherwise counted Box 4 twice.
+
+## AA122 — special-rate gains hold the final package, first step (#168)
+
+- Boxes 2b and 2d and the 1099-B collectibles mark are ledger categories,
+  tax-setup asks about a sale of depreciated real property, and the final
+  package waits on a reviewed Schedule D Tax Worksheet figure, which line 16
+  takes. The Tax Table ceiling is a fetched cache key, opt-in so the freshness
+  auditor's pinned seed is unchanged.
+- Review: a $0 figure closed the item, a re-read box 2b left the old figure in
+  force, and a missing answer to the new question read as no. A figure is now
+  bounded below by the tax on Form 1040 line 15 less qualified dividends and net
+  capital gain, the item binds `parse_ledger.json`, and the question is required
+  at the capability gate. The entry's $48,350 example prices the same both ways;
+  the test adds $1,000 of qualified dividends, $5,732.25 at 0/15/20% and
+  $5,728.50 on the worksheet.
+
+## AA134 — a missing Form 8938 value, first step (#169)
+
+- An account missing its maximum or year-end value, or with a non-finite or
+  negative one, is refused, and the package lists Form 8938 on the screen's
+  verdict.
+- Review: listing on `required is True` alone dropped the form for the
+  template's default false, "true", 1 or a missing key. The package now refuses
+  a verdict that is not a boolean, and refuses false above the living-abroad
+  threshold. `tax-gotchas.md` gave the unmarried-abroad row as the joint one.
+
+## AA133 — charitable substantiation (#170)
+
+- An itemized gift holds the final package until its written acknowledgment,
+  and over $5,000 per item or group of similar items its qualified appraisal,
+  are recorded, publicly traded securities excepted. Form 8283 joins the
+  package over $500 of noncash gifts. The limits are a fetched, opt-in cache
+  block.
+- Review: "books" and "Books" escaped the appraisal as two groups; a noncash
+  carryover used this year left Form 8283 out; a vehicle the charity sold was
+  asked for an appraisal its gross-proceeds deduction does not need; and a filer
+  itemizing only for California was never held.
+
+## AA124 — the simplified foreign tax credit, first step (#171)
+
+- Foreign tax paid on 1099-DIV and 1099-INT is a ledger category, and a credit
+  without Form 1116 needs every §904(j) condition, with no carryover into or
+  out of the election year.
+- Review: any "Consolidated" title passed as a payee statement, a foreign tax
+  certificate included; a credit typed into line 20 skipped every rule; and a
+  filer deducting or not claiming foreign tax had no path. An explicit method is
+  now required, `deduction` and `not_claimed` included, and the credit is
+  capped at line 16 plus Schedule 2 line 1z.
+
+## AA124 — Form 1116, second step (#172)
+
+- A Form 1116 credit needs each category's lines and Schedule B balances by
+  origin year, line 18 from its worksheet, and a reviewed outcome binding each
+  category's form. Carryovers follow one path, by category and origin year,
+  from compute to rollover.
+- Review: an invented $40,000 line 18 adjustment raised the credit $1,369, AMT
+  was accepted inside line 20, the add-back took all of line 13b rather than
+  Schedule 1-A line 37, the external method skipped Schedule B's order, and
+  rollover dropped baskets after a year without Form 1116. Baskets now carry
+  past an election year, and past a year that deducted foreign tax they are
+  offered to skip (Treas. Reg. §1.904-2(c)(3)(ii)). The checks live in
+  `international.py`, adding no engine file.
