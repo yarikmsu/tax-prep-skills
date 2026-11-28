@@ -222,6 +222,7 @@ For **MEDIUM** confidence:
 
 While preparing FBAR, separately evaluate Form 8938:
 - Use `check_form_8938_required()` from `agents/lib/tax_computations/`, passing `form_8938_thresholds` from `tax_law JSON`
+- Record `year_end_value_usd` and `max_value_usd` on every account (the screen refuses a missing one) and write its `required` result to `form_8938_fatca.required` — the filing package lists Form 8938 from that flag
 - ⚠️ Do NOT reuse the max values computed in Step 3. Compute separate REALISTIC simultaneous peak values for 8938 analysis.
 - FBAR uses conservative maximums; 8938 uses realistic simultaneous peak — these are different numbers.
 - Thresholds from `tax_law JSON` `federal.form_8938_thresholds` (e.g., MFJ in US = $100K year-end / $150K any time; unmarried abroad = $200K / $300K)

@@ -18,6 +18,12 @@ that produces the opportunities table.
 
 **Form 8938 check:**
 Use `check_form_8938_required()` from `agents/lib/tax_computations/`:
+- Record both `year_end_value_usd` and `max_value_usd` on each account. Resolve
+  any missing value before running the screen and retain the account records
+  in `form_8938_fatca.accounts` if the form is required.
+- Write the screen's `required` result, `true` or `false`, to
+  `form_8938_fatca.required`. The filing package lists Form 8938 from it and
+  refuses any other value.
 - ⚠️ Use REALISTIC simultaneous peak values, NOT conservative FBAR max values
 - FBAR and 8938 use different valuation approaches
 

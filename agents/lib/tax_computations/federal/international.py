@@ -9,6 +9,7 @@ than beside.
 """
 
 import datetime
+import math
 
 import agents.lib  # noqa: F401 — the host-interpreter guard
 from agents.lib.irs_dates import next_business_day
@@ -86,6 +87,36 @@ def compute_ftc_limitation(
     }
 
 
+def form_8938_account_totals(accounts: list[dict]) -> tuple[float, float]:
+    """Validate and sum the year-end and maximum values for the Form 8938 screen."""
+    if accounts is None:
+        raise ValueError("accounts cannot be None. Pass an empty list [] if no foreign accounts.")
+    if not isinstance(accounts, list):
+        raise ValueError("Form 8938 accounts must be a list of account records.")
+    fields = ("year_end_value_usd", "max_value_usd")
+    totals = dict.fromkeys(fields, 0.0)
+    for number, account in enumerate(accounts, 1):
+        if not isinstance(account, dict):
+            raise ValueError(f"Form 8938 account #{number} must be an object.")
+        for field in fields:
+            label = f"Form 8938 account #{number} {field}"
+            raw = account.get(field)
+            if raw is None:
+                raise ValueError(f"{label} is missing.")
+            try:
+                amount = _coerce_numeric(raw)
+            except (TypeError, OverflowError):
+                amount = None
+            if amount is None:
+                raise ValueError(f"{label} has a non-numeric or out-of-range value.")
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError(f"{label} must be finite and nonnegative.")
+            totals[field] += amount
+            if not math.isfinite(totals[field]):
+                raise ValueError(f"{label} exceeds the finite range for the total.")
+    return totals["year_end_value_usd"], totals["max_value_usd"]
+
+
 def check_form_8938_required(
     accounts: list[dict],
     filing_status: str,
@@ -109,11 +140,9 @@ def check_form_8938_required(
         Dict with threshold analysis.
 
     Raises:
-        ValueError: If threshold dict has wrong keys or None values.
+        ValueError: If either account value is missing or invalid, or if the
+                    threshold dictionary has wrong keys or None values.
     """
-    if accounts is None:
-        raise ValueError("accounts cannot be None. Pass an empty list [] if no foreign accounts.")
-
     # X8: this had its own lowercase-only set, so it REFUSED the canonical
     # "MFJ" that `_normalize_filing_status` returns — a fifth spelling of the
     # same rule, and the one that rejected the engine's own output. It
@@ -145,28 +174,7 @@ def check_form_8938_required(
                 "not yet populated from tax_law JSON. Run /tax-setup to fetch."
             )
 
-    total_year_end = 0.0
-    total_max = 0.0
-    coercion_failures = []
-    for i, acct in enumerate(accounts):
-        raw_ye = acct.get("year_end_value_usd", 0)
-        raw_max = acct.get("max_value_usd", 0)
-        ye_val = _coerce_numeric(raw_ye, default=None)
-        max_val = _coerce_numeric(raw_max, default=None)
-        if ye_val is None or max_val is None:
-            coercion_failures.append(
-                f"account[{i}]: year_end={raw_ye!r}, max={raw_max!r}"
-            )
-            continue
-        total_year_end += ye_val
-        total_max += max_val
-    if coercion_failures:
-        raise ValueError(
-            f"check_form_8938_required: {len(coercion_failures)} account(s) have "
-            f"non-numeric values — cannot determine FATCA filing requirement: "
-            + "; ".join(coercion_failures)
-        )
-
+    total_year_end, total_max = form_8938_account_totals(accounts)
     required = total_year_end > threshold["year_end"] or total_max > threshold["any_time"]
 
     return {

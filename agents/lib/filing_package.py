@@ -30,6 +30,11 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
 )
 from agents.lib import receipt  # noqa: E402
+from agents.lib.tax_computations._shared import _normalize_filing_status  # noqa: E402
+from agents.lib.tax_computations.federal.international import (  # noqa: E402
+    FORM_8938_THRESHOLDS,
+    form_8938_account_totals,
+)
 from agents.lib.tax_computations.federal.payments import reviewed_balance_due  # noqa: E402
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
@@ -301,6 +306,43 @@ def _derived_schedules(result: dict) -> list:
     return out
 
 
+def _form_8938_files(result: dict) -> bool:
+    """The screen's recorded Form 8938 verdict, checked against its accounts.
+
+    The package lists the form on `required`, so a verdict nobody recorded, or
+    a `false` its own accounts contradict, would drop a form the filer must
+    file. Without the profile's residence the package cannot pick the
+    threshold row, but no filer of a status has a higher one than abroad.
+    """
+    fatca = result.get("form_8938_fatca")
+    if not isinstance(fatca, dict):
+        return False
+    required = fatca.get("required")
+    # A bare `required: true` is a verdict, though presence reads it as empty.
+    if required is not True and not _section_present(result, "form_8938_fatca"):
+        return False
+    if type(required) is not bool:
+        raise FilingPackageError("Record form_8938_fatca.required as true or false from check_form_8938_required.")
+    accounts = fatca.get("accounts")
+    if required and (not isinstance(accounts, list) or not accounts):
+        raise FilingPackageError("Required Form 8938 needs its account records.")
+    if not accounts:
+        return required
+    try:
+        year_end, any_time = form_8938_account_totals(accounts)
+    except ValueError as exc:
+        raise FilingPackageError(str(exc)) from None
+    try:
+        mfj = _normalize_filing_status((result.get("meta") or {}).get("filing_status")) == "MFJ"
+    except ValueError:
+        mfj = True  # The highest row: an unknown status never refuses a correct verdict.
+    highest = FORM_8938_THRESHOLDS["mfj_foreign" if mfj else "single_foreign"]
+    if not required and (year_end > highest["year_end"] or any_time > highest["any_time"]):
+        raise FilingPackageError("form_8938_fatca.required is false, but its accounts exceed every Form 8938 "
+                                 "threshold for this filing status. Re-run check_form_8938_required.")
+    return required
+
+
 def assembly_order(result: dict) -> list:
     """Paper-assembly order for the sections PRESENT in result.json.
 
@@ -362,7 +404,7 @@ def assembly_order(result: dict) -> list:
         order.append({"key": "other_forms_withholding", "title": "Form 1040 line 25c withholding reconciliation", "sequence": None})
     # Form 8938 files WITH the return but the template models it as an
     # international-compliance block; keep it after the sequenced forms.
-    if _section_present(result, "form_8938_fatca"):
+    if _form_8938_files(result):
         order.append({"key": "form_8938_fatca",
                       "title": "Form 8938 (Statement of Specified Foreign "
                                "Financial Assets)", "sequence": "175"})

@@ -41,7 +41,8 @@ def test_full_table_ordering_pins_every_sequence():
     """Review round: pin the WHOLE table so any single sequence typo fails.
     Every mapped section present at once -> exact expected order."""
     r = _result(**{k: {"x": 1} for k in FP._FEDERAL_SEQUENCE})
-    r["form_8938_fatca"] = {"total": 1}
+    r["form_8938_fatca"] = {"required": True,
+                            "accounts": [{"year_end_value_usd": 120000, "max_value_usd": 120000}]}
     r["california_540"] = {"ca_total_tax": 1}
     r["schedule_ca_itemized"] = {"total": 1}
     seqs = [e["sequence"] for e in FP.assembly_order(r)]
@@ -51,6 +52,61 @@ def test_full_table_ordering_pins_every_sequence():
     assert seqs == [None, "01", "06", "07", "08", "09", "12", "12A",
                     "19", "32", "48", "50", "52", "55", "71", "175",
                     "STATE", "STATE"]
+
+
+def test_form_8938_threshold_analysis_keeps_schedule_b_without_adding_form_8938():
+    r = _result(form_8938_fatca={"required": False, "accounts": [
+        {"year_end_value_usd": 40000, "max_value_usd": 50000}]})
+    order = FP.assembly_order(r)
+    assert any(e["sequence"] == "08" for e in order)
+    assert all(e["key"] != "form_8938_fatca" for e in order)
+
+
+@pytest.mark.parametrize("section", [{"required": True}, {"required": True, "accounts": []},
+                                      {"required": True, "accounts": [{"year_end_value_usd": 120000}]},
+                                      {"required": True, "accounts": ["x"]}])
+def test_required_form_8938_needs_complete_account_values(section):
+    with pytest.raises(FP.FilingPackageError, match="Form 8938.*account"):
+        FP.assembly_order(_result(form_8938_fatca=section))
+
+
+_OVER_THE_US_ROWS = [{"year_end_value_usd": 120000, "max_value_usd": 200000}]
+
+
+@pytest.mark.parametrize("verdict", ["true", 1, None, "missing"])
+def test_a_form_8938_verdict_must_be_recorded_as_a_boolean(verdict):
+    # On main any of these listed the form by presence; reading them as "not
+    # required" would drop a form the filer must file from the package.
+    section = {"accounts": _OVER_THE_US_ROWS}
+    if verdict != "missing":
+        section["required"] = verdict
+    with pytest.raises(FP.FilingPackageError, match=r"form_8938_fatca\.required as true or false"):
+        FP.assembly_order(_result(form_8938_fatca=section))
+
+
+@pytest.mark.parametrize("status,year_end,any_time,refused", [
+    ("Single", 200000, 300000, False), ("Single", 200000.01, 0, True), ("Single", 0, 300000.01, True),
+    ("MFJ", 400000, 600000, False), ("MFJ", 400000.01, 0, True), (None, 400000, 600000, False),
+])
+def test_a_not_required_verdict_cannot_exceed_every_threshold_row(status, year_end, any_time, refused):
+    # The living-abroad row is the highest any filer of the status has, so a
+    # "false" above it is wrong wherever the filer lives; below it, the
+    # package cannot tell residence and keeps the screen's verdict.
+    r = _result(form_8938_fatca={"required": False, "accounts": [
+        {"year_end_value_usd": year_end, "max_value_usd": any_time}]})
+    r["meta"]["filing_status"] = status
+    if refused:
+        with pytest.raises(FP.FilingPackageError, match="exceed every Form 8938 threshold"):
+            FP.assembly_order(r)
+    else:
+        assert all(e["key"] != "form_8938_fatca" for e in FP.assembly_order(r))
+
+
+def test_a_not_required_verdict_still_validates_its_accounts():
+    r = _result(form_8938_fatca={"required": False, "accounts": [
+        {"year_end_value_usd": 40000, "max_value_usd": "nan"}]})
+    with pytest.raises(FP.FilingPackageError, match="account #1 max_value_usd must be finite"):
+        FP.assembly_order(r)
 
 
 def test_every_federal_sequence_has_digits():
