@@ -99,6 +99,9 @@ def check_foreign_tax_credit(result: dict, profile: dict, law: dict, statement_t
     if credit != allowed or credit > _money(form.get("line_20_schedule3_line8", 0), "Form 1040 line 20"):
         raise ValueError("Schedule 3 line 1 must match the reviewed credit and be included in Form 1040 line 20.")
     if method == "form_1116":
+        from agents.lib.tax_computations.federal.foreign_tax_credit import verify_form_1116
+
+        verify_form_1116(section, result, profile)
         return
     # §904(j)(1) bars carrying foreign tax to or from an election year. A
     # deduction year and a year claiming nothing have no limitation to exceed.

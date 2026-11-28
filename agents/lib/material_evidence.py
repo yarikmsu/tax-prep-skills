@@ -27,6 +27,7 @@ SOURCE_PREFIX = "source."
 _INPUT_PREFIX = "input."
 DEDUCTION_ITEM = "input.deduction_election"
 CHARITABLE_SUBSTANTIATION_ITEM = "input.charitable_substantiation"
+FORM_1116_ITEM = "input.form_1116_review"
 PERSONAL_1099K_ITEM = "input.1099k_personal_routing"
 BUSINESS_OVERLAP_ITEM = "input.business_receipt_overlap"
 EXCESS_SS_EMPLOYERS_ITEM = "input.excess_ss_employers"
@@ -35,6 +36,7 @@ DEDUCTION_METHODS = ("standard", "itemized", "standard_worksheet")
 _FILING_INPUT_LABELS = {
     DEDUCTION_ITEM: "Form 1040 line 12 deduction election",
     CHARITABLE_SUBSTANTIATION_ITEM: "Schedule A charitable substantiation",
+    FORM_1116_ITEM: "Form 1116 and Schedule B workpapers",
     PERSONAL_1099K_ITEM: "Personal Form 1099-K receipts on a business return",
     BUSINESS_OVERLAP_ITEM: "Overlapping business receipt evidence",
     EXCESS_SS_EMPLOYERS_ITEM: "Schedule 3 line 11 employer identity",
@@ -274,6 +276,8 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     gifts = substantiated_gifts(result)
     if gifts is None or any(gifts):
         required[CHARITABLE_SUBSTANTIATION_ITEM] = True
+    if (result.get("form_1116_ftc") or {}).get("method") == "form_1116":
+        required[FORM_1116_ITEM] = True
     return required
 
 
@@ -387,6 +391,13 @@ def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | Non
                     reasons.append(f"{prefix} Record the gift inventory and its evidence as reviewed.")
                     continue
                 reasons.extend(f"{prefix} {issue}" for issue in substantiation_issues(result, law, set(inputs) - mandatory))
+            elif item_id == FORM_1116_ITEM:
+                workpaper = (result["form_1116_ftc"].get("review") or {})
+                rows = workpaper.get("categories")
+                if (outcome != "reviewed" or not isinstance(rows, list) or not rows
+                        or any(not isinstance(row, dict) or not isinstance(row.get("source_ref"), str)
+                               or row["source_ref"] not in inputs.keys() - mandatory for row in rows)):
+                    reasons.append(f"{prefix} Bind the reviewed form or worksheet for each separate category.")
         return reasons
     except (ValueError, TypeError, AttributeError, OverflowError, ProjectionError):
         return ["Could not validate the material filing inputs."]

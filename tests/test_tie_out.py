@@ -1333,6 +1333,64 @@ def test_simplified_election_leaves_an_unused_prior_credit_available():
         del result["form_1116_ftc"][field]
 
 
+def _form_1116_return():
+    result = _ftc_return(paid=800, claimed=900, method="form_1116",
+                         carryover_applied_usd=100, carryforward_created_usd=0)
+    result["form_1040"].update(line_11_agi=120000, line_14_total_deductions=30000,
+                               line_13b_schedule_1a_deductions=10000, line_16_tax=20000)
+    result["form_1116_ftc"]["review"] = {
+        "tax_year": 2025, "method": "checked", "line_18_base": 100000,
+        "line_18_adjustment": 5000, "line_18": 95000, "line_20": 20000,
+        "schedule_2_line_1z": 0, "line_34_boycott_reduction": 0,
+        "categories": [
+            {"basket": "passive", "source_ref": "reviews/passive.json", "line_9_tax_paid": 300,
+             "line_10_carryover_by_origin_year": {"2023": 250}, "line_14_eligible_tax": 550,
+             "line_17_foreign_income": 1900, "line_19_ratio": .02, "line_23_limitation": 400,
+             "line_24_credit": 400, "used_carryover_by_origin_year": {"2023": 100},
+             "closing_carryforward_by_origin_year": {"2023": 150}},
+            {"basket": "general", "source_ref": "reviews/general.json", "line_9_tax_paid": 500,
+             "line_10_carryover_by_origin_year": {}, "line_14_eligible_tax": 500,
+             "line_17_foreign_income": 4750, "line_19_ratio": .05, "line_23_limitation": 1000,
+             "line_24_credit": 500, "closing_carryforward_by_origin_year": {}},
+        ],
+    }
+    profile = {"tax_year": 2025, "filing_status": "Single", "prior_year": {"imported_ftc_baskets": [
+        {"basket": "passive", "carryforward_by_origin_year": {"2023": 250}},
+    ]}}
+    return result, profile
+
+
+def test_form_1116_reconciles_multiple_categories_to_schedule_3_line_1():
+    result, profile = _form_1116_return()
+    # Passive: min(300 + 250, (1900 / 95000) × 20000) = 400.
+    # General: min(500, (4750 / 95000) × 20000) = 500.
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+    result["form_1040"]["schedule_3_line_1_foreign_tax_credit"] = 899
+    assert _evaluate_ftc(result, 800, profile=profile).failed
+
+
+def test_form_1116_requires_actual_carryover_usage_and_the_schedule_1a_add_back():
+    result, profile = _form_1116_return()
+    review = result["form_1116_ftc"]["review"]
+    review["categories"][0]["closing_carryforward_by_origin_year"]["2023"] = 250
+    report = _evaluate_ftc(result, 800, profile=profile)
+    assert any("closing carryforward" in issue for issue in report.missing_result_targets)
+    review["categories"][0]["closing_carryforward_by_origin_year"]["2023"] = 150
+    review.update(line_18_base=90000, line_18=85000)
+    report = _evaluate_ftc(result, 800, profile=profile)
+    assert any("Schedule 1-A line 37" in issue for issue in report.missing_result_targets)
+
+
+def test_form_1116_requires_a_covered_year_workpaper_or_reviewed_external_form():
+    result, profile = _form_1116_return()
+    result["form_1116_ftc"]["review"]["tax_year"] = 2026
+    assert _evaluate_ftc(result, 800, profile=profile).failed
+    result["meta"]["tax_year"] = profile["tax_year"] = 2026
+    assert _evaluate_ftc(result, 800, profile=profile).failed
+    result["form_1116_ftc"]["review"]["method"] = "external"
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+
+
 def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
     record = _record(doc_id=f"ss-{number}", file=f"documents/ss-{number}.pdf",
                      payer=payer or f"Employer {number}", person=person,

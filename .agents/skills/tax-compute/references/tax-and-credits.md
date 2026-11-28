@@ -292,7 +292,34 @@ method, and keep any earlier unused balances with their origin years.
 Review creditability and reductions under the covered-year instructions.
 Record the reviewed `ftc_allowed` in
 `form_1040.schedule_3_line_1_foreign_tax_credit` and include it in line 20.
+
+For Form 1116, complete `form_1116_ftc.review` with the `tax_year` and the
+reviewed `line_18_base`, `line_18_adjustment` and `line_18`. The TY2025
+base is Form 1040 line 11b less line 14 plus Schedule 1-A line 37. Review
+the worldwide qualified dividend and capital gain worksheet or document
+the applicable adjustment exception. Record `line_20`, the separate
+credits, and `line_34_boycott_reduction`. Choose `method: checked` inside
+the review for the TY2025 ordinary passive, general, or foreign branch
+calculation and record `schedule_2_line_1z`. Use `method: external` inside
+the review for other years or calculations requiring other lines or
+worksheets. Review those forms against the instructions for the return year.
+
+Record each separate `categories` entry with `basket` and a workspace
+relative `source_ref` identifying the form or workpaper. Enter
+`line_9_tax_paid`, `line_10_carryover_by_origin_year`,
+`line_14_eligible_tax`, `line_17_foreign_income`, `line_23_limitation`,
+and `line_24_credit`, plus `line_19_ratio` for the checked method. Review
+Schedule B alongside the form. Record line 4 amounts as positive numbers
+in `used_carryover_by_origin_year` and line 8 amounts in
+`closing_carryforward_by_origin_year`, both keyed by four-digit origin year.
+Use empty objects when there are no balances. Reconcile the opening balances
+in `prior_year.imported_ftc_baskets` using the prior Schedule B before
+applying them. Sum amounts actually used in `carryover_applied_usd` and the
+current-year closing balances in `carryforward_created_usd`. Attach the
+reviewed worksheets for all categories and bind them, the result, profile,
+and covered-year tax-law file to `input.form_1116_review` as `reviewed`.
 [2025 Form 1116 instructions](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
+· [Schedule B instructions](https://www.irs.gov/instructions/i1116sb)
 
 **Education credits (Form 8863 → Schedule 3 line 3 + 1040 line 29):**
 When `flags.has_education_expenses` is true, use `compute_education_credits()`:

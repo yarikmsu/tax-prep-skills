@@ -825,6 +825,11 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
                 raw = rental_carryforward_from_workpaper(prior.result.get("schedule_e_rentals"), prior.year)
             except (ValueError, TypeError) as exc:
                 raise RolloverError(str(exc)) from None
+        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict):
+            reviewed = _ftc_basket_changes(prior, current, raw)
+            if reviewed is not None:
+                out.extend(reviewed)
+                continue
         transform = TRANSFORMS.get(entry.get("transform"))
         prior_value = transform(raw) if transform else raw
         target_doc = current.profile if entry["target_file"] == "taxpayer_profile.json" else current.result
@@ -840,6 +845,9 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         else:
             action = "apply"
             reason = f"Pulled from {source_path}"
+        if entry.get("transform") == "ftc_unused":
+            action = "skip"
+            reason = "Resolve the legacy balance using Form 1116 Schedule B by category and origin year."
         if entry.get("transform") == "rental_carryforward":
             old_status = _status_code(_get_path(prior.result, "meta.filing_status") or prior.profile.get("filing_status"))
             new_status = _status_code(current.profile.get("filing_status"))
@@ -900,6 +908,39 @@ def _ftc_review_changes(prior: PriorReturn, entry: dict, raw: dict, current_valu
     reason = _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
     return [Change("carryforwards", target, target_file, opening, current_value, "ask",
                    f"Review the surviving older foreign tax carryovers by origin year. {reason}")]
+
+
+def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict) -> list[Change] | None:
+    from agents.lib.tax_computations.federal.foreign_tax_credit import (
+        CARRYOVER_PATH, carryover_baskets, verify_form_1116,
+    )
+
+    method = section.get("method")
+    if method not in ("form_1116", "simplified"):
+        return None
+    try:
+        if method == "form_1116":
+            rows = verify_form_1116(section, prior.result, prior.profile)
+        else:
+            existing = _get_path(prior.profile, CARRYOVER_PATH, [])
+            if not existing:
+                return None  # The legacy aggregate can still be raised for manual review.
+            balances = carryover_baskets(existing, prior.year)
+            rows = []
+            for row in existing:
+                amounts = {origin: amount for origin, amount in balances[row["basket"]].items()
+                           if int(origin) >= prior.year - 9}
+                if amounts:
+                    rows.append({**row, "carryforward_by_origin_year": amounts})
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise RolloverError(str(exc)) from None
+    target = _get_path(current.profile, CARRYOVER_PATH, [])
+    if not rows and not target:
+        return []
+    if current.profile.get("tax_year", prior.year + 1) != prior.year + 1:
+        raise RolloverError("Reconcile Form 1116 carryovers for the intervening tax years.")
+    return [Change("carryforwards", CARRYOVER_PATH, "taxpayer_profile.json", rows, target,
+                   "ask", "Review Form 1116 Schedule B balances and ownership by category and origin year.")]
 
 
 def _diff_identity(prior: PriorReturn, current: CurrentState) -> list[Change]:
@@ -1467,11 +1508,15 @@ def _main(argv: list[str]) -> int:
         return 1
 
     if args.cmd == "diff":
+        from agents.lib.tax_computations.federal.foreign_tax_credit import CARRYOVER_PATH
+
+        private_ftc = {CARRYOVER_PATH, "prior_year.unused_ftc_carryforward"}
         if args.json:
             payload = {cat: [_change_to_dict(c) for c in changes] for cat, changes in diff.items()}
-            for cat in ("identity", "dependents"):
-                for record in payload.get(cat, []):
-                    if record["json_path"].startswith("prior_year.imported_"):
+            for cat, records in payload.items():
+                for record in records:
+                    path = record["json_path"]
+                    if path in private_ftc or cat in {"identity", "dependents"} and path.startswith("prior_year.imported_"):
                         record["prior_value"] = record["current_value"] = "Inspect the owner-only prior-return workpaper"
             print(json.dumps(payload, indent=2, default=str))
         else:
@@ -1486,7 +1531,8 @@ def _main(argv: list[str]) -> int:
                     # masked already (ssn_last4 holds XXX-XX-1234, which
                     # §1 requires and which redact() leaves alone). The
                     # json_path is a path and is redacted.
-                    if cat in {"identity", "dependents"} and c.json_path.startswith("prior_year.imported_"):
+                    if (c.json_path in private_ftc or cat in {"identity", "dependents"}
+                            and c.json_path.startswith("prior_year.imported_")):
                         print(f"  [{c.action_suggested}] {redact(c.json_path)}: inspect the owner-only prior-return workpaper")
                         continue
                     print(f"  [{c.action_suggested}] {redact(c.json_path)}: "

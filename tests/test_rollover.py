@@ -442,9 +442,6 @@ def test_compute_diff_ftc_unused():
     # these figures carries nothing, so the figure is offered, never applied.
     assert ftc[0].prior_value == 300
     assert ftc[0].action_suggested == "ask" and "Schedule B" in ftc[0].reason
-    prior.result["form_1116_ftc"]["method"] = "form_1116"
-    (applied,) = _ftc_carryforwards(prior)
-    assert (applied.prior_value, applied.action_suggested) == (300, "apply")
 
 
 @pytest.mark.parametrize("method", ["deduction", "not_claimed"])
@@ -475,6 +472,23 @@ def test_simplified_ftc_does_not_create_a_carryforward_and_flags_older_balances(
     (earlier,) = changes()
     assert earlier.action_suggested == "ask" and earlier.prior_value == 800
     assert "origin year" in earlier.reason
+
+
+def test_simplified_ftc_rolls_older_baskets_without_extending_expiration():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1116_ftc"] = {"method": "simplified", "foreign_tax_paid_usd": 250, "ftc_allowed": 250}
+    prior.profile.setdefault("prior_year", {})["imported_ftc_baskets"] = [
+        {"basket": "passive", "carryforward_by_origin_year": {"2014": 200, "2021": 125}},
+        {"basket": "general", "carryforward_by_origin_year": {"2023": 300}},
+    ]
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    (change,) = [c for c in diff["carryforwards"] if c.json_path == "prior_year.imported_ftc_baskets"]
+    assert change.action_suggested == "ask"
+    assert change.prior_value == [
+        {"basket": "passive", "carryforward_by_origin_year": {"2021": 125}},
+        {"basket": "general", "carryforward_by_origin_year": {"2023": 300}},
+    ]
 
 
 def test_compute_diff_ira_basis_carryforward():
