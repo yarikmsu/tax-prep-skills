@@ -2861,6 +2861,19 @@ def test_a_quantity_less_buy_beside_a_known_one_does_not_clear_an_older_lot():
     assert "O" not in report.eligible_lot_ids
 
 
+def test_the_form_8958_manifest_rule_reads_the_domicile_the_harvest_refusal_reads():
+    # One predicate drives both, so the return's Form 8958 line and the
+    # harvest refusal cannot disagree about the same profile.
+    from agents.lib import capabilities
+
+    profile = {"tax_year": 2025, "filing_status": "MFS", "address": {"state": "NY"},
+               "residency": {"domicile_state": "CA"},
+               "flags": {flag: False for flag in capabilities._REQUIRED_GATE_FLAGS}}
+    profile["flags"].update({rule.flag: False for rule in capabilities.RULES if rule.state == "NY"})
+    assert capabilities.in_community_property_state(profile)
+    assert "community_property_mfs" in [f.rule_id for f in capabilities.evaluate(profile).manual]
+
+
 def test_a_community_property_domicile_is_refused_whatever_the_mailing_address():
     """Domicile governs community property (Publication 555); a California
     domicile with a New York mailbox was counted whole."""
