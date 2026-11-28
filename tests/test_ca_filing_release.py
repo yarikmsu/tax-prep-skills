@@ -6,7 +6,7 @@ from hashlib import sha256
 
 import pytest
 
-from agents.lib import parse_utils, receipt
+from agents.lib import parse_records, parse_utils, receipt
 from agents.lib.workspace import ABANDONED_NAME
 from evals import ca_filing_2025 as release
 
@@ -229,6 +229,29 @@ def test_personal_1099k_requires_source_bound_review_when_business_is_active(wor
     release.write_json(review, {"routing": "review reopened"})
     stale = release.run(workspace, "tie_out", "--json", expected=2)
     assert "input.1099k_personal_routing" in stale
+
+
+def test_included_business_receipts_missing_from_consolidated_statement_block_release(workspace):
+    release.compute(workspace)
+    records = {record["doc_id"]: record for _, record in parse_records.read_records(workspace)}
+    retained = records["broker"]
+    retained["form_type"] = "Consolidated 1099"
+    parse_records.write_record(workspace, retained)
+    source = workspace / "documents" / "included-nec.pdf"
+    release._document(source, "Synthetic Form 1099-NEC", [("Box 1 Gross", "125.00")])
+    parse_records.write_record(workspace, {
+        "doc_id": source.stem, "file": source.relative_to(workspace).as_posix(),
+        "person": retained["person"], "payer": retained["payer"], "form_type": "1099-NEC",
+        "source_sha256": sha256(source.read_bytes()).hexdigest(),
+        "skipped": "included in consolidated statement", "key_boxes": {},
+        "source_form": {"tax_year": release.YEAR, "included_in": retained["doc_id"],
+                        "included_boxes": {"self_employment_gross": 125}},
+    })
+    release.run(workspace, "parse_records", "--build-ledger")
+    release.run(workspace, "return_builder", "--check")
+    report = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Consolidated document #1 needs self_employment_gross" in report
+    _assert_refused(workspace, "the tie_out gate recorded")
 
 
 def test_changed_business_remittance_reopens_overlap_review(workspace):
