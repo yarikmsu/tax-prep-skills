@@ -904,6 +904,19 @@ def test_a_w2_without_an_ein_never_merges_two_eins_into_a_zero_credit(order):
     assert not _ss_return(*records, claimed=11228.20).failed
 
 
+@pytest.mark.parametrize("order", [(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)])
+def test_a_w2_related_to_two_eins_stays_alone_in_any_order(order):
+    """It joined whichever employer the loop met first: beside one at the
+    maximum, a zero claim passed in some orders and not in others."""
+    first = _ss_w2(1, 176100, 10918.20, payer="Acme")
+    second = _ss_w2(2, 5000, 0, payer="Acme Holdings")
+    unknown = _ss_w2(3, 5000, 310, payer="Acme Holdings West")
+    del unknown["source_form"]["employer_ein"]
+    records = [(first, second, unknown)[index] for index in order]
+    report = _ss_return(*records)
+    assert any("W-2 Box b" in item for item in report.missing_result_targets)
+
+
 def test_the_ein_review_names_the_employee_with_two_w2s():
     """A spouse's single W-2 without an EIN cannot have a credit, so the
     taxpayer's wrong figure was reported as the spouse's missing EIN."""

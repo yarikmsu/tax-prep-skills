@@ -2239,31 +2239,40 @@ def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
     """One employer per verified EIN (W-2 Box b).
 
     Names alone split "Acme Corp" from "Acme Corporation", so one employer's
-    own over-withholding read as a second employer's and was credited. A W-2
-    without an EIN joins a W-2 with a related name instead. Names never join
-    two different EINs, directly or through a W-2 without one: that bridge
-    merged two employers and read their real excess as zero, a claim of zero
-    then accepted. A positive credit with an EIN missing is refused, so a name
-    join settles only a zero-credit check.
+    own over-withholding read as a second employer's and was credited. W-2s
+    without an EIN join each other by related names, and join an EIN only
+    when theirs is the one EIN their names relate to. Two EINs never share a
+    group: joined through a W-2 without one, two employers' real excess read
+    as zero and a claim of zero was accepted. A related name shared with two
+    EINs leaves the W-2 alone, whatever the file's order, so the credit stays
+    positive and the EIN review fires. A positive credit with an EIN missing
+    is refused, so a name join settles only a zero-credit check.
     """
     tokens = [_payer_tokens(record.payer) for record, _ in forms]
     eins = [_employer_ein(record) for record, _ in forms]
     groups = list(range(len(forms)))
-    group_ein = list(eins)
 
     def root(index: int) -> int:
         while groups[index] != index:
             index = groups[index]
         return index
 
-    for i in range(len(forms)):
-        for j in range(i + 1, len(forms)):
-            first, second = root(i), root(j)
-            known = {group_ein[first], group_ein[second]} - {None}
-            named = bool(tokens[i] and tokens[j]) and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i])
-            if first != second and len(known) <= 1 and (named or eins[i] is not None and eins[i] == eins[j]):
-                groups[second] = first
-                group_ein[first] = group_ein[first] or group_ein[second]
+    def related(i: int, j: int) -> bool:
+        return bool(tokens[i] and tokens[j]) and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i])
+
+    pairs = [(i, j) for i in range(len(forms)) for j in range(i + 1, len(forms))]
+    for i, j in pairs:
+        if eins[i] is not None and eins[i] == eins[j] or eins[i] is None and eins[j] is None and related(i, j):
+            groups[root(j)] = root(i)
+    # Decided before any join, so a join cannot change what another sees.
+    matches: dict[int, dict[str, int]] = {}
+    for i, j in pairs:
+        if (eins[i] is None) != (eins[j] is None) and related(i, j):
+            unknown, known = (i, j) if eins[i] is None else (j, i)
+            matches.setdefault(root(unknown), {})[str(eins[known])] = known
+    for unknown, found in matches.items():
+        if len(found) == 1:
+            groups[root(unknown)] = root(next(iter(found.values())))
     members: dict[int, list[dict]] = {}
     for index, (_, boxes) in enumerate(forms):
         members.setdefault(root(index), []).append(boxes)
