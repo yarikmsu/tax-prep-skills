@@ -446,7 +446,8 @@ Line 38: estimated-tax penalty (Step 9.5). Reviewed federal payments feed
 no trigger condition. It is a cheap pure function that returns zeros when
 nothing is wrong, and every conditional trigger misses an employer-error edge
 case (e.g. $6,000 withheld on $50,000 of wages is an error well below the
-annual max). One call PER PERSON (never pool a couple's
+annual max). Group each employee's W-2s by the verified employer EIN in Box b.
+One call PER PERSON (never pool a couple's
 Box 4 amounts) with that person's per-employer W-2 Box 4 list, **the matching
 per-employer SS-wage list = Box 3 + Box 7 (Social Security tips — Box 4 covers
 both, so Box 3 alone misclassifies a tipped employee's correct withholding as
@@ -468,10 +469,10 @@ employees (Tier 1 RRTA, W-2 box 14):** the helper models SS tax only — when
 any employer withheld Tier 1 RRTA, compute Schedule 3 line 11 by hand per
 Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
 also creditable) and tell the user the helper's figure would understate it.
-The tie-out compares the Social Security credit to the ledger's W-2 Boxes 3,
-4 and 7 by employee and employer, reading related names ("Acme", "Acme Inc") as
-one employer. When an employee's W-2 records Tier 1 RRTA withholding, attach
-the combined worksheet to the payments review: the tie-out then only bounds
+The tie-out compares Boxes 3, 4 and 7 and requires an EIN on each
+Social Security W-2 supporting a positive credit. Related payer names are used
+only for the legacy zero-credit check. When an employee's W-2 records Tier 1
+RRTA withholding, attach the combined worksheet to the payments review. The tie-out bounds
 that employee's share by the Social Security and Tier 1 tax withheld above one
 year's maximum, and still checks the other spouse exactly.
 

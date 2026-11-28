@@ -779,7 +779,8 @@ def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
                      payer=payer or f"Employer {number}", person=person,
                      key_boxes={"wages": wage, "federal_withholding_w2": 0,
                                 "ss_wages": wage, "ss_tax_withheld": withheld, "ss_tips": tips})
-    record["source_form"] = {"tax_year": 2025, "series_id": f"payroll-{number}"}
+    record["source_form"] = {"tax_year": 2025, "series_id": f"payroll-{number}",
+                             "employer_ein": f"12-{number:07d}"}
     return record
 
 
@@ -817,10 +818,62 @@ def test_one_employer_over_withholding_is_excluded_from_the_credit():
     # A single employer's excess over $10,918.20 is corrected by that employer.
     assert not _ss_return(employer_error).failed
     assert _ss_return(employer_error, claimed=481.80).failed
-    first = _ss_w2(1, 100000, 6200, payer="Example, Inc.")
-    second = _ss_w2(2, 100000, 6200, payer="example inc")
+    first = _ss_w2(1, 100000, 6200, payer="Acme Corp")
+    second = _ss_w2(2, 100000, 6200, payer="Acme Corporation")
+    second["source_form"]["employer_ein"] = first["source_form"]["employer_ein"]
     assert not _ss_return(first, second).failed
     assert _ss_return(first, second, claimed=1481.80).failed
+
+
+def test_distinct_employer_eins_support_the_credit_even_when_names_match():
+    first = _ss_w2(1, 100000, 6200, payer="Example Payroll")
+    second = _ss_w2(2, 100000, 6200, payer="Example Payroll")
+    assert not _ss_return(first, second, claimed=1481.80).failed
+
+
+@pytest.mark.parametrize("claimed", [0, 1481.80])
+def test_positive_social_security_credit_needs_ein_on_each_employee_w2(claimed):
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 100000, 6200)
+    del second["source_form"]["employer_ein"]
+    report = _ss_return(first, second, claimed=claimed)
+    assert any("W-2 Box b" in item for item in report.missing_result_targets)
+
+
+def test_unrelated_spouse_does_not_need_ein_for_employee_credit():
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 100000, 6200)
+    spouse = _ss_w2(3, 100000, 6200, person="spouse")
+    del spouse["source_form"]["employer_ein"]
+    assert not _ss_return(first, second, spouse, claimed=1481.80).failed
+
+
+def test_legacy_zero_credit_can_group_related_names():
+    first = _ss_w2(1, 100000, 6200, payer="Example")
+    second = _ss_w2(2, 100000, 6200, payer="Example Inc")
+    for record in (first, second):
+        del record["source_form"]["employer_ein"]
+    assert not _ss_return(first, second).failed
+    report = _ss_return(first, second, claimed=1481.80)
+    assert any("W-2 Box b" in item for item in report.missing_result_targets)
+
+
+def test_railroad_credit_remains_a_bound_without_an_ein():
+    ss = _ss_w2(1, 100000, 6200)
+    railroad = _ss_w2(2, 100000, 0)
+    railroad["key_boxes"]["rrta_tier1_tax_withheld"] = 6200
+    for record in (ss, railroad):
+        del record["source_form"]["employer_ein"]
+    assert not _ss_return(ss, railroad, claimed=1481.80).failed
+    assert _ss_return(ss, railroad, claimed=1481.81).failed
+
+
+@pytest.mark.parametrize("ein", [None, "12-34", "１２-３４５６７８９", "12-123456a"])
+def test_employer_ein_requires_w2_box_b_shape(ein):
+    record = _ss_w2(1, 100000, 6200)
+    record["source_form"]["employer_ein"] = ein
+    with pytest.raises(T.TieOutError, match=r"source_form\.employer_ein.*Box b"):
+        _ledger(record)
 
 
 def test_missing_mapped_field_in_present_section_fails():
