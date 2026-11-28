@@ -2502,8 +2502,13 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         related: list[tuple[LedgerRecord, LedgerRecord]] = []
         credit = round(sum(_person_excess(person, forms, base, rate, employer_sources or {}, related)
                            for person, forms in employees.items() if person not in railroad), 2)
+        # Only a claim that includes railroad credit needs its EINs and upper
+        # bound. The payments review still checks the worksheet.
+        bound = (round(credit + sum(_rrta_bound(ledger, person, base, rate, employer_sources or {}, related)
+                                    for person in sorted(railroad)), 2)
+                 if railroad and claimed > credit else None)
         if related:
-            # Both spouses' pairs at once, so one outcome binds every form.
+            # Every employee's pairs, both paths, at once: one outcome binds every form.
             numbers = {record.file: number for number, record in enumerate(ledger, 1)}
             sources = employer_sources or {}
             named = {record.file for pair in related for record in pair}
@@ -2513,17 +2518,9 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         if railroad:
             if claimed < credit:
                 return ["Schedule 3 line 11 is less than the other employee's supported Social Security credit."]
-            if claimed > credit:
-                # Only a claim that includes railroad credit needs its EINs
-                # and upper bound. The payments review still checks the worksheet.
-                bound = round(credit + sum(_rrta_bound(ledger, person, base, rate, employer_sources or {}, related)
-                                           for person in sorted(railroad)), 2)
-                if related:
-                    numbers = {record.file: number for number, record in enumerate(ledger, 1)}
-                    raise ValueError(_related_employers_message(related, numbers))
-                if claimed > bound:
-                    return ["Schedule 3 line 11 exceeds the employer-capped upper bound for Social Security "
-                            "and Tier 1 railroad tax."]
+            if bound is not None and claimed > bound:
+                return ["Schedule 3 line 11 exceeds the employer-capped upper bound for Social Security "
+                        "and Tier 1 railroad tax."]
         elif credit != round(claimed, 2):
             # Only an employee with two W-2s can have a credit an EIN would
             # reveal; a spouse's single W-2 without one is not the error.

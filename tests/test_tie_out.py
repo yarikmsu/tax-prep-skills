@@ -1402,6 +1402,21 @@ def test_a_mistyped_railroad_ein_needs_the_related_employer_review():
     assert not _ss_return(*records, claimed=1081.80, evidence=evidence).failed
 
 
+def test_social_security_and_railroad_pairs_are_named_in_one_refusal():
+    # One outcome replaces the last one's inputs, so a refusal naming one path
+    # at a time sent the review round in a circle.
+    records = [_ss_w2(1, 100000, 6200, payer="Acme"), _ss_w2(2, 100000, 6200, payer="Acme Inc")]
+    for index, payer in ((3, "Union Pacific"), (4, "Union Pacific Railroad")):
+        record = _ss_w2(index, 100000, 0, payer=payer, person="spouse")
+        record["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6000)
+        records.append(record)
+    report = _ss_return(*records, claimed=2563.60)
+    assert any("Documents #1 and #2, #3 and #4 are W-2s" in item for item in report.missing_result_targets), \
+        report.missing_result_targets
+    evidence = _review_ss_employers(*records)
+    assert not _ss_return(*records, claimed=2563.60, evidence=evidence).failed
+
+
 def test_a_railroad_employees_w2_without_either_tax_needs_no_ein():
     railroad = _ss_w2(1, 100000, 0)
     railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)

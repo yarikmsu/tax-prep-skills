@@ -479,7 +479,7 @@ them as one employer would lower the credit, the tie-out asks for
 employers really differ. When an employee's W-2 records
 Tier 1 RRTA withholding, attach the combined worksheet to the payments review.
 To claim a railroad employee's credit, verify the employer EIN on each of that
-employee's W-2s that withheld either tax. The tie-out counts each employer's
+employee's W-2s that reports Social Security wages or either tax. The tie-out counts each employer's
 Social Security tax only up to the rate on that employer's own Box 3 and 7
 wages, adds its Tier 1 tax, caps the two at the annual maximum, then subtracts
 one annual maximum from their sum to bound the employee's share. Related
