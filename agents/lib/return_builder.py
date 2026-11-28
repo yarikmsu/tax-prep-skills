@@ -368,7 +368,8 @@ class _Context:
     net_ltcg: float
     schedule_d_tax: tuple[float, float] | None = None
     # Form 2555's line 16 comes from the Foreign Earned Income Tax Worksheet,
-    # which stacks the exclusion: the regular tax on line 15 bounds neither side.
+    # which stacks the exclusion: the regular tax on line 15 is no cap on it.
+    # Keyed on `lives_abroad`, the nearest flag, so the floor stays.
     foreign_earned_income: bool = False
 
 
@@ -396,17 +397,23 @@ def _check_worksheet_tax(worksheet_tax: float, table_ceiling: float, taxable: fl
     """
     if taxable == 0 and worksheet_tax > 0:
         raise Blocked("Schedule D Tax Worksheet tax exceeds the regular tax on Form 1040 line 15.")
-    if ctx.foreign_earned_income:
-        return
     ordinary = max(0.0, taxable - ctx.qualified_dividends - ctx.net_ltcg)
-    if taxable < table_ceiling:
-        ordinary = max(0.0, ordinary - _TAX_TABLE_HALF_ROW)
-    floor = _whole_dollar_slack(compute_bracket_tax(ordinary, ctx.brackets)[0])[0]
+    # The table prices line 21, never below `ordinary`: keyed on line 15, a
+    # correct return just above the ceiling lost its allowance. A Form 2555
+    # return stacks the exclusion and takes the table on two lines, so a row
+    # each side and a dollar.
+    if ctx.foreign_earned_income:
+        ordinary, extra = max(0.0, ordinary - 2 * _TAX_TABLE_HALF_ROW), 1.0
+    elif ordinary < table_ceiling:
+        ordinary, extra = max(0.0, ordinary - _TAX_TABLE_HALF_ROW), 0.0
+    else:
+        extra = 0.0
+    floor = _whole_dollar_slack(compute_bracket_tax(ordinary, ctx.brackets)[0])[0] - extra
     if worksheet_tax < floor:
         raise Blocked("Schedule D Tax Worksheet tax is below the tax on Form 1040 line 15 less the qualified "
                       "dividends and net capital gain, which its line 18 taxes.")
-    if taxable >= table_ceiling and worksheet_tax > _whole_dollar_slack(
-            compute_bracket_tax(taxable, ctx.brackets)[0])[1]:
+    if (not ctx.foreign_earned_income and taxable >= table_ceiling
+            and worksheet_tax > _whole_dollar_slack(compute_bracket_tax(taxable, ctx.brackets)[0])[1]):
         raise Blocked("Schedule D Tax Worksheet tax exceeds the regular tax on Form 1040 line 15.")
 
 
@@ -1155,7 +1162,7 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
         return _num(working.get(field, 0), f"form_1040.{field}")
 
     ctx = _context({**result, "form_1040": working}, tax_law, filing_status,
-                   special_rate_gains=has_special_rate_gains(ledger, profile or {}, result),
+                   special_rate_gains=has_special_rate_gains(ledger, profile or {}),
                    foreign_earned_income=((profile or {}).get("flags") or {}).get("lives_abroad") is True)
     if ctx.schedule_d_tax is not None and _pfic_is_in_play(result):
         _tax(g, ctx)  # The PFIC return keeps its reviewed line 15 by hand.

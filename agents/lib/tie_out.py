@@ -2185,25 +2185,15 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
     return sums
 
 
-# Schedule D lines 11 and 12 carry Forms 4797, 2439 and 6252 and K-1 gains,
-# which the Unrecaptured Section 1250 and 28% Rate Gain Worksheets read.
-_SPECIAL_RATE_SCHEDULE_D_LINES = ("schedule_d.part_ii_long_term.line_11_1099b",
-                                  "schedule_d.part_ii_long_term.line_12_not_reported")
-
-
-def has_special_rate_gains(ledger: list[LedgerRecord], profile: dict, result: dict | None = None) -> bool:
+def has_special_rate_gains(ledger: list[LedgerRecord], profile: dict) -> bool:
     """The return needs review of a possible Schedule D Tax Worksheet.
 
     A present answer that is not false holds it ("yes" as a string is not a
     "no"); an absent one is the capability gate's to ask, the flag being in
     `capabilities._REQUIRED_GATE_FLAGS`.
     """
-    from agents.lib.tax_law_fetcher import _get_path
-
     sold = (profile.get("flags") or {}).get("sold_depreciated_real_property")
-    lines = (_get_path(result or {}, path) for path in _SPECIAL_RATE_SCHEDULE_D_LINES)
     return (sold is not None and sold is not False
-            or any(isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0 for value in lines)
             or any(category in _SPECIAL_RATE_GAIN_CATEGORIES and amount > 0
                    for record in ledger if record.skipped is None for category, amount in record.key_boxes))
 

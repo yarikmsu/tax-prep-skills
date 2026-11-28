@@ -204,7 +204,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
     required = {DEDUCTION_ITEM: True}
-    if has_special_rate_gains(ledger or [], profile, result):
+    if has_special_rate_gains(ledger or [], profile):
         required[SCHEDULE_D_WORKSHEET_ITEM] = True
 
     def flags_set(*names):

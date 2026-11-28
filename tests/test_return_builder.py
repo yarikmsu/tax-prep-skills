@@ -485,12 +485,11 @@ _WORKSHEET_LAW = {"federal": {
 }}
 
 
-def _worksheet_return(wages, worksheet_tax, *, qualified=0, ledger_gain=125, schedule_d_lines=None,
-                      flags=None):
-    """A single filer with $125 of long-term gain; line 15 is wages + qualified + 125."""
-    form = _template_1040() | {"line_7_capital_gain": 125, "line_3a_qualified_dividends": qualified,
+def _worksheet_return(wages, worksheet_tax, *, qualified=0, ledger_gain=125, gain=125, flags=None):
+    """A single filer with long-term gain; line 15 is wages + qualified + gain."""
+    form = _template_1040() | {"line_7_capital_gain": gain, "line_3a_qualified_dividends": qualified,
                                "line_3b_ordinary_dividends": qualified}
-    long_term = {"line_15_net_long_term": 125, **(schedule_d_lines or {})}
+    long_term = {"line_15_net_long_term": gain}
     result = {"meta": {"tax_year": 2025, "filing_status": "Single"}, "form_1040": form,
               "schedule_d": {"part_ii_long_term": long_term, "tax_worksheet_tax": worksheet_tax}}
     ledger = [T.LedgerRecord("wages", "documents/wages.pdf", "W-2", "Employer", "primary", (("wages", wages),), None),
@@ -547,25 +546,36 @@ def test_the_regular_tax_cap_starts_at_the_tax_table_ceiling(wages, worksheet_ta
             _worksheet_return(wages, worksheet_tax)
 
 
-def test_a_foreign_earned_income_return_keeps_its_reviewed_worksheet_tax():
-    # Form 2555's line 16 stacks the exclusion: the regular tax on line 15
-    # bounds neither side of it.
+def test_a_foreign_earned_income_return_skips_only_the_cap():
+    # Form 2555's line 16 stacks the exclusion, so the regular tax on line 15
+    # is no cap; it is still at least the tax on line 18, less two table rows
+    # and a dollar ($101,003 - $125 - $50 taxes at $17,096.16, $17,096 in whole
+    # dollars, less $1).
     assert _worksheet_return(100878, 20000, flags={"lives_abroad": True}) == 20000
     with pytest.raises(RB.Blocked, match="exceeds the regular tax"):
         _worksheet_return(100878, 20000, flags={"lives_abroad": False})
+    assert _worksheet_return(100878, 17095, flags={"lives_abroad": True}) == 17095
+    for low in (0, 17094.99):
+        with pytest.raises(RB.Blocked, match="below the tax"):
+            _worksheet_return(100878, low, flags={"lives_abroad": True})
+
+
+def test_the_table_allowance_follows_line_21_not_line_15():
+    # Line 15 $100,000 with $1 of dividends and $1 of 2b gain: line 21 is
+    # $99,999, which the table prices at $16,909 (row $99,950-$100,000), so
+    # line 47 is $16,909.15 although line 15 is at the ceiling.
+    assert _worksheet_return(99998, 16909.15, qualified=1, ledger_gain=1, gain=1) == 16909.15
 
 
 @pytest.mark.parametrize("change,blocked", [
     ({}, None),
     ({"ledger_gain": 0}, "needs a special-rate gain"),
-    ({"ledger_gain": 0, "schedule_d_lines": {"line_12_not_reported": 125}}, None),
-    ({"ledger_gain": 0, "schedule_d_lines": {"line_11_1099b": 125}}, None),
     ({"ledger_gain": 0, "flags": {"sold_depreciated_real_property": "yes"}}, None),
     ({"ledger_gain": 0, "flags": {"sold_depreciated_real_property": False}}, "needs a special-rate gain"),
 ])
 def test_what_admits_a_worksheet_tax(change, blocked):
-    # A recorded $0 box 2b is no special-rate gain; Schedule D lines 11 and 12
-    # (Forms 4797, 2439, 6252, K-1s) and any answer but "no" are.
+    # A recorded $0 box 2b is no special-rate gain; any answer but "no" to the
+    # depreciated-sale question is.
     if blocked:
         with pytest.raises(RB.Blocked, match=blocked):
             _worksheet_return(48350, 5579, **change)
