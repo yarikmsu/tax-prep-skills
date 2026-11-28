@@ -26,6 +26,7 @@ W2_PREFIX = "w2."
 SOURCE_PREFIX = "source."
 _INPUT_PREFIX = "input."
 DEDUCTION_ITEM = "input.deduction_election"
+CHARITABLE_SUBSTANTIATION_ITEM = "input.charitable_substantiation"
 PERSONAL_1099K_ITEM = "input.1099k_personal_routing"
 BUSINESS_OVERLAP_ITEM = "input.business_receipt_overlap"
 EXCESS_SS_EMPLOYERS_ITEM = "input.excess_ss_employers"
@@ -33,6 +34,7 @@ SCHEDULE_D_WORKSHEET_ITEM = "input.schedule_d_tax_worksheet"
 DEDUCTION_METHODS = ("standard", "itemized", "standard_worksheet")
 _FILING_INPUT_LABELS = {
     DEDUCTION_ITEM: "Form 1040 line 12 deduction election",
+    CHARITABLE_SUBSTANTIATION_ITEM: "Schedule A charitable substantiation",
     PERSONAL_1099K_ITEM: "Personal Form 1099-K receipts on a business return",
     BUSINESS_OVERLAP_ITEM: "Overlapping business receipt evidence",
     EXCESS_SS_EMPLOYERS_ITEM: "Schedule 3 line 11 employer identity",
@@ -200,6 +202,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     from agents.lib.tax_law_fetcher import _get_path
     from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding, has_special_rate_gains
     from agents.lib.yoy_diff import _section_present
+    from agents.lib.tax_computations.charitable import substantiated_gifts
 
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
@@ -268,6 +271,9 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     if (has_other_payment or needs_manual_penalty or flags_set("filed_extension")
             or has_rrta_tier1_withholding(ledger or [])):
         required["input.payments"] = has_other_payment or needs_manual_penalty
+    gifts = substantiated_gifts(result)
+    if gifts is None or any(gifts):
+        required[CHARITABLE_SUBSTANTIATION_ITEM] = True
     return required
 
 
@@ -374,6 +380,13 @@ def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | Non
                 detail = _deduction_problem(result, profile, law, method)
                 if detail:
                     reasons.append(f"{prefix} {detail}")
+            elif item_id == CHARITABLE_SUBSTANTIATION_ITEM:
+                from agents.lib.tax_computations.charitable import substantiation_issues
+
+                if outcome != "reviewed":
+                    reasons.append(f"{prefix} Record the gift inventory and its evidence as reviewed.")
+                    continue
+                reasons.extend(f"{prefix} {issue}" for issue in substantiation_issues(result, law, set(inputs) - mandatory))
         return reasons
     except (ValueError, TypeError, AttributeError, OverflowError, ProjectionError):
         return ["Could not validate the material filing inputs."]

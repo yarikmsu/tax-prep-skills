@@ -814,12 +814,37 @@ persona SALT usually exceeds the OBBBA cap by itself):
   whether the loan predates Dec 16 2017 (the $1M grandfather). If the
   balance is unknown the function takes the interest in FULL and notes the
   overstatement risk — surface that note.
-- Charitable: ask for cash vs noncash split and whether every gift ≥ $250
-  has a written acknowledgment; record it in answers.md as
-  `- **[charitable_gifts]** the answer`. Ask even when this filer takes the
-  STANDARD deduction — cash gifts feed the §170(p) line-13c deduction, and
-  unasked it is silently zero. Surface the carryforward figure for
-  /tax-rollover if nonzero.
+- Charitable: ask for the cash and noncash amounts even when the taxpayer
+  takes the standard deduction, since cash gifts can feed §170(p) line 13c.
+  For a return that itemizes on Schedule A or on Schedule CA (540) alone,
+  retain `compute_schedule_a`'s current gift inputs and inventory each gift
+  in `schedule_a.charitable_substantiation` using `kind` (`cash`,
+  `noncash`, `publicly_traded_securities`, or `vehicle_sold_by_donee`) and
+  `amount`. Schedule CA starts from the federal Schedule A amounts, so a
+  California-only itemizer's gifts need the same evidence.
+  Reconcile the inventory to the current gifts before income limits. Use
+  `source_ref` or `acknowledgment_ref` for the supporting record, and
+  `acknowledgment_ref` for gifts at or above the covered-year acknowledgment
+  threshold. Verify that each
+  acknowledgment was received before the earlier of filing or the extended
+  due date. For `noncash`, assign a `similar_group` across all recipients
+  (case and spacing do not split a group) and supply `appraisal_ref` for
+  each gift in groups over the appraisal threshold. Use
+  `vehicle_sold_by_donee` only for a vehicle whose deduction is limited to
+  the donee's gross sale proceeds; bind its Form 1098-C (or other
+  contemporaneous written acknowledgment) as `acknowledgment_ref`. It needs
+  no appraisal, and the package asks for the Form 1098-C to be attached.
+  Verify the publicly traded status of securities with market
+  records. Use the covered-year Form 8283 instructions for appraisal and
+  attachment requirements. Keep carryover sources with their vintages; the
+  package also lists Form 8283 in a year that deducts a noncash carryover.
+  Record `input.charitable_substantiation` with outcome `reviewed` through
+  `material_evidence`, binding the result, profile, law cache and each
+  supporting source. A missing review holds final export and allows a draft.
+  If you remove the gifts, recompute before closing any previously recorded
+  open outcome as `not_applicable`. Surface the carryforward for /tax-rollover.
+  [TY2025 Schedule A instructions](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf)
+  [Form 8283 instructions, Rev. December 2025](https://www.irs.gov/pub/irs-prior/i8283--2025.pdf)
   Also confirm whether all cash gifts are to public charities and all noncash
   gifts are appreciated property, the classifications this engine models.
   Record `schedule_a.charitable_limits_confirmed` as true only when both are

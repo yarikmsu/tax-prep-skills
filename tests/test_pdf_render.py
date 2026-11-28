@@ -514,6 +514,19 @@ def test_schedule_a_inputs_stay_off_the_summary():
     assert labels.count("medical expenses") == 1, rows
 
 
+def test_the_charitable_gift_inventory_stays_off_the_summary():
+    """AA133: the inventory binds evidence for the filing gate; printed, it
+    put workspace file names and group labels on the taxpayer's summary."""
+    from agents.lib.pdf_render import _rows
+    section = {"charitable_deductible": 6000, "charitable_substantiation": [
+        {"kind": "noncash", "amount": 6000, "similar_group": "paintings",
+         "acknowledgment_ref": "documents/museum-letter.pdf", "appraisal_ref": "documents/appraisal.pdf"}]}
+    rows = _rows(section, "", "schedule_a")
+    printed = " ".join(f"{label} {value}" for label, value in rows).lower()
+    assert "charitable deductible" in printed, rows
+    assert not any(word in printed for word in ("documents/", "paintings", "substantiation", "appraisal")), rows
+
+
 class TestTheSavedYearOverYearReport:
     """AA46: a `yoy_diff --save` report rides along in the summary PDF while
     it still describes this return; a stale one is named on page 1 instead."""

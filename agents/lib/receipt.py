@@ -449,11 +449,13 @@ class VerifyReport:
     """
 
     def __init__(self, valid: bool, reasons: "list[str]",
-                 notes: "list[str] | None" = None, disclosures: list[str] | None = None):
+                 notes: "list[str] | None" = None, disclosures: list[str] | None = None, *,
+                 filing_law: dict | None = None):
         self.valid = valid
         self.reasons = reasons
         self.notes = list(notes or ())
         self.disclosures = list(disclosures or ())
+        self.filing_law = filing_law or {}
 
     def to_dict(self) -> dict:
         data = {"valid": self.valid, "reasons": self.reasons, "notes": self.notes}
@@ -511,7 +513,7 @@ def _material_checks(workspace: Path) -> tuple[dict[str, bytes | None], list[str
 
 
 def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
-                           result_bytes: bytes | None, ledger: list) -> list[str]:
+                           result_bytes: bytes | None, ledger: list) -> tuple[list[str], dict]:
     from agents.lib.tax_computations.federal.applicable_law import filing_issues
 
     result_name = "result.json"
@@ -523,29 +525,29 @@ def _applicable_law_checks(workspace: Path, captured: dict[str, bytes | None],
         result = json.loads(raw)
         profile_raw = captured.get("taxpayer_profile.json")
         if profile_raw is None:
-            return ["Applicable tax law requires taxpayer_profile.json. Run /tax-setup."]
+            return ["Applicable tax law requires taxpayer_profile.json. Run /tax-setup."], {}
         profile = json.loads(profile_raw)
         meta = result.get("meta") if isinstance(result, dict) else None
         if not isinstance(profile, dict) or not isinstance(meta, dict):
-            return ["Could not determine the applicable tax law from the return and profile."]
+            return ["Could not determine the applicable tax law from the return and profile."], {}
         year = meta.get("tax_year") or profile.get("tax_year")
         if type(year) is not int or not 2000 <= year <= 2099:
-            return ["The return needs a covered tax year before checking applicable law."]
+            return ["The return needs a covered tax year before checking applicable law."], {}
         name = f"tax_law_{year}.json"
         path = workspace / name
         if not path.is_file():
             captured[name] = None
-            return [f"Applicable tax law requires {name}. Run /tax-setup."]
+            return [f"Applicable tax law requires {name}. Run /tax-setup."], {}
         if is_reparse_point(path):
-            return [f"Applicable tax law requires a local regular {name} file."]
+            return [f"Applicable tax law requires a local regular {name} file."], {}
         law_raw = _validate_subpath(path, workspace).read_bytes()
         captured[name] = law_raw
         law = json.loads(law_raw)
         if not isinstance(law, dict):
-            return [f"Could not validate applicable law in {name}."]
-        return filing_issues(result, profile, law, ledger=ledger)
+            return [f"Could not validate applicable law in {name}."], {}
+        return filing_issues(result, profile, law, ledger=ledger), law
     except (OSError, ValueError, RolloverError):
-        return ["Could not read the return inputs for the applicable tax-law check."]
+        return ["Could not read the return inputs for the applicable tax-law check."], {}
 
 
 def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material: bool = True,
@@ -572,6 +574,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
     # gate is asking whether that gate checked its own inputs.
     captured, material_reasons = (_material_checks(workspace)
                                   if material and "tie_out" in required else ({}, []))
+    filing_law: dict = {}
     if for_filing:
         from agents.lib.material_evidence import filing_input_issues
         from agents.lib.tie_out import TieOutError, load_ledger
@@ -588,7 +591,8 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
                 ledger = load_ledger(json.loads(raw_ledger))
         except (OSError, ValueError, RolloverError, TieOutError):
             material_reasons.append("Could not validate parse_ledger.json for filing evidence.")
-        material_reasons += _applicable_law_checks(workspace, captured, result_bytes, ledger)
+        law_issues, filing_law = _applicable_law_checks(workspace, captured, result_bytes, ledger)
+        material_reasons += law_issues
         material_reasons += filing_input_issues(captured, ledger=ledger)
         material_reasons = list(dict.fromkeys(material_reasons))
     data = _read(workspace)
@@ -597,12 +601,12 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
             f"no {RECEIPT_NAME} in this workspace — the capability gate "
             "(/tax-compute Step 0.7), the derived-lines gate (Step 12.6) and "
             "the tie-out gate (Step 12.7) write it, so a workspace without one "
-            "has not run them", *material_reasons])
+            "has not run them", *material_reasons], filing_law=filing_law)
     if data.get("receipt_version") != RECEIPT_VERSION:
         return VerifyReport(False, [
             f"{RECEIPT_NAME} declares version {data.get('receipt_version')!r}, "
             f"and this engine writes version {RECEIPT_VERSION} — re-run the gates",
-            *material_reasons])
+            *material_reasons], filing_law=filing_law)
     reasons: "list[str]" = []
     notes: "list[str]" = []
     disclosures: list[str] = []
@@ -668,7 +672,7 @@ def verify(workspace, required: "tuple[str, ...]" = REQUIRED_GATES, *, material:
         # acts on what they read first.
         reasons.insert(0, interrupted)
     reasons.extend(material_reasons)
-    return VerifyReport(not reasons, reasons, notes, disclosures)
+    return VerifyReport(not reasons, reasons, notes, disclosures, filing_law=filing_law)
 
 
 def covers_result(workspace, result_path, *, contents: "bytes | None" = None) -> str:

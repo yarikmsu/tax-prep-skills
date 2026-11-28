@@ -39,6 +39,8 @@ from agents.lib.tax_computations.federal.payments import reviewed_balance_due  #
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
 )
+from agents.lib.tax_computations.charitable import (  # noqa: E402
+    form_1098c_attached, form_8283_required)
 from agents.lib.projection import _section_computed  # noqa: E402
 from agents.lib.yoy_diff import _section_present  # noqa: E402
 from agents.lib.secure_fs import redact  # noqa: E402
@@ -142,7 +144,7 @@ def _field_num(section: dict, field: str, what: str) -> float:
     return f
 
 
-def _derived_schedules(result: dict) -> list:
+def _derived_schedules(result: dict, *, tax_law: dict | None = None) -> list:
     """Schedules derived from the computed fields that encode them, value-gated
     (not _section_present): a $0 line_19_ctc must not conjure a Schedule 8812.
 
@@ -303,6 +305,8 @@ def _derived_schedules(result: dict) -> list:
     if _field_num(f1040, "line_19_ctc", "line_19_ctc") > 0:
         out.append(("Schedule 8812 (Credits for Qualifying Children)", "47",
                     None))
+    if form_8283_required(result, tax_law or {}):
+        out.append(("Form 8283 (Noncash Charitable Contributions)", "36", None))
     return out
 
 
@@ -343,7 +347,7 @@ def _form_8938_files(result: dict) -> bool:
     return required
 
 
-def assembly_order(result: dict) -> list:
+def assembly_order(result: dict, *, tax_law: dict | None = None) -> list:
     """Paper-assembly order for the sections PRESENT in result.json.
 
     Returns a list of dicts {key, title, sequence} — Form 1040 first, then
@@ -387,7 +391,7 @@ def assembly_order(result: dict) -> list:
                                         "title": f"{title} — {owner}", "sequence": seq})
             else:
                 federal.append({"key": key, "title": title, "sequence": seq})
-    for title, seq, dkey in _derived_schedules(result):
+    for title, seq, dkey in _derived_schedules(result, tax_law=tax_law):
         federal.append({"key": dkey, "title": title, "sequence": seq})
     federal.sort(key=lambda e: _seq_sort_key(e["sequence"]))
     order.extend(federal)
@@ -429,7 +433,7 @@ def assembly_order(result: dict) -> list:
     return order
 
 
-def attachment_checklist(result: dict) -> list:
+def attachment_checklist(result: dict, *, tax_law: dict | None = None) -> list:
     """Human checklist lines for what physically attaches to a paper filing."""
     _refuse_uncomputed_states(result)
     lines = [
@@ -439,6 +443,12 @@ def attachment_checklist(result: dict) -> list:
         "Attach a 1099 ONLY when it shows federal income tax withheld "
         "(e.g. 1099-R with withholding).",
     ]
+    if form_8283_required(result, tax_law or {}):
+        lines.append("Complete and attach the covered-year Form 8283. Attach appraisal copies when its instructions "
+                     "require them and retain the written acknowledgments with the tax records.")
+    if form_1098c_attached(result):
+        lines.append("Attach Copy B of each Form 1098-C (or the donee's other contemporaneous written acknowledgment) "
+                     "for a donated vehicle whose deduction is limited to the donee's sale proceeds.")
     f1040 = result.get("form_1040") or {}
     rental = result.get("schedule_e_rentals") or {}
     if type(rental.get("computed_tax_year")) is int:
@@ -634,8 +644,8 @@ def attachment_checklist(result: dict) -> list:
     return lines
 
 
-def render_markdown(result: dict, *, disclosures=()) -> str:
-    order = assembly_order(result)
+def render_markdown(result: dict, *, disclosures=(), tax_law: dict | None = None) -> str:
+    order = assembly_order(result, tax_law=tax_law)
     lines = ["# Filing package — assembly order", "",
              "**NOT an e-file artifact.** No MeF submission, no Form 8879. "
              "For paper filing, transcribe onto the OFFICIAL forms in this "
@@ -647,7 +657,7 @@ def render_markdown(result: dict, *, disclosures=()) -> str:
     for i, e in enumerate(order, 1):
         lines.append(f"| {i} | {e['title']} | {e['sequence'] or '—'} |")
     lines += ["", "## Attachment checklist", ""]
-    for item in attachment_checklist(result):
+    for item in attachment_checklist(result, tax_law=tax_law):
         lines.append(f"- [ ] {item}")
     if disclosures:
         lines += ["", "## Source form reconciliation", "", *[f"- {item}" for item in disclosures]]
@@ -723,7 +733,7 @@ def _main(argv: list) -> int:
         packaged = receipt.covers_result(workspace, result_path, contents=raw)
         if packaged:
             checked = receipt.VerifyReport(False, checked.reasons + [packaged],
-                                           checked.notes, checked.disclosures)
+                                           checked.notes, checked.disclosures, filing_law=checked.filing_law)
         if not checked.valid and not args.draft:
             print("REFUSED: the return is not ready for final filing.", file=sys.stderr)
             for reason in checked.reasons:
@@ -734,13 +744,14 @@ def _main(argv: list) -> int:
             return 2
         if args.json:
             print(json.dumps({
-                "assembly_order": assembly_order(result),
-                "attachment_checklist": attachment_checklist(result),
+                "assembly_order": assembly_order(result, tax_law=checked.filing_law),
+                "attachment_checklist": attachment_checklist(result, tax_law=checked.filing_law),
                 "validated": checked.valid,
                 "receipt": checked.to_dict(),
             }, indent=2))
         else:
-            print(_draft_banner(checked) + render_markdown(result, disclosures=checked.disclosures))
+            print(_draft_banner(checked) + render_markdown(
+                result, disclosures=checked.disclosures, tax_law=checked.filing_law))
     except (WorkspaceError, FilingPackageError, RolloverError, receipt.ReceiptError, OSError,
             json.JSONDecodeError) as e:
         print(f"ERROR: {redact(e)}", file=sys.stderr)

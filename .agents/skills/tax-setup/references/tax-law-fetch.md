@@ -45,6 +45,10 @@ covered year; part-year deductions, tax and AMT use these annual inputs.
 - Search: `"IRS {year} 401k contribution limit"`
 - Search: `"IRS {year} IRA contribution limit phase out"`
 - Search: `"IRS {year} social security wage base"`
+- For current-year itemized gifts, fetch `federal.charitable_substantiation`.
+  Get `acknowledgment_minimum` from the covered-year Schedule A instructions,
+  and `form_8283_threshold` and `qualified_appraisal_threshold` from the
+  covered-year Form 8283 instructions. Pin the source for each figure.
 - Search: `"IRS {year} capital gains tax brackets"` — populate
   `federal.capital_gains_rates.zero_pct_limit` and `fifteen_pct_limit` for ALL
   FOUR statuses (`single`, `mfj`, `mfs`, `hoh`; QSS reads `mfj`) from the Rev.

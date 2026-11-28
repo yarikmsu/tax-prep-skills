@@ -70,8 +70,9 @@ def _is_commentary(key: str) -> bool:
 
 # Keys a planning tool reads back and no reader of the summary should: Schedule
 # A's recorded `inputs` (AA23) restate figures already on the page under other
-# meanings, and print its tax year as $2,026.00.
-_MACHINE_KEYS = frozenset({"inputs", "related_forms_input_digest"})
+# meanings, and print its tax year as $2,026.00. Its `charitable_substantiation`
+# inventory (AA133) is for the filing gate: it names workspace evidence files.
+_MACHINE_KEYS = frozenset({"inputs", "related_forms_input_digest", "charitable_substantiation"})
 
 
 # Sections whose absence is normal and whose presence is decided by the skill
