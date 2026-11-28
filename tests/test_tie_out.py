@@ -492,6 +492,26 @@ def test_a_skipped_misc_requires_classification_or_an_active_rental_source():
         _ledger(consolidated, _included_misc(box_1=600))
 
 
+@pytest.mark.parametrize("side", ["included", "consolidated"])
+def test_a_misc_source_from_another_year_is_refused_on_either_side(side):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = _included_misc(box_8=90)
+    consolidated["misc_income"] = dict(standalone["misc_income"])
+    target = standalone if side == "included" else consolidated
+    target["misc_income"] = dict(target["misc_income"], tax_year=2026, form_revision="12/2026")
+    assert any("different filing year" in issue for issue in _issues(consolidated, standalone)[0])
+
+
+@pytest.mark.parametrize("form_type", ["Substitute 1099-MISC", "MISC 1099", "Form 1099 MISC"])
+def test_included_misc_spellings_need_their_review(form_type):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = dict(_included_misc(box_8=90), form_type=form_type)
+    consolidated["misc_income"] = standalone["misc_income"]
+    assert not _issues(consolidated, standalone)[0]
+    del standalone["misc_income"]
+    assert any("reviewed misc_income" in issue for issue in _issues(consolidated, standalone)[0])
+
+
 def test_included_interest_still_uses_the_consolidated_disposition():
     consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
     interest = dict(_form("interest", "1099-INT", "Broker", "b" * 64), skipped="in consolidated",

@@ -38,7 +38,8 @@ record/ledger validator checks the same mapping. Required fields:
 The mapper emits positive monetary categories, omitting zero categories. A
 checkbox-only notice with zero monetary boxes can carry an informational skip
 and its reviewed inventory. A positive payment or withholding cannot be skipped
-with this inventory. Re-read older MISC records before deriving a ledger;
+with this inventory, except on a Form 1099-MISC included in a consolidated
+statement (`source_form.included_in`); `source-reconciliation.md` states its rules. Re-read older MISC records before deriving a ledger;
 withholding alone does not prove income boxes were empty.
 
 Record the separately confirmed business judgment in `answers.md`. Set

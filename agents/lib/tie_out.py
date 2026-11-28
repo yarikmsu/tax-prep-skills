@@ -874,7 +874,8 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
                 raise TieOutError(f"{where}: {exc}") from None
         ca_investments = None
         misc_income = None
-        is_misc = "1099MISC" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
+        form_letters = re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
+        is_misc = "1099" in form_letters and "MISC" in form_letters
         if (skipped is None and (is_misc or MISC_OTHER in boxes)) or "misc_income" in rec:
             try:
                 included_in = source_form.get("included_in") if source_reconciliation._base_form(form_type) == "1099MISC" else None

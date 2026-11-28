@@ -47,7 +47,9 @@ record and `source_sha256`, including copies and replaced versions.
   record; the statement's receipts then count once.
 - For an included Form 1099-MISC, leave `key_boxes` empty on the skipped
   record and put its reviewed source boxes in `misc_income`. Record Box 1
-  rents on an active Form 1099-MISC with its own rental source. In the
+  rents on an active Form 1099-MISC with its own rental source, and leave that
+  form's amounts off the retained statement's `misc_income` and `key_boxes`:
+  kept in both, its withholding counts twice. In the
   retained statement, record the MISC section in `misc_income` and put
   business gross and federal withholding from other sections in
   `other_business_gross` and `other_federal_withholding` within that object.

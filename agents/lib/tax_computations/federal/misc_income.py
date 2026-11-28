@@ -53,7 +53,8 @@ def validate_misc_income(raw, boxes: dict, *, skipped: bool = False, included_in
         raise ValueError("MISC key_boxes must be an object")
     if skipped and included_in:
         if mapped.get("rental_reported_rents"):
-            raise ValueError("1099-MISC box1 rents need an active form with its own rental source")
+            raise ValueError("1099-MISC box1 rents need an active form with its own rental source; "
+                             "leave that form's amounts off the consolidated record's misc_income and key_boxes")
         if boxes or raw["other_business_gross"] or raw["other_federal_withholding"]:
             raise ValueError("an included 1099-MISC records only its own reviewed source boxes in misc_income")
     else:

@@ -37,10 +37,12 @@ def _clean_code(name: str) -> str:
 def _base_form(name: str) -> str:
     code = _clean_code(name)
     # Containment, as the 1099-DA rule reads it: "Substitute 1099-K" or
-    # "PayPal 1099-K" matched no business rule as a prefix test.
-    for form in ("1099NEC", "1099K", "1099MISC"):
-        if form in code and not _consolidated(code):
-            return form
+    # "PayPal 1099-K" matched no business rule as a prefix test, and a NEC or
+    # MISC name may sit on either side of the number ("MISC 1099").
+    if "1099" in code and not _consolidated(code):
+        for form, name in (("1099NEC", "NEC"), ("1099K", "1099K"), ("1099MISC", "MISC")):
+            if name in code:
+                return form
     return "W2" if code == "W2C" else code
 
 
