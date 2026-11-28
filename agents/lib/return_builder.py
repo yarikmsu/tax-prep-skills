@@ -997,6 +997,7 @@ def _context(result: dict, tax_law: dict, filing_status: str, *, special_rate_ga
         raise Unpriceable(
             f"tax_law federal.filing_statuses.{key}.brackets is missing or "
             "empty, so Form 1040 line 16 cannot be computed. Run /tax-setup.")
+    schedule_d_tax: "tuple[float, float] | None" = None
     worksheet_tax = _get_path(result, "schedule_d.tax_worksheet_tax")
     if worksheet_tax is not None:
         if not special_rate_gains:
@@ -1008,12 +1009,13 @@ def _context(result: dict, tax_law: dict, filing_status: str, *, special_rate_ga
         ceiling = _maybe_num(raw_ceiling)
         if ceiling is None or ceiling <= 0 or ceiling != raw_ceiling or not ceiling.is_integer():
             raise Unpriceable("Fetch the covered-year federal Tax Table ceiling before applying the Schedule D Tax Worksheet.")
+        schedule_d_tax = (tax, ceiling)
     net_st, net_lt = _schedule_d_nets(result)
     cap_input, _ordinary_short = net_capital_gains(net_st, net_lt)
-    if worksheet_tax is not None:
+    if schedule_d_tax is not None:
         qualified = _num((result.get("form_1040") or {}).get("line_3a_qualified_dividends", 0),
                          "form_1040.line_3a_qualified_dividends")
-        return _Context(brackets, None, qualified, max(0.0, cap_input), schedule_d_tax=(tax, ceiling),
+        return _Context(brackets, None, qualified, max(0.0, cap_input), schedule_d_tax=schedule_d_tax,
                         foreign_earned_income=foreign_earned_income)
     # The floor below is what decides whether the WORKSHEET RUNS, not what the
     # worksheet is handed: `compute_qdcg_tax` clamps a negative `net_ltcg`
