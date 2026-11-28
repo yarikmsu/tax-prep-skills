@@ -1012,7 +1012,10 @@ federal credit is computed by the engine.
   answers.md; until resolved, store `{"verified": false}` for the affected
   jurisdiction. Never substitute an empty ledger for an unresolved balance.
 - QBI (qualified business income) loss carryforward?
-- Unused foreign tax credit carryforward?
+- Unused foreign tax credit carryforward? Review the prior Schedule B and
+  record each category and origin year in `prior_year.imported_ftc_baskets`.
+  Keep the Form 1116 section when those balances are relevant to this return,
+  including years with no new foreign tax paid.
 - Net operating loss (NOL) carryforward?
 
 ---

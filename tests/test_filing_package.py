@@ -1612,6 +1612,23 @@ def test_zero_gift_inputs_cannot_clear_a_deduction_without_a_carryover_ledger():
     assert any("current cash and noncash gifts separately from carryovers" in issue for issue in _gift_issues(schedule))
 
 
+def test_form_1116_filing_review_binds_each_category_source():
+    form = {"line_12_standard_deduction": 30000}
+    review = {"categories": [{"source_ref": "reviews/worksheet.json"}]}
+    sections = {"form_1116_ftc": {"method": "form_1116", "review": review}}
+    item = {"label": "Form 1116 and Schedule B workpapers", "outcome": "reviewed",
+            "names": [*_ALL, "reviews/worksheet.json"]}
+    items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item)}
+    assert material_evidence.filing_input_issues(_captured(form, items, sections=sections)) == []
+    items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item, outcome="computed")}
+    issues = material_evidence.filing_input_issues(_captured(form, items, sections=sections))
+    assert any("each separate category" in issue for issue in issues), issues
+    review["categories"].append({"source_ref": "reviews/unbound.json"})
+    items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item)}
+    issues = material_evidence.filing_input_issues(_captured(form, items, sections=sections))
+    assert any("each separate category" in issue for issue in issues)
+
+
 def test_outcome_checks_that_fixtures_cannot_reach():
     form = {"line_12_standard_deduction": 30000, "line_31_schedule3_part2": 500}
     payments = {"label": "Form 1040 and Form 2210 payment worksheets", "outcome": "not_applicable",

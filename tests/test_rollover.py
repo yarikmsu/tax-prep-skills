@@ -442,9 +442,6 @@ def test_compute_diff_ftc_unused():
     # these figures carries nothing, so the figure is offered, never applied.
     assert ftc[0].prior_value == 300
     assert ftc[0].action_suggested == "ask" and "Schedule B" in ftc[0].reason
-    prior.result["form_1116_ftc"]["method"] = "form_1116"
-    (applied,) = _ftc_carryforwards(prior)
-    assert (applied.prior_value, applied.action_suggested) == (300, "apply")
 
 
 @pytest.mark.parametrize("method", ["deduction", "not_claimed"])
@@ -475,6 +472,97 @@ def test_simplified_ftc_does_not_create_a_carryforward_and_flags_older_balances(
     (earlier,) = changes()
     assert earlier.action_suggested == "ask" and earlier.prior_value == 800
     assert "origin year" in earlier.reason
+
+
+def test_simplified_ftc_rolls_older_baskets_without_extending_expiration():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1116_ftc"] = {"method": "simplified", "foreign_tax_paid_usd": 250, "ftc_allowed": 250}
+    prior.profile.setdefault("prior_year", {})["imported_ftc_baskets"] = [
+        {"basket": "passive", "carryforward_by_origin_year": {"2014": 200, "2021": 125}},
+        {"basket": "general", "carryforward_by_origin_year": {"2023": 300}},
+    ]
+    current = _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    (change,) = [c for c in diff["carryforwards"] if c.json_path == "prior_year.imported_ftc_baskets"]
+    assert change.action_suggested == "ask"
+    assert change.prior_value == [
+        {"basket": "passive", "carryforward_by_origin_year": {"2021": 125}},
+        {"basket": "general", "carryforward_by_origin_year": {"2023": 300}},
+    ]
+
+
+def _basket_changes(prior, current=None):
+    current = current or _load_current("current_2025_empty")
+    diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+    return [c for c in diff["carryforwards"] if "ftc" in c.json_path]
+
+
+def _prior_with_baskets(section):
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    if section is None:
+        prior.result.pop("form_1116_ftc")
+    else:
+        prior.result["form_1116_ftc"] = section
+    prior.profile.setdefault("prior_year", {})["imported_ftc_baskets"] = [
+        {"basket": "passive", "carryforward_by_origin_year": {"2014": 90, "2021": 125}}]
+    return prior
+
+
+@pytest.mark.parametrize("section", [None, {"method": None, "foreign_tax_paid_usd": 0, "ftc_allowed": 0},
+                                     {"method": "deduction", "foreign_tax_paid_usd": 400, "ftc_allowed": 0},
+                                     {"method": "not_claimed", "foreign_tax_paid_usd": 400, "ftc_allowed": 0}])
+def test_category_carryovers_after_a_year_without_form_1116_wait_for_its_schedule_b(section):
+    # Excess limitation absorbs carryovers whether or not a credit was claimed
+    # (Treas. Reg. §1.904-2(c)(3)(ii)), and a year with no method may have
+    # filed Form 1116 by hand: carried unreduced, they over-state the credit.
+    (change,) = _basket_changes(_prior_with_baskets(section))
+    assert change.json_path == "prior_year.imported_ftc_baskets" and change.action_suggested == "skip"
+    assert "1.904-2(c)(3)(ii)" in change.reason and "Schedule B" in change.reason
+    # 2014's tenth carryforward year was 2024.
+    assert change.prior_value == [{"basket": "passive", "carryforward_by_origin_year": {"2021": 125}}]
+    if section and section["method"] == "deduction":
+        assert "would have used" in change.reason
+
+
+def test_an_unrecorded_years_own_excess_is_offered_beside_the_baskets():
+    prior = _prior_with_baskets({"method": None, "foreign_tax_paid_usd": 1200, "ftc_allowed": 900})
+    by_path = {c.json_path: c for c in _basket_changes(prior)}
+    assert set(by_path) == {"prior_year.imported_ftc_baskets", "prior_year.unused_ftc_carryforward"}
+    legacy = by_path["prior_year.unused_ftc_carryforward"]
+    assert (legacy.prior_value, legacy.action_suggested) == (300, "ask")
+
+
+def _prior_form_1116(**category):
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1040"].update(line_16_tax=10000)
+    prior.profile["prior_year"] = {"imported_ftc_baskets": [
+        {"basket": "passive", "carryforward_by_origin_year": {"2014": 90, "2021": 125}}]}
+    row = {"basket": "passive", "source_ref": "reviews/f1116.pdf", "line_9_tax_paid": 300,
+           "line_10_carryover_by_origin_year": {"2014": 90, "2021": 125}, "line_14_eligible_tax": 515,
+           "line_17_foreign_income": 2000, "line_23_limitation": 200, "line_24_credit": 200,
+           "used_carryover_by_origin_year": {}, "closing_carryforward_by_origin_year": {"2021": 125, "2024": 100},
+           **category}
+    prior.result["form_1116_ftc"] = {
+        "method": "form_1116", "foreign_tax_paid_usd": 300, "carryover_applied_usd": 0,
+        "carryforward_created_usd": 100, "ftc_allowed": 200,
+        "review": {"tax_year": 2024, "method": "external", "line_18_base": 100000, "line_18_adjustment": 0,
+                   "line_18": 100000, "line_20": 10000, "line_34_boycott_reduction": 0, "categories": [row]}}
+    return prior
+
+
+def test_a_form_1116_year_rolls_its_verified_schedule_b_closing():
+    # Passive: current tax 300 over a 200 limitation leaves 100 from 2024, no
+    # excess limitation uses a carryover, and 2014 expires on the 2024 return.
+    (change,) = _basket_changes(_prior_form_1116())
+    assert change.json_path == "prior_year.imported_ftc_baskets" and change.action_suggested == "ask"
+    assert change.prior_value == [{"basket": "passive", "carryforward_by_origin_year": {"2021": 125, "2024": 100},
+                                   "provenance": {"tax_year": 2024, "source_ref": "reviews/f1116.pdf"}}]
+    with pytest.raises(RolloverError, match="closing carryforward to Schedule B"):
+        _basket_changes(_prior_form_1116(closing_carryforward_by_origin_year={"2021": 125, "2024": 300}))
+    later = _load_current("current_2025_empty")
+    later.profile["tax_year"] = 2026
+    with pytest.raises(RolloverError, match="intervening tax years"):
+        _basket_changes(_prior_form_1116(), later)
 
 
 def test_compute_diff_ira_basis_carryforward():
