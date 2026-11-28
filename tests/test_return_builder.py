@@ -1581,23 +1581,31 @@ def test_an_estimate_matching_the_extension_payment_needs_separate_remittances(t
         reviewed_payments(result, profile)
     row["distinct_payment_confirmed"] = True
     assert reviewed_payments(result, profile).line_26 == 1000
-    result["form_1040"]["schedule_3_line_10_extension_payment"] = 999
+    # A cent apart is the same remittance typed twice, not a second payment.
+    result["form_1040"]["schedule_3_line_10_extension_payment"] = 999.99
     del row["distinct_payment_confirmed"]
+    with pytest.raises(ValueError, match="extension payment.*distinct_payment_confirmed"):
+        reviewed_payments(result, profile)
+    # An estimate paid in the return year cannot be the Form 4868 payment.
+    row.update(date="2026-09-15")
+    del row["late_credit_confirmed"]
     assert reviewed_payments(result, profile).line_26 == 1000
 
 
 @pytest.mark.parametrize("estimate_date,needs_confirmation", [
-    ("2026-12-31", False), ("2027-01-01", True), ("2027-01-15", True),
-    ("2027-04-15", True), ("2027-04-16", False),
+    # A settlement window's own edges let one remittance typed a day apart
+    # through on either side; an earlier installment is months away.
+    ("2026-06-15", False), ("2026-09-15", False), ("2026-09-16", True), ("2026-12-31", True),
+    ("2027-01-01", True), ("2027-01-15", True), ("2027-04-15", True), ("2027-04-16", True),
 ])
 def test_estimates_near_balance_due_payments_require_separate_remittances(tmp_path, estimate_date,
-                                                                  needs_confirmation):
+                                                                          needs_confirmation):
     from agents.lib.tax_computations.federal.payments import reviewed_payments
 
     ws = _workspace(tmp_path)
     estimate = _federal_row("posted-estimate", 500, date=estimate_date)
     estimate["late_credit_confirmed"] = True
-    near_match = _federal_row("early-payment", 500.01, date="2027-01-16", kind="balance_due")
+    near_match = _federal_row("early-payment", 500.01, date="2027-01-01", kind="balance_due")
     later = _federal_row("later-payment", 1000, date="2027-02-01", kind="balance_due")
     profile = _set_federal_payments(ws, [near_match, estimate, later], 1, 500)
     result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"}}
@@ -1610,6 +1618,16 @@ def test_estimates_near_balance_due_payments_require_separate_remittances(tmp_pa
         later["distinct_payment_confirmed"] = True
     reviewed = reviewed_payments(result, profile)
     assert reviewed.line_26 == 500 and len(reviewed.rows) == 3
+
+
+def test_balance_due_payments_without_estimates_need_no_confirmation(tmp_path):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    rows = [_federal_row("early-payment", 500, date="2027-01-16", kind="balance_due")]
+    profile = _set_federal_payments(ws, rows, 0, 0)
+    reviewed = reviewed_payments({"meta": {"tax_year": 2026, "filing_status": "MFJ"}}, profile)
+    assert reviewed.line_26 == 0 and len(reviewed.rows) == 1
 
 
 @pytest.mark.parametrize("extension,line_31,excess", [
@@ -1660,6 +1678,41 @@ def test_separate_return_extension_payment_requires_reviewed_ownership(tmp_path,
         assert not issues
 
 
+@pytest.mark.parametrize("meta_status,profile_status,refused", [
+    ("MFJ", "MFS", True), ("MFS", "MFJ", True), ("MFJ", "MFJ", False), ("mfj", "MFJ", False),
+])
+def test_a_disagreeing_status_is_not_joint_for_the_extension_payment(tmp_path, meta_status,
+                                                                     profile_status, refused):
+    """Result meta saying MFJ beside a profile saying MFS skipped the check,
+    and with no payment review nothing else compared the two."""
+    from agents.lib.tax_computations.federal.payments import filing_differences
+
+    ws = _workspace(tmp_path, {"line_31_schedule3_part2": 1000,
+                              "schedule_3_line_10_extension_payment": 1000,
+                              "schedule_3_line_10_joint_4868": True})
+    result, profile, _, law, _ = RB.load(ws)
+    result["meta"]["filing_status"] = meta_status
+    profile["filing_status"] = profile_status
+    issues = filing_differences(result, profile, law)
+    if refused:
+        with pytest.raises(RB.Blocked, match="schedule_3_line_10_allocation_confirmed"):
+            RB.check(result, profile, filing_status=meta_status)
+        assert any("schedule_3_line_10_allocation_confirmed" in issue for issue in issues)
+    else:
+        RB.check(result, profile, filing_status=meta_status)
+        assert not any("schedule_3_line_10" in issue for issue in issues)
+
+
+def test_no_recorded_status_leaves_the_extension_check_to_the_caller():
+    from agents.lib.tax_computations.federal.payments import check_extension_allocation
+
+    # The caller's own status requirement reports the missing input (exit 1);
+    # this check must not turn it into a recorded verdict.
+    check_extension_allocation({"schedule_3_line_10_extension_payment": 1000}, None, (None, " "))
+    with pytest.raises(ValueError, match="schedule_3_line_10_joint_4868"):
+        check_extension_allocation({"schedule_3_line_10_extension_payment": 1000}, None, ("MFS",))
+
+
 def test_2210_refundable_credits_exclude_the_extension_payment(tmp_path):
     # Line 31 is all extension payment, so no Schedule 3 refundable credit is left
     # for Form 2210 to subtract from the current-year tax.
@@ -1667,7 +1720,8 @@ def test_2210_refundable_credits_exclude_the_extension_payment(tmp_path):
                               "schedule_3_line_10_extension_payment": 1000})
     config = {"method": "irs_calculates", "schedule_3_refundable_credits": 500,
               "excluded_current_year_tax": 0}
-    _set_federal_payments(ws, [_federal_row("q4", 500, date="2027-01-15")], 1, 500, config=config)
+    q4 = dict(_federal_row("q4", 500, date="2027-01-15"), distinct_payment_confirmed=True)
+    _set_federal_payments(ws, [q4], 1, 500, config=config)
     with pytest.raises(RB.Blocked, match="additional refundable credits exceed"):
         _build(ws)
 

@@ -39,12 +39,22 @@ def _money(value, where: str) -> float:
         raise ValueError(f"{where} requires a finite non-negative amount") from None
 
 
-def check_extension_allocation(form: dict, filing_status: str | None) -> None:
-    """Require a reviewed claim to the Form 4868 payment on a non-joint return."""
+def check_extension_allocation(form: dict, filing_status: str | None,
+                               recorded: tuple[object, ...] = ()) -> None:
+    """Require a reviewed claim to the Form 4868 payment on a non-joint return.
+
+    The return is joint only when every recorded status says MFJ, as the
+    tie-out reads one: result meta saying MFJ beside a profile saying MFS
+    skipped this check, and a joint payment was claimed whole on a separate
+    return with no payment review to catch the disagreement.
+    """
     extension = form.get(EXTENSION_PAYMENT)
     if extension is None or _money(extension, "Schedule 3 line 10") == 0:
         return
-    if _normalize_filing_status(filing_status) == "MFJ":
+    statuses = [status for status in (filing_status, *recorded) if isinstance(status, str) and status.strip()]
+    # With no status anywhere this returns: that is the caller's missing input
+    # (exit 1, nothing recorded), never a verdict of this check.
+    if all(_normalize_filing_status(status) == "MFJ" for status in statuses):
         return
     joint = form.get(JOINT_EXTENSION)
     if type(joint) is not bool:
@@ -118,7 +128,7 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     form = result.get("form_1040") or {}
     meta = result.get("meta") or {}
     return_status = filing_status or meta.get("filing_status") or profile.get("filing_status")
-    check_extension_allocation(form, return_status)
+    check_extension_allocation(form, filing_status, (meta.get("filing_status"), profile.get("filing_status")))
     recorded = form.get(LINE_26)
     flags = _object(profile.get("flags") or {}, "flags")
     ensure_review = (rows or opening or recorded or
@@ -143,21 +153,27 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
 
     parsed = []
     refs = set()
-    has_early_estimate = False
+    has_late_estimate = False
     has_unconfirmed_balance = False
+    third_due = next_business_day(date(year, 9, 15))
     for index, raw in enumerate(rows, 1):
         ref, item = _payment_row(raw, index, year, status)
         if ref in refs:
             raise ValueError(f"estimated_payments.federal[{index}] duplicates a payment source")
         refs.add(ref)
         parsed.append(item)
-        if item["kind"] == "estimate" and _in_early_settlement(date.fromisoformat(item["date"]), year):
-            has_early_estimate = True
+        # A fourth-installment or later estimate, not only one inside the
+        # settlement window: a December 31 estimate beside a January 1 payment,
+        # or a late April 16 one beside April 15, was one remittance typed
+        # twice a day apart. An earlier installment is months from any
+        # balance-due date.
+        if item["kind"] == "estimate" and date.fromisoformat(item["date"]) > third_due:
+            has_late_estimate = True
         if item["kind"] == "balance_due" and raw.get("distinct_payment_confirmed") is not True:
             has_unconfirmed_balance = True
-    if has_early_estimate and has_unconfirmed_balance:
-        raise ValueError("An estimate and a balance-due payment both fall between January 1 and April 15 "
-                         "of the following year. Confirm separate remittances with "
+    if has_late_estimate and has_unconfirmed_balance:
+        raise ValueError("A balance-due payment is recorded beside an estimate paid after the third "
+                         "installment's due date. Confirm separate remittances with "
                          "distinct_payment_confirmed on every balance-due row")
     _check_extension_not_an_estimate(result, rows, parsed, year)
     if not math.isfinite(sum(row["amount"] for row in parsed)):
@@ -180,12 +196,16 @@ def _check_extension_not_an_estimate(result: dict, rows: list, parsed: list[dict
     if extension is None:
         return
     extension = _money(extension, "Schedule 3 line 10")
+    # Every estimate paid after the return year, not one of the same amount:
+    # a cent's difference counted the Form 4868 payment on line 26 and line 31,
+    # as a balance-due row beside line 10 already needs its own confirmation.
     for raw, item in zip(rows, parsed, strict=True):
-        if (extension > 0 and item["kind"] == "estimate" and item["amount"] == extension
+        if (extension > 0 and item["kind"] == "estimate"
                 and item["date"] >= date(year + 1, 1, 1).isoformat()
                 and raw.get("distinct_payment_confirmed") is not True):
-            raise ValueError("An estimate matches the Schedule 3 line 10 extension payment. "
-                             "Confirm separate remittances with distinct_payment_confirmed")
+            raise ValueError("An estimate paid after the return year is recorded beside the Schedule 3 "
+                             "line 10 extension payment. Confirm separate remittances with "
+                             "distinct_payment_confirmed on each such estimate")
 
 
 def reviewed_balance_due(form: dict, rows: list[dict] | tuple[dict, ...]) -> float:

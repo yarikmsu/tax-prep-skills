@@ -651,8 +651,8 @@ def check(result: dict, profile: "dict | None" = None, *, filing_status: str | N
     """
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
-    _check_the_payments(result, filing_status or (result.get("meta") or {}).get("filing_status")
-                        or (profile or {}).get("filing_status"))
+    _check_the_payments(result, (filing_status, (result.get("meta") or {}).get("filing_status"),
+                                 (profile or {}).get("filing_status")))
     _check_charitable_vintages(result, profile)
     if profile is not None:
         from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
@@ -707,7 +707,7 @@ def _check_charitable_vintages(result, profile):
             raise Blocked(f"{jurisdiction} charitable carryover unresolved: {exc}") from exc
 
 
-def _check_the_payments(result: dict, filing_status: str | None) -> None:
+def _check_the_payments(result: dict, statuses: tuple[object, ...]) -> None:
     """Excess social security withholding is inside line 31, not beside it.
 
     `schedule_3_line_11_excess_ss` is persisted at the 1040 level so
@@ -748,7 +748,7 @@ def _check_the_payments(result: dict, filing_status: str | None) -> None:
                 f"of {part_2:,.2f} on Form 1040 line 31. Both lines are inside Part II, "
                 "so line 31 must hold them: correct line 10 or line 31.")
         try:
-            federal_payments.check_extension_allocation(form, filing_status)
+            federal_payments.check_extension_allocation(form, None, statuses)
         except ValueError as exc:
             raise Blocked(str(exc)) from None
 
