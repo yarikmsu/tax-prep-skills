@@ -1384,12 +1384,14 @@ def test_the_deduction_election_follows_the_profile_facts(profile, method, amoun
     assert (problem == "") is accepted, problem
 
 
-def _captured(form, items, *, worksheet=b"reviewed worksheet"):
-    result = json.dumps({"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": form}).encode()
+def _captured(form, items, *, worksheet=b"reviewed worksheet", sections=None, law_data=None, extra_sources=()):
+    result = json.dumps({"meta": {"tax_year": 2025, "filing_status": "MFJ"}, "form_1040": form,
+                         **(sections or {})}).encode()
     profile = json.dumps({"filing_status": "MFJ", "tax_year": 2025}).encode()
-    law = json.dumps(_LAW_2025).encode()
+    law = json.dumps(_LAW_2025 if law_data is None else law_data).encode()
     digests = {"result.json": receipt._sha256(result), "taxpayer_profile.json": receipt._sha256(profile),
                "tax_law_2025.json": receipt._sha256(law), "reviews/worksheet.json": receipt._sha256(worksheet)}
+    digests.update({name: receipt._sha256(name.encode()) for name in extra_sources})
     built = {key: dict(item, inputs={name: digests[name] for name in item.pop("names")})
              for key, item in items.items()}
     evidence = json.dumps({"version": 1, "items": built}).encode()
@@ -1403,6 +1405,75 @@ _ALL = ["result.json", "taxpayer_profile.json", "tax_law_2025.json"]
 def _deduction(**extra):
     return {"input.deduction_election": {"label": "Form 1040 line 12 deduction election", "outcome": "reviewed",
                                          "deduction_method": "standard", "names": list(_ALL), **extra}}
+
+
+_GIFT_REVIEW = "input.charitable_substantiation"
+_GIFT_LAW = {"federal": {**_LAW_2025["federal"], "charitable_substantiation": {
+    "acknowledgment_minimum": 250, "form_8283_threshold": 500, "qualified_appraisal_threshold": 5000}}}
+
+
+def _itemized_gifts(cash, noncash, rows=()):
+    return {"use_itemized": True, "itemized_total": 35000, "charitable_deductible": cash + noncash,
+            "inputs": {"charitable_cash": cash, "charitable_noncash": noncash},
+            "charitable_substantiation": list(rows)}
+
+
+def _gift_issues(schedule, sources=(), *, outcome="reviewed"):
+    captured = _captured({"line_12_standard_deduction": 35000}, {
+        _GIFT_REVIEW: {"label": "Gift evidence", "outcome": outcome,
+                       "names": [*_ALL, "reviews/worksheet.json", *sources]},
+        **_deduction(deduction_method="itemized", names=[*_ALL, "reviews/worksheet.json"]),
+    }, sections={"schedule_a": schedule}, law_data=_GIFT_LAW, extra_sources=sources)
+    return [issue for issue in material_evidence.filing_input_issues(captured)
+            if "Schedule A charitable substantiation" in issue]
+
+
+def test_itemized_cash_gift_needs_its_bound_acknowledgment_at_the_threshold():
+    acknowledgment = "reviews/cash-gift.json"
+    schedule = _itemized_gifts(250, 0, [{"kind": "cash", "amount": 250, "acknowledgment_ref": acknowledgment}])
+    assert any("still reports an applicable amount" in issue for issue in _gift_issues(schedule, outcome="not_applicable"))
+    assert any("written acknowledgment for charitable gift #1" in issue for issue in _gift_issues(schedule))
+    assert not _gift_issues(schedule, [acknowledgment])
+
+
+def test_listed_stock_over_the_threshold_needs_form_8283_without_appraisal():
+    acknowledgment = "reviews/stock-gift.json"
+    schedule = _itemized_gifts(0, 6000, [
+        {"kind": "publicly_traded_securities", "amount": 6000, "acknowledgment_ref": acknowledgment},
+    ])
+    assert not _gift_issues(schedule, [acknowledgment])
+    result = _result(schedule_a=schedule)
+    assert any(item["sequence"] == "36" for item in FP.assembly_order(result, tax_law=_GIFT_LAW))
+    assert any("Form 8283" in item for item in FP.attachment_checklist(result, tax_law=_GIFT_LAW))
+    result["schedule_a"] = _itemized_gifts(0, 500)
+    assert all(item["sequence"] != "36" for item in FP.assembly_order(result, tax_law=_GIFT_LAW))
+
+
+def test_similar_noncash_gifts_are_grouped_across_recipients_for_appraisal():
+    first, second, appraisal = "reviews/first.json", "reviews/second.json", "reviews/appraisal.json"
+    rows = [{"kind": "noncash", "amount": 3000, "similar_group": "books", "acknowledgment_ref": ref,
+             "appraisal_ref": appraisal} for ref in (first, second)]
+    schedule = _itemized_gifts(0, 6000, rows)
+    issues = _gift_issues(schedule, [first, second])
+    assert sum("qualified appraisal" in issue for issue in issues) == 2
+    assert not _gift_issues(schedule, [first, second, appraisal])
+    assert any("Reconcile the gift inventory" in issue
+               for issue in _gift_issues(_itemized_gifts(0, 9000, rows), [first, second, appraisal]))
+
+
+def test_carryover_alone_or_a_standard_deduction_needs_no_current_gift_review():
+    looked_up_vintage = {"entries": [{"origin_year": 2024, "used_this_year": 3000, "source_ref": "prior-worksheet"}]}
+    carryover = _itemized_gifts(0, 0) | {"charitable_deductible": 3000, "charitable_ledger": looked_up_vintage}
+    standard = _itemized_gifts(1000, 1000) | {"use_itemized": False}
+    for schedule in (carryover, standard):
+        assert _GIFT_REVIEW not in _inputs({}, schedule_a=schedule)
+        assert all(item["sequence"] != "36" for item in FP.assembly_order(_result(schedule_a=schedule), tax_law=_GIFT_LAW))
+
+
+def test_zero_gift_inputs_cannot_clear_a_deduction_without_a_carryover_ledger():
+    schedule = _itemized_gifts(0, 0) | {"charitable_deductible": 3000}
+    assert _GIFT_REVIEW in _inputs({}, schedule_a=schedule)
+    assert any("current cash and noncash gifts separately from carryovers" in issue for issue in _gift_issues(schedule))
 
 
 def test_outcome_checks_that_fixtures_cannot_reach():

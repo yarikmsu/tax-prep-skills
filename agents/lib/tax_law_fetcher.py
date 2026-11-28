@@ -33,6 +33,7 @@ from agents.lib.capabilities import (  # noqa: E402
 from agents.lib.secure_fs import (  # noqa: E402
     atomic_write, first_non_finite, is_reparse_point)
 from agents.lib.tax_computations import FORM_8938_THRESHOLDS  # noqa: E402
+from agents.lib.tax_computations.charitable import SUBSTANTIATION_LIMITS  # noqa: E402
 from agents.lib.tax_computations._shared import _STATE_NAME_TO_CODE  # noqa: E402
 from agents.lib.tax_computations.federal.rentals import (  # noqa: E402
     create_rental_law_template, validate_rental_law, validate_rental_percentages,
@@ -368,6 +369,7 @@ def create_empty_tax_law(year: int) -> dict:
             # the itemize-or-standard choice does for an itemizer with gifts
             # too). amount = non-joint; joint_amount = MFJ.
             "charitable_non_itemizer": {"amount": None, "joint_amount": None},
+            "charitable_substantiation": dict.fromkeys(SUBSTANTIATION_LIMITS),
             # §70105 minimum QBI deduction (OBBBA, TY2026+). OPT-IN: taxpayer-
             # favorable, so compute_qbi_deduction DEGRADES (no floor) when this
             # is unfetched rather than guessing an indexed figure.
@@ -1629,6 +1631,8 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                 # required fetched figure that compute_ca_540 refuses unfetched.
                 if k == "phaseout_rate" and v is None and path == "federal.amt":
                     continue
+                if path == "federal.charitable_substantiation" and v is None:
+                    continue  # Applicable filing law requires these for current itemized gifts.
                 # federal.schedule_1a is OPT-IN per taxpayer (tips/overtime/
                 # car-loan/senior) — a null block is the DEFAULT, not a gap.
                 # compute_schedule_1a hard-errors at the point of use when a
@@ -2605,6 +2609,8 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         # A None seed (unfetched) or a numeric structural constant.
         parent = dotted.rsplit(".", 1)[0] if "." in dotted else ""
         _check_number(dotted, value, is_rate=(parent == "federal.historical_top_rate") or None)
+        if parent == "federal.charitable_substantiation" and (value <= 0 or int(value) != value):
+            raise TaxLawSetError(f"{dotted}: expected a positive whole-dollar amount")
         if parent in ("exchange_rates", "federal.historical_top_rate") and value <= 0:
             raise TaxLawSetError(f"{dotted}: must be positive")
         if dotted == "federal.tax_table.max_taxable_income" and (value <= 0 or int(value) != value):

@@ -14,6 +14,11 @@ map goes stale in a way the schema cannot.
 - `federal.child_tax_credit.phase_out_start`
 - `federal.additional_medicare_tax.threshold`
 - `federal.niit.threshold`
+- `federal.charitable_substantiation.{acknowledgment_minimum,form_8283_threshold,qualified_appraisal_threshold}`
+  — amounts from the covered year's Schedule A and Form 8283 instructions.
+  Required for current-year itemized gifts. The acknowledgment threshold is
+  inclusive. Form 8283 and qualified appraisal requirements use amounts over
+  their thresholds, subject to the applicable instructions.
 - `federal.irmaa.tiers.<single|mfj|mfs>` — a list of
   `{magi_threshold, annual_surcharge_per_person}`, each threshold the figure
   CMS prints. A tier applies ABOVE it, and from 2019 the top tier AT it

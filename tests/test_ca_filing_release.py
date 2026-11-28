@@ -441,6 +441,56 @@ def test_open_deduction_blocks_even_when_arithmetic_passes(workspace):
     _assert_ready(workspace)
 
 
+def test_unsupported_itemized_cash_gift_is_draft_only_until_acknowledged(workspace):
+    from agents.lib.tax_law_fetcher import set_figure
+
+    release.compute(workspace)
+    schedule_a = "https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf"
+    form_8283 = "https://www.irs.gov/pub/irs-prior/i8283--2025.pdf"
+    form_6251 = "https://www.irs.gov/pub/irs-prior/f6251--2025.pdf"
+    for field, value, source in (
+        ("charitable_substantiation.acknowledgment_minimum", 250, schedule_a),
+        ("charitable_substantiation.form_8283_threshold", 500, form_8283),
+        ("charitable_substantiation.qualified_appraisal_threshold", 5000, form_8283),
+        ("salt_cap.amount", 40000, schedule_a),
+        ("amt.exemption.single", 88100, form_6251),
+        ("amt.phaseout_start.single", 626350, form_6251),
+        ("amt.rate_28_breakpoint", 239100, form_6251),
+    ):
+        set_figure(release.YEAR, f"federal.{field}", value, source, str(workspace), applies_to=release.YEAR)
+
+    acknowledgment = "cash-acknowledgment.json"
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["schedule_a"] = {"use_itemized": True, "itemized_total": 20000,
+                            "mortgage_deductible": 19750, "charitable_deductible": 250,
+                            "inputs": {"charitable_cash": 250, "charitable_noncash": 0},
+                            "charitable_substantiation": [{"kind": "cash", "amount": 250,
+                                                           "acknowledgment_ref": acknowledgment}]}
+    result["form_1040"]["line_12_standard_deduction"] = 20000
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    worksheet = "itemized-review.json"
+    release.write_json(workspace / worksheet, {"itemized_total": 20000, "amt_due": 0})
+    inputs = ("--input", result_path.name, "--input", "taxpayer_profile.json", "--input", release.LAW)
+    release.run(workspace, "material_evidence", "--id", "input.deduction_election", "--label", "Itemized deduction",
+                "--outcome", "reviewed", "--deduction-method", "itemized", *inputs, "--input", worksheet)
+    release.run(workspace, "material_evidence", "--id", "input.amt", "--label", "AMT worksheet",
+                "--outcome", "reviewed", *inputs, "--input", worksheet)
+    release.validate(workspace)
+
+    reason = "Open material item: Schedule A charitable substantiation"
+    assert reason in _package(workspace, "--draft")
+    _assert_refused(workspace, reason)
+    assert release.read_json(result_path)["schedule_a"]["charitable_deductible"] == 250
+
+    release.write_json(workspace / acknowledgment, {"amount": 250, "benefits_received": False})
+    release.run(workspace, "material_evidence", "--id", "input.charitable_substantiation", "--label", "Gift evidence",
+                "--outcome", "reviewed", *inputs, "--input", acknowledgment)
+    release.validate(workspace)
+    _assert_ready(workspace, forms=("form_1040", "schedule_a", "schedule_d", "california_540"))
+
+
 def test_one_brokerage_account_does_not_clear_two_expected_accounts(workspace):
     release.compute(workspace)
     profile_path = workspace / "taxpayer_profile.json"

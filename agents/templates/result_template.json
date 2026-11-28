@@ -208,6 +208,7 @@
     "charitable_carryforward": 0,
     "charitable_ledger": null,
     "charitable_limits_confirmed": false,
+    "charitable_substantiation": [],
     "obbba_70111_reduction": 0,
     "itemized_total": 0,
     "use_itemized": false,
