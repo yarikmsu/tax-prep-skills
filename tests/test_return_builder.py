@@ -429,6 +429,51 @@ class TestTheCapitalGainCharacterRuleIsTheSharedOne:
         assert short["line_16_tax"] > long["line_16_tax"]
 
 
+@pytest.mark.parametrize("wages,worksheet_tax,expected", [
+    (100000, 18200, 18200),  # Regular tax at $101,000 = $2,000 + $81,000 × 20%.
+    (100000, 18200.01, None),
+])
+def test_schedule_d_worksheet_tax_goes_to_line_16_without_exceeding_regular_tax(
+        tmp_path, wages, worksheet_tax, expected):
+    law = _law()
+    law["federal"]["tax_table"] = {"max_taxable_income": 100000}
+    ws = _workspace(tmp_path, {"line_7_capital_gain": 1000}, law=law,
+                    records=[{"wages": wages}, {"unrecaptured_section_1250_gain": 1000}])
+    result_path = ws / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["schedule_d"]["tax_worksheet_tax"] = worksheet_tax
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    if expected is None:
+        with pytest.raises(RB.Blocked, match="Schedule D Tax Worksheet.*exceeds"):
+            _build(ws)
+    else:
+        assert _build(ws)[1]["line_16_tax"] == expected
+
+
+@pytest.mark.parametrize("wages,provisional", [(48350, 5578.50), (48374, 5583.78)])
+def test_schedule_d_tax_uses_the_table_amount_even_when_exact_brackets_differ(wages, provisional):
+    # TY2025 single. The $125 gain is absorbed in the 12% bracket. Worksheet
+    # lines 44 and 46 use the printed $48,450–$48,500 Tax Table row of $5,579.
+    law = {"federal": {
+        "filing_statuses": {"single": {"brackets": [
+            {"rate": .10, "min": 0, "max": 11925},
+            {"rate": .12, "min": 11925, "max": 48475},
+            {"rate": .22, "min": 48475, "max": None},
+        ]}},
+        "capital_gains_rates": {"zero_pct_limit": {"single": 48350}, "fifteen_pct_limit": {"single": 533400}},
+        "tax_table": {"max_taxable_income": 100000},
+    }}
+    form = _template_1040() | {"line_7_capital_gain": 125}
+    result = {"meta": {"tax_year": 2025, "filing_status": "Single"}, "form_1040": form,
+              "schedule_d": {"part_ii_long_term": {"line_15_net_long_term": 125}}}
+    ledger = [T.LedgerRecord("wages", "documents/wages.pdf", "W-2", "Employer", "primary", (("wages", wages),), None),
+              T.LedgerRecord("reit", "documents/reit.pdf", "1099-DIV", "Fund", "primary",
+                             (("unrecaptured_section_1250_gain", 125),), None)]
+    assert RB.build(result, law, ledger, "Single")["line_16_tax"] == provisional
+    result["schedule_d"]["tax_worksheet_tax"] = 5579
+    assert RB.build(result, law, ledger, "Single")["line_16_tax"] == 5579
+
+
 class TestTheAmtReachesTotalTax:
     """The gap this slice closes. `form_6251.amt` was computed and recorded, and
     the 1040 had no line 17 field for it to land on — so an ISO exerciser's

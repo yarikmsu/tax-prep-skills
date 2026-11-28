@@ -58,11 +58,13 @@ state tax/state ID/state income remain 5/6/7. Preserve source amounts once
 and follow the [tip/overtime source review](tips-overtime.md).
 
 ### 1099-DIV Extraction
-Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).
+Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (capital gain distributions), 2b (unrecaptured section 1250 gain), 2d (collectibles gain), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). Read boxes 2b and 2d on standalone and consolidated statements. They are already included in box 2a. For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).
 Note: Foreign tax paid in Box 7 → feeds Form 1116
 
 ### 1099-B Extraction
-Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, boxes 14-16 (state, state tax withheld)
+Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, box 3 (collectibles or QOF indicators), boxes 14-16 (state, state tax withheld).
+Count transactions with the collectibles
+box marked in `collectibles_transactions` for the Schedule D worksheet review.
 For TY2023-2024 crypto, also capture boxes 1a-1g, 2-13, 14-16 and CUSIP, keeping blanks explicit.
 Use the reviewed 1099-B input table in `docs/contributing/crypto-accounts.md`:
 an older summary that omitted a special-treatment box must be re-read from

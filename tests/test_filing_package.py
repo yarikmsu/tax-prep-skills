@@ -1089,6 +1089,19 @@ def _inputs(form, profile=None, status="MFJ", **sections):
     return material_evidence._required_filing_inputs(result, profile or {"filing_status": status}, _LAW_2025)
 
 
+@pytest.mark.parametrize("category", ["unrecaptured_section_1250_gain", "collectibles_gain_distributions",
+                                      "collectibles_transactions"])
+def test_special_rate_gain_sources_require_schedule_d_tax_worksheet(category):
+    item = "input.schedule_d_tax_worksheet"
+    result = {"meta": {"filing_status": "MFJ"}, "form_1040": {"line_7_capital_gain": 1000}}
+    source = tie_out.LedgerRecord("fund", "documents/fund.pdf", "1099-DIV", "Fund", "primary",
+                                  ((category, 1),), None)
+    assert material_evidence._required_filing_inputs(result, {}, _LAW_2025, ledger=[source])[item]
+    assert item not in material_evidence._required_filing_inputs(result, {}, _LAW_2025)
+    assert material_evidence._required_filing_inputs(
+        result, {"flags": {"sold_depreciated_real_property": True}}, _LAW_2025)[item]
+
+
 def test_a_prior_year_amt_credit_asks_for_the_credit_and_amt_reviews():
     """`form_8801_carryforward` was read and nothing writes it; rollover writes
     prior_year.amt_credit_carryforward."""

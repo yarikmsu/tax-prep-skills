@@ -90,6 +90,8 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
 
     if _positive(form.get("line_3a_qualified_dividends")) or _positive(cache._get_path(result, "schedule_d.part_ii_long_term.line_15_net_long_term")):
         fields.update(f"federal.capital_gains_rates.{key}.{filing_key}" for key in ("zero_pct_limit", "fifteen_pct_limit"))
+    if cache._get_path(result, "schedule_d.tax_worksheet_tax") is not None:
+        fields.add("federal.tax_table.max_taxable_income")
     if (profile.get("dependents") or result.get("dependents") or _positive(form.get("line_19_ctc"))
             or _positive(form.get("line_28_refundable_actc"))):
         fields.update({"federal.child_tax_credit.amount_per_child", "federal.child_tax_credit.refundable_limit",

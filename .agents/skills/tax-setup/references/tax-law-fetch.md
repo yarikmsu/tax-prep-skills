@@ -52,6 +52,11 @@ covered year; part-year deductions, tax and AMT use these annual inputs.
   filing separately is half of joint. A cache carrying only `single`/`mfj`
   makes the engine REFUSE to price preferential income for an HoH or MFS
   filer rather than use the single figure.
+- For a reviewed Schedule D Tax Worksheet, fetch
+  `federal.tax_table.max_taxable_income` from the covered year's Schedule D
+  instructions. Use the exclusive Tax Table ceiling printed on the worksheet
+  for the ordinary-tax comparison. Fetch it for the return year whenever the
+  worksheet is needed.
 - Search: `"Medicare IRMAA {year} income brackets Part B Part D"` — populate `federal.irmaa.tiers`
   (`single`/`mfj`/`mfs` lists of `{magi_threshold, annual_surcharge_per_person}`, annualizing the
   monthly Part B + Part D surcharge above the standard premium). `magi_threshold` is the

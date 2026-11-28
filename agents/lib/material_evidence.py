@@ -29,12 +29,14 @@ DEDUCTION_ITEM = "input.deduction_election"
 PERSONAL_1099K_ITEM = "input.1099k_personal_routing"
 BUSINESS_OVERLAP_ITEM = "input.business_receipt_overlap"
 EXCESS_SS_EMPLOYERS_ITEM = "input.excess_ss_employers"
+SCHEDULE_D_WORKSHEET_ITEM = "input.schedule_d_tax_worksheet"
 DEDUCTION_METHODS = ("standard", "itemized", "standard_worksheet")
 _FILING_INPUT_LABELS = {
     DEDUCTION_ITEM: "Form 1040 line 12 deduction election",
     PERSONAL_1099K_ITEM: "Personal Form 1099-K receipts on a business return",
     BUSINESS_OVERLAP_ITEM: "Overlapping business receipt evidence",
     EXCESS_SS_EMPLOYERS_ITEM: "Schedule 3 line 11 employer identity",
+    SCHEDULE_D_WORKSHEET_ITEM: "Schedule D Tax Worksheet for Form 1040 line 16",
     "input.nonrefundable_credits": "Form 1040 lines 19–20 nonrefundable credit worksheets",
     "input.amt": "Form 6251 alternative minimum tax worksheet",
     "input.other_taxes": "Schedule 2 Part II other-tax worksheets",
@@ -196,12 +198,14 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     """Applicable inputs, with True when a positive amount is already claimed
     or the return's own inputs make the item apply."""
     from agents.lib.tax_law_fetcher import _get_path
-    from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding
+    from agents.lib.tie_out import filing_medicare_wages, has_rrta_tier1_withholding, has_special_rate_gains
     from agents.lib.yoy_diff import _section_present
 
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
     required = {DEDUCTION_ITEM: True}
+    if has_special_rate_gains(ledger or [], profile):
+        required[SCHEDULE_D_WORKSHEET_ITEM] = True
 
     def flags_set(*names):
         return any(flags.get(name) is True for name in names)
@@ -323,6 +327,7 @@ def _deduction_problem(result: dict, profile: dict, law: dict, method: str | Non
 def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | None = None) -> list[str]:
     """Check required outcomes against the snapshots being used at export."""
     from agents.lib.projection import ProjectionError
+    from agents.lib.tax_law_fetcher import _get_path, _is_number
 
     try:
         result = json.loads(captured.get("result.json") or b"{}")
@@ -354,12 +359,19 @@ def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | Non
             if not _worksheet_attached(item_id, method, inputs, mandatory):
                 reasons.append(f"{prefix} Attach the reviewed worksheet as a source.")
                 continue
+            if item_id == SCHEDULE_D_WORKSHEET_ITEM:
+                if outcome != "reviewed":
+                    reasons.append(f"{prefix} Record the worksheet outcome as reviewed.")
+                    continue
+                tax = _get_path(result, "schedule_d.tax_worksheet_tax")
+                if not _is_number(tax) or tax < 0 or tax != result["form_1040"].get("line_16_tax"):
+                    reasons.append(f"{prefix} Record the reviewed tax and apply it to Form 1040 line 16.")
             if item_id == DEDUCTION_ITEM:
                 detail = _deduction_problem(result, profile, law, method)
                 if detail:
                     reasons.append(f"{prefix} {detail}")
         return reasons
-    except (ValueError, TypeError, AttributeError, ProjectionError):
+    except (ValueError, TypeError, AttributeError, OverflowError, ProjectionError):
         return ["Could not validate the material filing inputs."]
 
 

@@ -229,6 +229,7 @@ def create_empty_tax_law(year: int) -> dict:
                 "fifteen_pct_limit": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "twenty_pct_above": True,
             },
+            "tax_table": {"max_taxable_income": None},
             "social_security": {
                 "wage_base": None,
                 "employee_rate": 0.062,
@@ -1605,6 +1606,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     continue
                 if k == "sdi_wage_limit" and v is None and _sdi_null_is_valid:
                     continue
+                # The return-specific filing gate requires this ceiling only
+                # when applying a reviewed Schedule D Tax Worksheet.
+                if path == "federal.tax_table" and k == "max_taxable_income" and v is None:
+                    continue
                 # underpayment_rates may legitimately stay empty: a
                 # withholding-only taxpayer never needs the §6621 timeline,
                 # and compute_form_2210 degrades LOUDLY at the point of need
@@ -2603,6 +2608,8 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         _check_number(dotted, value, is_rate=(parent == "federal.historical_top_rate") or None)
         if parent in ("exchange_rates", "federal.historical_top_rate") and value <= 0:
             raise TaxLawSetError(f"{dotted}: must be positive")
+        if dotted == "federal.tax_table.max_taxable_income" and (value <= 0 or int(value) != value):
+            raise TaxLawSetError(f"{dotted}: expected a positive whole-dollar ceiling")
 
 
 def _check_dynamic_key(parent: str, key: str) -> None:

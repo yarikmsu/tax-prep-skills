@@ -94,6 +94,52 @@ def test_two_w2s_and_posted_estimate_release(workspace):
     assert {"Line 26 — estimated payments $600.00", "Line 35a — refund $1,738.00", "Line 115 $792.52"} <= lines
 
 
+def test_reit_special_rate_distribution_blocks_release_until_worksheet_is_reviewed(workspace):
+    from agents.lib.tax_law_fetcher import set_figure
+
+    release.compute(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    broker = next(record for record in ledger["records"] if record["doc_id"] == "broker")
+    broker["key_boxes"].update(capital_gain_distributions=125, unrecaptured_section_1250_gain=125)
+    release.write_json(ledger_path, ledger)
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"]["line_7_capital_gain"] = 4625
+    result["schedule_d"]["part_ii_long_term"].update(line_13_cap_gain_dist=125, line_15_net_long_term=4625)
+    result["schedule_d"]["line_16_combined"] = 4625
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    release.record_deduction(workspace)
+    release.validate(workspace)
+
+    # Draft uses the ordinary preferential rate for these extra $125.
+    assert release.read_json(result_path)["form_1040"]["line_16_tax"] == 22880.75
+    reason = "Open material item: Schedule D Tax Worksheet for Form 1040 line 16"
+    assert reason in _package(workspace, "--draft")
+    _assert_refused(workspace, reason)
+
+    set_figure(release.YEAR, "federal.tax_table.max_taxable_income", 100000,
+               "https://www.irs.gov/pub/irs-prior/i1040sd--2025.pdf", str(workspace), applies_to=release.YEAR)
+    result = release.read_json(result_path)
+    # The ordinary 24% band prices the $125 below the 25% maximum rate.
+    result["schedule_d"]["tax_worksheet_tax"] = 22892
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    release.record_deduction(workspace)
+    worksheet = "schedule-d-tax-review.json"
+    release.write_json(workspace / worksheet, {"line_47_tax": 22892})
+    release.run(workspace, "material_evidence", "--id", "input.schedule_d_tax_worksheet",
+                "--label", "Reviewed Schedule D Tax Worksheet", "--outcome", "reviewed",
+                "--input", result_path.name, "--input", "taxpayer_profile.json", "--input", release.LAW,
+                "--input", worksheet, "--input", broker["file"])
+    release.validate(workspace)
+    assert release.read_json(result_path)["form_1040"]["line_16_tax"] == 22892
+    _assert_ready(workspace)
+    release.write_json(workspace / worksheet, {"line_47_tax": 22891})
+    _assert_refused(workspace, reason)
+
+
 def test_next_year_estimate_requires_credit_review_before_release(workspace):
     release.add_second_w2_and_estimate(workspace)
     release.compute(workspace)
