@@ -472,7 +472,11 @@ also creditable) and tell the user the helper's figure would understate it.
 The tie-out compares Boxes 3, 4 and 7 by employee and employer EIN, and
 requires an EIN on each Social Security W-2 of an employee with a positive
 credit. A W-2 without an EIN joins one related payer name, never two different
-EINs, and so settles only a zero-credit check. When an employee's W-2 records Tier 1
+EINs, and so settles only a zero-credit check. When W-2s with related employer
+names ("Acme Corp" and "Acme Corporation") carry different EINs and treating
+them as one employer would lower the credit, the tie-out asks for
+`input.excess_ss_employers`: re-read Box b, and record the outcome only if the
+employers really differ. When an employee's W-2 records Tier 1
 RRTA withholding, attach the combined worksheet to the payments review. The tie-out bounds
 that employee's share by the Social Security and Tier 1 tax withheld above one
 year's maximum, and still checks the other spouse exactly.

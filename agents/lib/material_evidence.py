@@ -28,11 +28,13 @@ _INPUT_PREFIX = "input."
 DEDUCTION_ITEM = "input.deduction_election"
 PERSONAL_1099K_ITEM = "input.1099k_personal_routing"
 BUSINESS_OVERLAP_ITEM = "input.business_receipt_overlap"
+EXCESS_SS_EMPLOYERS_ITEM = "input.excess_ss_employers"
 DEDUCTION_METHODS = ("standard", "itemized", "standard_worksheet")
 _FILING_INPUT_LABELS = {
     DEDUCTION_ITEM: "Form 1040 line 12 deduction election",
     PERSONAL_1099K_ITEM: "Personal Form 1099-K receipts on a business return",
     BUSINESS_OVERLAP_ITEM: "Overlapping business receipt evidence",
+    EXCESS_SS_EMPLOYERS_ITEM: "Schedule 3 line 11 employer identity",
     "input.nonrefundable_credits": "Form 1040 lines 19–20 nonrefundable credit worksheets",
     "input.amt": "Form 6251 alternative minimum tax worksheet",
     "input.other_taxes": "Schedule 2 Part II other-tax worksheets",
