@@ -439,6 +439,8 @@ def test_one_railroad_employers_overwithholding_cannot_support_filing(workspace)
     first["source_form"]["employer_ein"] = "12-0000001"
     second["source_form"]["employer_ein"] = "12-0000002"
     first["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=12000)
+    # A Box 4 the second W-2 never recorded is refused first; record its $0.
+    second["key_boxes"].setdefault("ss_tax_withheld", 0)
     release.write_json(ledger_path, ledger)
 
     result_path = workspace / "result.json"

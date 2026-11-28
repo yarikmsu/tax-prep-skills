@@ -2409,24 +2409,52 @@ def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: fl
     return credit
 
 
-def _rrta_bound(ledger: list[LedgerRecord], person: str, base: float, rate: float) -> float:
-    """Bound a railroad employee's credit after excluding employer over-withholding."""
+def _rrta_bound(ledger: list[LedgerRecord], person: str, base: float, rate: float,
+                employer_sources: dict[str, str],
+                related: list[tuple[LedgerRecord, LedgerRecord]]) -> float:
+    """The most Topic 608 credits a railroad employee.
+
+    Each employer's Social Security tax counts up to its rate on that
+    employer's own Box 3 and 7 wages, as `compute_excess_ss_withholding`
+    counts it; its Tier 1 tax is added and the two are capped together at one
+    year's maximum (Topic 608: an employer's own over-withholding is that
+    employer's to refund). The bound is their sum less one maximum. The ledger
+    has no RRTA compensation, so Tier 1 is taken as withheld. W-2 pairs a
+    mistyped Box b may have split from one employer go to `related`.
+    """
     forms = []
     for record in ledger:
         if record.skipped is not None or record.person != person:
             continue
         boxes = dict(record.key_boxes)
-        if _is_w2(record.form_type, boxes):
+        if _is_w2(record.form_type, boxes) and (
+                _ss_wages(boxes) or boxes.get("ss_tax_withheld", 0) or boxes.get("rrta_tier1_tax_withheld", 0)):
             forms.append((record, boxes))
+    if any(_ss_wages(boxes) == 0 and boxes.get("ss_tax_withheld", 0) > 0 for _, boxes in forms):
+        raise ValueError("Review W-2 Boxes 3 and 7 for the reported Social Security withholding.")
+    if any(_ss_wages(boxes) and "ss_tax_withheld" not in boxes for _, boxes in forms):
+        raise ValueError("Review W-2 Box 4 for every employer before claiming the excess.")
+    # A W-2 carrying neither tax cannot move the bound, so it needs no EIN.
     if any(_employer_ein(record) is None for record, _ in forms):
         raise ValueError(_review_employer_ein(person, railroad=True))
     maximum = round(base * rate, 2)
-    # Topic 608 directs the employee to recover a single employer's excess
-    # from that employer. The annual maximum applies to the two taxes combined.
-    capped = sum(min(maximum, sum(boxes.get("ss_tax_withheld", 0) + boxes.get("rrta_tier1_tax_withheld", 0)
-                                  for boxes in group))
-                 for group in _employer_groups(forms))
-    return max(0.0, round(capped - maximum, 2))
+
+    def bound(groups: list[list[dict]]) -> float:
+        capped = 0.0
+        for group in groups:
+            social = min(sum(boxes.get("ss_tax_withheld", 0) for boxes in group),
+                         round(rate * min(sum(_ss_wages(boxes) for boxes in group), base), 2))
+            capped += min(maximum, social + sum(boxes.get("rrta_tier1_tax_withheld", 0) for boxes in group))
+        return max(0.0, round(capped - maximum, 2))
+
+    found = bound(_employer_groups(forms))
+    if found:
+        def lowers(matches: tuple[tuple[int, int], ...]) -> bool:
+            return bound(_employer_groups(forms, assumed_matches=matches)) < found
+
+        records = [record for record, _ in forms]
+        related.extend((records[i], records[j]) for i, j in _related_ein_pairs(forms, employer_sources, lowers))
+    return found
 
 
 def _wage_base_and_rate(tax_law: dict) -> tuple[float, float]:
@@ -2488,8 +2516,11 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
             if claimed > credit:
                 # Only a claim that includes railroad credit needs its EINs
                 # and upper bound. The payments review still checks the worksheet.
-                bound = round(credit + sum(_rrta_bound(ledger, person, base, rate)
+                bound = round(credit + sum(_rrta_bound(ledger, person, base, rate, employer_sources or {}, related)
                                            for person in sorted(railroad)), 2)
+                if related:
+                    numbers = {record.file: number for number, record in enumerate(ledger, 1)}
+                    raise ValueError(_related_employers_message(related, numbers))
                 if claimed > bound:
                     return ["Schedule 3 line 11 exceeds the employer-capped upper bound for Social Security "
                             "and Tier 1 railroad tax."]

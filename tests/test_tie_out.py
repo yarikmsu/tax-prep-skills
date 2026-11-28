@@ -1355,6 +1355,63 @@ def test_railroad_and_social_security_from_the_same_employer_are_capped_together
     assert _ss_return(railroad, ss, claimed=1481.80).failed
 
 
+@pytest.mark.parametrize("ss_withheld,claimed,refused", [
+    (6200, 1481.80, True), (6200, 0, False), (3100, 0, False), (3100.01, 0.01, True),
+])
+def test_a_social_security_employers_own_overwithholding_stays_out_of_the_railroad_bound(
+        ss_withheld, claimed, refused):
+    # $50,000 of Box 3 wages bears $3,100 of Social Security tax; with
+    # $6,200 of Tier 1 the two employers' creditable tax is $9,300, under one
+    # maximum, so no credit. Counted in full, $6,200 + $6,200 bound $1,481.80.
+    railroad = _ss_w2(1, 100000, 0)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    ss = _ss_w2(2, 50000, ss_withheld)
+    assert _ss_return(railroad, ss, claimed=claimed).failed is refused
+
+
+def test_railroad_social_security_withholding_needs_its_wages():
+    railroad = _ss_w2(1, 100000, 6200)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    other = _ss_w2(2, 100000, 0)
+    other["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    report = _ss_return(railroad, other, claimed=1481.80)
+    assert any("Boxes 3 and 7" in item for item in report.missing_result_targets)
+
+
+def test_a_social_security_w2_beside_a_railroad_w2_needs_its_box_4():
+    railroad = _ss_w2(1, 100000, 0)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    ss = _ss_w2(2, 100000, 6200)
+    del ss["key_boxes"]["ss_tax_withheld"]
+    report = _ss_return(railroad, ss, claimed=1481.80)
+    assert any("Review W-2 Box 4" in item for item in report.missing_result_targets)
+
+
+def test_a_mistyped_railroad_ein_needs_the_related_employer_review():
+    # One railroad under two EINs: its own $12,000 is the employer's to
+    # refund, but two groups bound $1,081.80.
+    records = []
+    for index, payer in enumerate(("Union Pacific", "Union Pacific Railroad"), 1):
+        record = _ss_w2(index, 100000, 0, payer=payer)
+        record["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6000)
+        records.append(record)
+    report = _ss_return(*records, claimed=1081.80)
+    assert any(_SS_EMPLOYER_REVIEW in item and "Documents #1 and #2 are W-2s" in item
+               for item in report.missing_result_targets), report.missing_result_targets
+    evidence = _review_ss_employers(*records)
+    assert not _ss_return(*records, claimed=1081.80, evidence=evidence).failed
+
+
+def test_a_railroad_employees_w2_without_either_tax_needs_no_ein():
+    railroad = _ss_w2(1, 100000, 0)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    ss = _ss_w2(2, 100000, 6200)
+    bare = _ss_w2(3, 20000, 0)
+    bare["key_boxes"].update(ss_wages=0)
+    del bare["source_form"]["employer_ein"]
+    assert not _ss_return(railroad, ss, bare, claimed=1481.80).failed
+
+
 @pytest.mark.parametrize("claimed", [0, 1000])
 def test_a_railroad_spouse_cannot_hide_the_other_spouses_exact_credit(claimed):
     first = _ss_w2(1, 100000, 6200)

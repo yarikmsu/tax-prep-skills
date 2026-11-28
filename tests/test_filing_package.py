@@ -1266,9 +1266,11 @@ def test_a_spouses_railroad_tax_leaves_the_other_spouses_credit_checked():
     primary = [_ss_w2("a", "Alpha", "primary", 100000, 6200, employer_ein="12-0000001"),
                _ss_w2("b", "Beta", "primary", 100000, 6200, employer_ein="12-0000002")]
     railroad = tie_out.LedgerRecord("rr", "documents/rr.pdf", "W-2", "Railroad", "spouse",
-                                    (("rrta_tier1_tax_withheld", 2000),), None)
+                                    (("rrta_tier1_tax_withheld", 2000),), None,
+                                    source_form={"employer_ein": "12-0000003"})
     assert not _line_11([*primary, railroad], 1481.80)
-    assert _line_11([*primary, railroad], 5000)
+    # With the EIN recorded, the bound (one employer, none) refuses it.
+    assert any("upper bound" in issue for issue in _line_11([*primary, railroad], 5000))
 
 
 @pytest.mark.parametrize("person,status", [("joint", "MFJ"), ("spouse", "Single")])
