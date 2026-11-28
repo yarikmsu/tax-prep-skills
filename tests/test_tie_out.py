@@ -1085,7 +1085,7 @@ def test_related_employer_names_require_review_bound_to_both_w2s_and_the_ledger(
     first = _ss_w2(1, 100000, 6200, payer="Acme")
     second = _ss_w2(2, 100000, 6200, payer="Acme Inc")
     report = _ss_return(first, second, claimed=1481.80)
-    assert any(_SS_EMPLOYER_REVIEW in item and "W-2 documents #1 and #2" in item
+    assert any(_SS_EMPLOYER_REVIEW in item and "Documents #1 and #2 are W-2s" in item
                for item in report.missing_result_targets)
     evidence = _review_ss_employers(first, second)
     assert not _ss_return(first, second, claimed=1481.80, evidence=evidence).failed
@@ -1131,10 +1131,59 @@ def test_unrelated_merge_cannot_offset_a_reduction_from_a_related_employer_pair(
     # would raise it by $1,800, so a single comparison could hide Acme's drop.
     records = (first, second, third, fourth)
     report = _ss_return(*records, claimed=7681.80)
-    assert any(_SS_EMPLOYER_REVIEW in item and "W-2 documents #1 and #2" in item
+    assert any(_SS_EMPLOYER_REVIEW in item and "Documents #1 and #2 are W-2s" in item
                for item in report.missing_result_targets)
     evidence = _review_ss_employers(first, second)
     assert not _ss_return(*records, claimed=7681.80, evidence=evidence).failed
+
+
+@pytest.mark.parametrize("first_name,second_name", [
+    ("Acme Corp", "Acme Corporation"), ("Acme Inc", "Acme Corp"), ("Acme LLC", "Acme L.L.C."),
+    ("The Acme Company", "Acme Co"), ("Acme Ltd", "Acme Limited"), ("AcmeCorp", "Acme Corp"),
+    ("AcmeCorp", "Acme Corporation"),
+])
+def test_company_form_spellings_of_one_employer_need_the_review(first_name, second_name):
+    # A word set nesting in the other's missed each pair, so one employer's
+    # mistyped Box b supported the credit. A false match costs one review.
+    first = _ss_w2(1, 100000, 6200, payer=first_name)
+    second = _ss_w2(2, 100000, 6200, payer=second_name)
+    assert _ss_return(first, second, claimed=1481.80).failed
+    evidence = _review_ss_employers(first, second)
+    assert not _ss_return(first, second, claimed=1481.80, evidence=evidence).failed
+
+
+@pytest.mark.parametrize("second_name", ["Beta Corp", "Corp", "The Company"])
+def test_unrelated_or_form_only_names_need_no_review(second_name):
+    first = _ss_w2(1, 100000, 6200, payer="Acme")
+    second = _ss_w2(2, 100000, 6200, payer=second_name)
+    assert not _ss_return(first, second, claimed=1481.80).failed
+
+
+def test_a_subset_of_related_pairs_cannot_be_hidden_by_a_merge_that_raises_the_credit():
+    # By EIN: three Acme W-2s at $3,720 creditable each, Other capped at
+    # $3,100 of its $8,000 and Other Inc at $0: $14,260 less $10,918.20 is
+    # $3,341.80. Acme merged alone: $10,918.20 + $3,100, a credit of $3,100.
+    # Every pair merged: $10,918.20 + $6,200, so the all-pairs comparison
+    # ($6,200 > $3,341.80) hid the drop.
+    records = [_ss_w2(index, 60000, 3720, payer=payer) for index, payer in
+               enumerate(("Acme", "Acme Inc", "Acme West"), 1)]
+    records += [_ss_w2(4, 50000, 8000, payer="Other"), _ss_w2(5, 50000, 0, payer="Other Inc")]
+    report = _ss_return(*records, claimed=3341.80)
+    assert any("Documents #1 and #2, #1 and #3, #2 and #3 are W-2s" in item
+               for item in report.missing_result_targets), report.missing_result_targets
+    evidence = _review_ss_employers(*records[:3])
+    assert not _ss_return(*records, claimed=3341.80, evidence=evidence).failed
+
+
+def test_both_spouses_related_pairs_are_named_in_one_refusal():
+    records = [_ss_w2(1, 100000, 6200, payer="Acme"), _ss_w2(2, 100000, 6200, payer="Acme Inc"),
+               _ss_w2(3, 100000, 6200, payer="Beta", person="spouse"),
+               _ss_w2(4, 100000, 6200, payer="Beta Corp", person="spouse")]
+    report = _ss_return(*records, claimed=2963.60)
+    assert any("Documents #1 and #2, #3 and #4 are W-2s" in item
+               for item in report.missing_result_targets), report.missing_result_targets
+    evidence = _review_ss_employers(*records)
+    assert not _ss_return(*records, claimed=2963.60, evidence=evidence).failed
 
 
 @pytest.mark.parametrize("claimed", [0, 1481.80])

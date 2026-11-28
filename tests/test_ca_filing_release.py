@@ -491,9 +491,11 @@ def test_related_w2_employers_with_distinct_eins_require_review_before_release(w
     assert "input.excess_ss_employers" in output
     _assert_refused(workspace, "the tie_out gate recorded")
 
+    review_note = "employer-review.txt"
+    (workspace / review_note).write_text("Box b re-read: two employers\n")
     release.run(workspace, "material_evidence", "--id", "input.excess_ss_employers",
                 "--label", "Verified employers", "--outcome", "reviewed", "--input", ledger_path.name,
-                "--input", wages[0]["file"], "--input", wages[1]["file"])
+                "--input", wages[0]["file"], "--input", wages[1]["file"], "--input", review_note)
     worksheet = "payments-review.json"
     release.write_json(workspace / worksheet, {"schedule_3_line_11": 1481.80})
     release.run(workspace, "material_evidence", "--id", "input.payments", "--label", "Payments review",
@@ -502,3 +504,7 @@ def test_related_w2_employers_with_distinct_eins_require_review_before_release(w
     release.record_deduction(workspace)
     release.validate(workspace)
     _assert_ready(workspace, forms=("form_1040", None, "schedule_d", "california_540"))
+    # A changed bound source drops the outcome, so the next tie-out asks again.
+    (workspace / review_note).write_text("Box b re-read: one employer\n")
+    stale = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "input.excess_ss_employers" in stale

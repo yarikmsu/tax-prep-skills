@@ -68,6 +68,7 @@ import math
 import re
 import sys
 from dataclasses import dataclass, replace
+from collections.abc import Callable
 from itertools import combinations
 from pathlib import Path
 
@@ -2291,39 +2292,78 @@ def _employer_excess(employers: list[list[dict]], wages: list[float], base: floa
     return compute_excess_ss_withholding(withheld, wages, base, rate)["excess_credit"]
 
 
-def _check_related_employer_eins(forms: list[tuple[LedgerRecord, dict]], base: float, rate: float,
-                                 credit: float, sources: dict[str, str], numbers: dict[str, int]) -> None:
+# Company-form words a misread or retyped employer name gains or loses.
+_COMPANY_FORM_WORDS = frozenset({
+    "the", "and", "co", "company", "corp", "corporation", "inc", "incorporated", "llc", "llp", "lp",
+    "ltd", "limited", "pc", "plc", "pllc",
+})
+# Past this many related pairs for one employee every subset is too many to try.
+_MAX_RELATED_PAIRS = 12
+
+
+def _review_name(name: str) -> tuple[frozenset, str]:
+    """A looser employer name for the EIN review alone, where a false match
+    costs one review: "Acme Corp" and "Acme Corporation", "Acme LLC" and
+    "Acme L.L.C.", "AcmeCorp" and "Acme Corp" read as one name."""
+    words = "".join(ch if ch.isalnum() else " " for ch in name.casefold()).split()
+    # Squashed, "L.L.C." ends in "llc" and "A.B.C." reads as "ABC".
+    core = "".join(word for word in words if word not in _COMPANY_FORM_WORDS)
+    stripped = True
+    while stripped:
+        stripped = False
+        for word in sorted(_COMPANY_FORM_WORDS, key=len, reverse=True):
+            if core.endswith(word) and len(core) > len(word):
+                core, stripped = core[:-len(word)], True
+                break
+    return frozenset(words) - _COMPANY_FORM_WORDS, core
+
+
+def _review_related(first: tuple[frozenset, str], second: tuple[frozenset, str]) -> bool:
+    (words, core), (other_words, other_core) = first, second
+    return (bool(words and other_words) and (words <= other_words or other_words <= words)
+            or bool(core) and core == other_core)
+
+
+def _related_ein_pairs(forms: list[tuple[LedgerRecord, dict]], sources: dict[str, str],
+                       lowers: "Callable[[tuple[tuple[int, int], ...]], bool]") -> list[tuple[int, int]]:
+    """W-2 pairs with related employer names and different EINs that a
+    reviewed outcome does not bind, whose merge lowers the credit.
+
+    Every subset is tried: merging one pair can RAISE the credit (an
+    employer that withheld too little beside one that withheld too much)
+    and so hide another pair whose merge lowers it.
+    """
     records = [record for record, _ in forms]
-    tokens = [_payer_tokens(record.payer) for record in records]
+    names = [_review_name(record.payer) for record in records]
     eins = [_employer_ein(record) for record in records]
     reviewed = [bool(record.source_sha256 and sources.get(record.file) == record.source_sha256)
                 for record in records]
     pairs = tuple((i, j) for i, j in combinations(range(len(forms)), 2)
-                  if eins[i] != eins[j] and _related_payer_tokens(tokens[i], tokens[j])
+                  if eins[i] != eins[j] and _review_related(names[i], names[j])
                   and not (reviewed[i] and reviewed[j]))
-    if not pairs:
-        return
+    if len(pairs) > _MAX_RELATED_PAIRS:
+        return list(pairs)
+    blocking: set[tuple[int, int]] = set()
+    for size in range(1, len(pairs) + 1):
+        for subset in combinations(pairs, size):
+            if not set(subset) <= blocking and lowers(subset):
+                blocking.update(subset)
+    return sorted(blocking)
 
-    def reduced_by(matches: tuple[tuple[int, int], ...]) -> bool:
-        merged = _employer_groups(forms, assumed_matches=matches)
-        wages = [sum(_ss_wages(boxes) for boxes in group) for group in merged]
-        return _employer_excess(merged, wages, base, rate) < credit
 
-    # Check pairs independently so a change elsewhere cannot hide a decrease.
-    blocking = tuple(pair for pair in pairs if reduced_by((pair,)))
-    # Check joint merges as well: three related employers can need review even
-    # when merging any two alone leaves the credit unchanged.
-    if not blocking and len(pairs) > 1 and reduced_by(pairs):
-        blocking = pairs
-    if blocking:
-        documents = ", ".join(f"#{numbers[records[i].file]} and #{numbers[records[j].file]}" for i, j in blocking)
-        raise ValueError(f"W-2 documents {documents} have related employer names and different EINs. "
-                         f"Review Box b and record {material_evidence.EXCESS_SS_EMPLOYERS_ITEM} "
-                         "bound to the forms and parse ledger.")
+def _related_employers_message(related: list[tuple[LedgerRecord, LedgerRecord]],
+                               numbers: dict[str, int]) -> str:
+    documents = ", ".join(f"#{numbers[first.file]} and #{numbers[second.file]}" for first, second in related)
+    return (f"Documents {documents} are W-2s with related employer names and different EINs. Re-read "
+            f"Box b on each; if the employers differ, record {material_evidence.EXCESS_SS_EMPLOYERS_ITEM} "
+            "bound to the forms and parse ledger.")
 
 
 def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: float, rate: float,
-                   employer_sources: dict[str, str], numbers: dict[str, int]) -> float:
+                   employer_sources: dict[str, str],
+                   related: list[tuple[LedgerRecord, LedgerRecord]]) -> float:
+    """The employee's excess credit by EIN; W-2 pairs a mistyped Box b may
+    have split from one employer are added to `related`."""
     missing_ein = any(_employer_ein(record) is None for record, _ in forms)
     employers = _employer_groups(forms)
     wages = [sum(_ss_wages(boxes) for boxes in group) for group in employers]
@@ -2341,7 +2381,14 @@ def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: fl
     if credit:
         if missing_ein:
             raise ValueError(_review_employer_ein(person))
-        _check_related_employer_eins(forms, base, rate, credit, employer_sources, numbers)
+
+        def lowers(matches: tuple[tuple[int, int], ...]) -> bool:
+            merged = _employer_groups(forms, assumed_matches=matches)
+            merged_wages = [sum(_ss_wages(boxes) for boxes in group) for group in merged]
+            return _employer_excess(merged, merged_wages, base, rate) < credit
+
+        records = [record for record, _ in forms]
+        related.extend((records[i], records[j]) for i, j in _related_ein_pairs(forms, employer_sources, lowers))
     return credit
 
 
@@ -2397,9 +2444,13 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         if not claimed and not any(len(forms) > 1 for forms in employees.values()):
             return []
         base, rate = _wage_base_and_rate(tax_law)
-        document_numbers = {record.file: number for number, record in enumerate(ledger, 1)}
-        credit = round(sum(_person_excess(person, forms, base, rate, employer_sources or {}, document_numbers)
+        related: list[tuple[LedgerRecord, LedgerRecord]] = []
+        credit = round(sum(_person_excess(person, forms, base, rate, employer_sources or {}, related)
                            for person, forms in employees.items() if person not in railroad), 2)
+        if related:
+            # Both spouses' pairs at once, so one outcome binds every form.
+            numbers = {record.file: number for number, record in enumerate(ledger, 1)}
+            raise ValueError(_related_employers_message(related, numbers))
         if railroad:
             # The combined Social Security and Tier 1 worksheet is the payments
             # review's; the ledger still bounds it, and the other spouse's
