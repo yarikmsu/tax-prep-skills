@@ -1325,14 +1325,44 @@ def test_the_ein_review_names_the_employee_with_two_w2s():
     assert any("each of the spouse's Social Security W-2s" in item for item in report.missing_result_targets)
 
 
-def test_railroad_credit_remains_a_bound_without_an_ein():
+def test_railroad_credit_requires_an_ein_on_each_w2():
     ss = _ss_w2(1, 100000, 6200)
     railroad = _ss_w2(2, 100000, 0)
+    railroad["key_boxes"]["ss_wages"] = 0
     railroad["key_boxes"]["rrta_tier1_tax_withheld"] = 6200
     for record in (ss, railroad):
         del record["source_form"]["employer_ein"]
+    for index, record in enumerate((ss, railroad), 1):
+        report = _ss_return(ss, railroad, claimed=1481.80)
+        assert any("W-2 Box b" in item for item in report.missing_result_targets)
+        record["source_form"]["employer_ein"] = f"12-{index:07d}"
     assert not _ss_return(ss, railroad, claimed=1481.80).failed
     assert _ss_return(ss, railroad, claimed=1481.81).failed
+
+
+def test_single_railroad_employer_overwithholding_cannot_support_credit():
+    railroad = _ss_w2(1, 200000, 0)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=12000)
+    assert not _ss_return(railroad).failed
+    assert _ss_return(railroad, claimed=1081.80).failed
+
+
+def test_railroad_and_social_security_from_the_same_employer_are_capped_together():
+    railroad = _ss_w2(1, 100000, 0)
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    ss = _ss_w2(2, 100000, 6200)
+    ss["source_form"]["employer_ein"] = railroad["source_form"]["employer_ein"]
+    assert _ss_return(railroad, ss, claimed=1481.80).failed
+
+
+@pytest.mark.parametrize("claimed", [0, 1000])
+def test_a_railroad_spouse_cannot_hide_the_other_spouses_exact_credit(claimed):
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 100000, 6200)
+    railroad = _ss_w2(3, 100000, 0, person="spouse")
+    railroad["key_boxes"].update(ss_wages=0, rrta_tier1_tax_withheld=6200)
+    report = _ss_return(first, second, railroad, claimed=claimed)
+    assert any("less than the other employee's" in item for item in report.missing_result_targets)
 
 
 @pytest.mark.parametrize("ein", [None, "12-34", "１２-３４５６７８９", "12-123456a", "12-12345678", "123-4567890"])
