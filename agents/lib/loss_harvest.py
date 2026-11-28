@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from agents.lib.capabilities import _COMMUNITY_PROPERTY_STATES  # noqa: E402
+from agents.lib.capabilities import CapabilityError, in_community_property_state  # noqa: E402
 from agents.lib.projection import (  # noqa: E402
     ProjectionError,
     _cache_state_code_present_but_invalid,
@@ -576,8 +576,8 @@ def _apply_wash_sale_prorate(
     # advantaged lots are replacements when they share the buy's date+account).
     #
     # A quantity-less buy can use the remaining budget only when exactly one
-    # lot shares its acquisition key. Sort known quantities first so a buy
-    # with missing quantity cannot consume their budget.
+    # lot and no other buy share its acquisition key. Sort known quantities
+    # first so a buy with missing quantity cannot consume their budget.
     replacements = []
     for ticker, buys in in_window_buys.items():
         # Group buys by (date, account) within this ticker. defaultdict's
@@ -604,7 +604,9 @@ def _apply_wash_sale_prorate(
                     # A spouse's purchase remains available to replace the taxpayer's sale.
                     contribution = buy_qty
                 elif math.isinf(buy_qty):
-                    if budget > 0 and len(same_key_lots) == 1:
+                    # Beside another buy at the key, the quantity-less one may
+                    # be the lot while the other's shares replace an older lot.
+                    if budget > 0 and len(same_key_lots) == 1 and len(group_buys) == 1:
                         contribution = 0.0
                         budget = 0.0
                     else:
@@ -1298,9 +1300,11 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     # filer living apart may file HoH); a separate return names each owner.
     status = _canonical_status(filing_status, "harvest lot ownership")
     spouse_excluded = status != "MFJ"
-    address = profile.get("address") if isinstance(profile, dict) else None
-    if status == "MFS" and _normalize_state_code(
-            address.get("state") if isinstance(address, dict) else None) in _COMMUNITY_PROPERTY_STATES:
+    try:
+        community = status == "MFS" and in_community_property_state(profile)
+    except CapabilityError as exc:
+        raise LossHarvestError(str(exc)) from None
+    if community:
         # A lot has one owner here; community property splits its loss
         # between the separate returns, so a community lot counted whole.
         raise LossHarvestError(
@@ -1746,8 +1750,9 @@ def render_markdown(r: HarvestReport) -> str:
     if any(l.wash_sale_adjustments or l.held_back for l in r.lots):
         lines += ["The figures assume the oldest lots are sold first and, among lots acquired on "
                   "the same date, the one with the highest loss per share first (lot ID breaks "
-                  "ties). Where lots share a replacement purchase this order disallows the most. "
-                  "§1091 applies in the order the lots are actually sold.", ""]
+                  "ties). Among lots acquired on the same date that share a replacement purchase, "
+                  "this order disallows the most. §1091 applies in the order the lots are "
+                  "actually sold.", ""]
     if not eligible:
         lines.append(f"- No lot is cleared to harvest. See \"{held_title}\" below." if held
                      else "- No eligible losing lots — nothing to harvest.")
@@ -1888,9 +1893,9 @@ def render_markdown(r: HarvestReport) -> str:
               "buy is treated as a genuine replacement — populate `account` on every buy "
               "txn (brokerage CSVs always have it) for the textbook simple-case "
               "self-exclusion. A quantity-less buy matching `(date, ticker, account)` is "
-              "assumed to BE that lot's acquisition (contribution 0) only when that lot is the "
-              "only one at the key; beside another lot there (one at a gain, or the spouse's), "
-              "or matching no harvest lot, it stays a full block (conservative — add share "
+              "assumed to BE that lot's acquisition (contribution 0) only when that lot and that "
+              "buy are the only ones at the key; beside another lot or buy there (one at a gain, "
+              "or the spouse's), or matching no harvest lot, it stays a full block (conservative — add share "
               "counts for precise proration).",
               "- **Same-key buys share a SINGLE self-acquisition budget** that's consumed "
               "across them collectively. Split fills, separate same-day orders, and "
@@ -1898,9 +1903,8 @@ def render_markdown(r: HarvestReport) -> str:
               "match the matching lot quantity ONCE — not once per buy row. Excess "
               "across the entire group is the genuine §1091 replacement. Within a mixed "
               "group of qty-known and qty-less buys, qty-known buys consume the budget "
-              "first; a qty-less buy with remaining budget assumes the slot "
-              "(contribution 0) when one lot shares its key, and is otherwise a genuine "
-              "unknown-qty replacement (full block). Within a group the result does not "
+              "first; a qty-less buy is then a genuine unknown-qty replacement (full block), "
+              "because the known buy may be the lot and the qty-less one a replacement. Within a group the result does not "
               "depend on row order (qty-known buys sort first).",
               "- **A purchase matched to more than one losing lot holds the later lots "
               "back** when an earlier lot is not in the plan, is held back, or is a "

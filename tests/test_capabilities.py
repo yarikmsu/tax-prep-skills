@@ -731,6 +731,13 @@ def test_mfs_community_property_state_flagged_without_any_flag():
                for line in r.limitations)
 
 
+def test_mfs_community_property_domicile_flagged_with_a_mailing_address_elsewhere():
+    p = _profile(state="NY")
+    p["filing_status"] = "MFS"
+    p["residency"] = {"domicile_state": "CA"}
+    assert "community_property_mfs" in [f.rule_id for f in C.evaluate(p).manual]
+
+
 def test_mfs_common_law_state_not_flagged():
     p = _profile(state="NY")
     p["filing_status"] = "MFS"

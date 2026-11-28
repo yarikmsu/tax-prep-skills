@@ -1248,11 +1248,11 @@ def test_same_date_known_then_inf_blocks_fully():
     assert lot.wash_sale_status == "fully_blocked"
 
 
-def test_same_date_inf_consumes_remaining_budget_when_known_partial():
-    # Sparse-data simple case preserved: budget=10, known buy of 5, then inf.
-    # Sorted qty-known-first: 5 consumes 5 of budget (budget=5), inf claims
-    # remaining 5 (contribution 0, budget=0). Pool=0 → harvestable.
-    # Documents the inf-fills-remaining-budget heuristic.
+def test_same_date_inf_beside_a_known_buy_is_an_unknown_replacement():
+    # Budget 10, a known buy of 5, then a quantity-less buy. Filling the rest
+    # of the budget with it guessed which buy was the lot: beside an older lot,
+    # the known buy's shares were the replacement and the plan over-stated.
+    # The quantity is the filer's to supply.
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
@@ -1266,7 +1266,9 @@ def test_same_date_inf_consumes_remaining_budget_when_known_partial():
     )
     r = _build(holdings=h)
     lot = {l.id: l for l in r.lots}["A"]
-    assert lot.wash_sale_status == "clear"
+    assert lot.wash_sale_status == "fully_blocked" and "qty unknown" in lot.wash_sale_reason
+    h["recent_transactions"][1]["quantity"] = 5
+    assert {l.id: l for l in _build(holdings=h).lots}["A"].wash_sale_status == "clear"
 
 
 def test_multi_lot_same_group_shared_budget():
@@ -2794,7 +2796,7 @@ def test_the_sale_order_is_stated_when_no_lot_is_eligible():
 
 def test_the_caveats_state_when_a_quantity_less_buy_is_the_lots_own():
     md = lh.render_markdown(_scan([_losing_lot("A", "VTI", "2024-01-01", 10)], [])[0])
-    assert "only when that lot is the only one at the key" in md
+    assert "only when that lot and that buy are the only ones at the key" in md
     assert "are assumed to BE that lot's acquisition" not in md
 
 
@@ -2846,3 +2848,26 @@ def test_a_separate_return_in_a_community_property_state_is_refused(status, stat
             _scan_as(status, lots, state=state)
     else:
         _scan_as(status, lots, state=state)
+
+
+def test_a_quantity_less_buy_beside_a_known_one_does_not_clear_an_older_lot():
+    """The 11-20 rows were the lot's 20 shares, unrecorded, and 2.5 shares sold
+    since: the 2.5 replace the old lot, which the guess showed clear."""
+    old = _losing_lot("O", "VTI", "2020-01-01", 10)
+    new = _losing_lot("N", "VTI", "2026-11-20", 20, "B")
+    txns = [dict(_in_window_buy("VTI", None, account="B", date="2026-11-20")),
+            _in_window_buy("VTI", 2.5, account="B", date="2026-11-20")]
+    report, by_id = _scan([old, new], txns)
+    assert "O" not in report.eligible_lot_ids
+
+
+def test_a_community_property_domicile_is_refused_whatever_the_mailing_address():
+    """Domicile governs community property (Publication 555); a California
+    domicile with a New York mailbox was counted whole."""
+    result, profile = _load("result.json"), _load("taxpayer_profile.json")
+    result["meta"]["filing_status"] = profile["filing_status"] = "MFS"
+    profile["address"] = {"state": "NY"}
+    profile["residency"] = {"domicile_state": "CA"}
+    with pytest.raises(lh.LossHarvestError, match="Form 8958"):
+        lh.build_harvest(result, profile, _load("tax_law_2026.json"),
+                         _holdings_with([_owned("T1", "taxpayer")]), 2026, name="cp", today=TODAY)

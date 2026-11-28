@@ -144,7 +144,7 @@ permissions through the same guarded writer `/tax-scenario` uses.
   are shown separately and excluded from the harvest and savings. Include the
   spouse's purchases when checking wash sales. Keep account labels distinct by owner
   and identify purchase ownership when the same label covers both owners. A separate
-  return in a community-property state is refused: Form 8958 splits community gains
+  return domiciled or addressed in a community-property state is refused: Form 8958 splits community gains
   and losses between the spouses, which the scanner does not model. [IRS Publication 550](https://www.irs.gov/publications/p550)
 - **Replacement basis plan:** give each buy's `account_type` (`taxable`, `ira`,
   `roth_ira`, or `other_tax_advantaged`) and its actual quantity. Taxable purchases
@@ -173,8 +173,8 @@ permissions through the same guarded writer `/tax-scenario` uses.
   it acquired, is treated as a genuine §1091 replacement (a same-day same-ticker buy
   in your spouse's account IS a wash-sale trigger per Rev. Rul. 2008-5 + spousal-account
   rules — and the scanner correctly catches it). Account comparison is case-insensitive
-  and whitespace-trimmed. If a purchase lacks quantity and multiple lots share its
-  date, ticker and account, it remains a replacement of unknown quantity. Brokerage
+  and whitespace-trimmed. If a purchase lacks quantity and another lot or buy shares
+  its date, ticker and account, it remains a replacement of unknown quantity. Brokerage
   CSVs always include account info; paste the full
   transaction list and the scanner does the right thing.
 - **`transaction_coverage`**: the user's statement that `recent_transactions` is the
