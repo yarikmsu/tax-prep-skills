@@ -353,12 +353,35 @@ def test_dropped_excess_social_security_credit_blocks_release(workspace):
     _assert_ready(workspace)
     ledger_path = workspace / "parse_ledger.json"
     ledger = release.read_json(ledger_path)
-    for record in ledger["records"]:
+    for index, record in enumerate(ledger["records"]):
         if record["form_type"] == "W-2":
             record["key_boxes"].update(ss_wages=100000, ss_tax_withheld=6200)
             record["payer"] = record["doc_id"]  # Distinct synthetic employers.
+            record["source_form"]["employer_ein"] = f"12-{index:07d}"
     release.write_json(ledger_path, ledger)
     release.run(workspace, "return_builder", "--check")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Schedule 3 line 11 disagrees" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+
+def test_employer_name_variants_cannot_turn_one_employers_excess_into_a_credit(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    wages = [record for record in ledger["records"] if record["form_type"] == "W-2"]
+    for index, (record, payer) in enumerate(zip(wages, ("Acme Corp", "Acme Corporation"), strict=True)):
+        record["payer"] = payer
+        record["source_form"].update(employer_ein="12-0000001", series_id=f"statement-{index}")
+        record["key_boxes"].update(ss_wages=100000, ss_tax_withheld=6200)
+    release.write_json(ledger_path, ledger)
+
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"].update(schedule_3_line_11_excess_ss=1481.80, line_31_schedule3_part2=1481.80)
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
     output = release.run(workspace, "tie_out", "--json", expected=2)
     assert "Schedule 3 line 11 disagrees" in output
     _assert_refused(workspace, "the tie_out gate recorded")

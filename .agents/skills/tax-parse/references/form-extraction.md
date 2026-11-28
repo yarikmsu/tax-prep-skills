@@ -30,7 +30,10 @@ the correction with the original Form W-2 before recording the effective
 amounts once. Keep the other document's coverage record and explain why its
 amounts were not added again.
 
-Use the same reviewed employer name on multiple W-2s from the same employer.
+Record the verified employer EIN from Box b as `source_form.employer_ein` on
+each W-2, using the printed `NN-NNNNNNN` format. Leave the field absent when
+Box b is unreadable and review the original before claiming an excess Social
+Security credit. Keep the reviewed employer name in `payer`.
 Record Tier 1 railroad retirement tax withheld as
 `key_boxes.rrta_tier1_tax_withheld` when present in the covered-year W-2's
 railroad reporting box. The amount triggers a manual Schedule 3 line 11 review.

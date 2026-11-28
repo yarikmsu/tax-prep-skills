@@ -18,6 +18,7 @@ BUSINESS_GROSS = "self_employment_gross"
 K_REPORTED_GROSS = "form_1099k_box_1a"
 _K_ROUTES = (BUSINESS_GROSS, "personal_1099k", "capital_proceeds")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
+_EMPLOYER_EIN = re.compile(r"[0-9]{2}-[0-9]{7}")
 
 
 def form_code(name: str) -> str:
@@ -87,8 +88,9 @@ def validate_form(value: object, skipped: bool) -> dict:
         return {}
     if not isinstance(value, dict) or set(value) - {
         "tax_year", "series_id", "account_last4", "corrected", "duplicate_of", "superseded_by", "included_in",
+        "employer_ein",
     }:
-        raise ValueError("source_form must use the filing year, series, correction and disposition fields")
+        raise ValueError("source_form must use the filing year, series, employer, correction and disposition fields")
     if "tax_year" in value and (type(value["tax_year"]) is not int or not 2000 <= value["tax_year"] <= 2099):
         raise ValueError("source_form.tax_year must be a four-digit filing year")
     for field in ("series_id", "duplicate_of", "superseded_by", "included_in"):
@@ -99,6 +101,9 @@ def validate_form(value: object, skipped: bool) -> dict:
     if "account_last4" in value and (not isinstance(value["account_last4"], str)
                                     or not re.fullmatch(r"[0-9]{4}", value["account_last4"])):
         raise ValueError("source_form.account_last4 must record only four account digits")
+    if "employer_ein" in value and (not isinstance(value["employer_ein"], str)
+                                    or not _EMPLOYER_EIN.fullmatch(value["employer_ein"])):
+        raise ValueError("source_form.employer_ein must use the W-2 Box b format NN-NNNNNNN")
     links = {"duplicate_of", "superseded_by", "included_in"} & set(value)
     if len(links) > 1 or (links and not skipped):
         raise ValueError("a duplicate, superseded or included form must be a skip with one retained record")
