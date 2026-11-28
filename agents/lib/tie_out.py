@@ -828,7 +828,7 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         if person not in ("primary", "spouse", "joint"):
             raise TieOutError(f"{where}.person must be primary/spouse/joint")
         try:
-            source_form = source_reconciliation.validate_form(rec.get("source_form"), skipped is not None)
+            source_form = source_reconciliation.validate_form(rec.get("source_form"), skipped is not None, form_type)
             business_receipts = source_reconciliation.validate_book(
                 rec.get("business_receipts"), boxes, person, skipped is not None)
         except ValueError as exc:

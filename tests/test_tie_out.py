@@ -419,6 +419,96 @@ def test_a_standalone_form_inside_a_consolidated_one_is_included_once():
     assert any("no matching evidence" in issue for issue in _issues(single, inside_single, result=result)[0])
 
 
+def _included_business_form(form_type, *, doc_id="business", digest="b" * 64, amount=120):
+    boxes = {"self_employment_gross": amount}
+    if form_type == "1099-K":
+        boxes["form_1099k_box_1a"] = amount
+    return dict(_form(doc_id, form_type, "Broker", digest), skipped="in consolidated",
+                key_boxes={}, source_form={"included_in": "consolidated", "included_boxes": boxes})
+
+
+@pytest.mark.parametrize("form_type", ["1099-NEC", "1099-K"])
+def test_included_business_source_must_be_fully_carried_by_the_container(form_type):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    standalone = _included_business_form(form_type)
+    result = {"meta": {"tax_year": 2025}, "form_1040": {"line_2b_taxable_interest": 40},
+              "schedule_c": {"line_1_gross_receipts": 0}}
+    for amount in (None, 119.99):
+        if amount is not None:
+            consolidated["key_boxes"]["self_employment_gross"] = amount
+        issues, disclosures = _issues(consolidated, standalone, result=result)
+        assert any("Consolidated document #1" in issue and "documents #2" in issue
+                   and "self_employment_gross" in issue for issue in issues)
+        assert not disclosures
+    consolidated["key_boxes"]["self_employment_gross"] = 120
+    result["schedule_c"]["line_1_gross_receipts"] = 120
+    ledger = _ledger(consolidated, standalone)
+    report = T.evaluate(ledger, result, [record.file for record in ledger])
+    gross = next(check for check in report.sum_checks if check.category == "self_employment_gross")
+    assert gross.ledger_total == 120 and gross.ok
+    assert not report.source_issues
+    assert "Document #2 is reported within consolidated document #1." in report.source_disclosures
+
+
+@pytest.mark.parametrize("included_boxes", [None, {"self_employment_gross": 119, "form_1099k_box_1a": 120}])
+def test_included_1099_k_cannot_omit_or_partially_route_box_1a(included_boxes):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    standalone = _included_business_form("1099-K")
+    if included_boxes is None:
+        standalone["source_form"].pop("included_boxes")
+    else:
+        standalone["source_form"]["included_boxes"] = included_boxes
+    issues, disclosures = _issues(consolidated, standalone)
+    assert any("Document #2 in consolidated document #1" in issue and "Box 1a" in issue for issue in issues)
+    assert not disclosures
+
+
+def test_included_1099_nec_needs_its_own_box_1_evidence():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    standalone = _included_business_form("1099-NEC")
+    standalone["source_form"].pop("included_boxes")
+    issues, disclosures = _issues(consolidated, standalone)
+    assert any("Document #2 in consolidated document #1" in issue and "Box 1" in issue for issue in issues)
+    assert not disclosures
+
+
+def test_one_container_amount_cannot_clear_two_separate_business_forms():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    first = _included_business_form("1099-NEC")
+    second = _included_business_form("1099-NEC", doc_id="another", digest="c" * 64)
+    issues, _ = _issues(consolidated, first, second)
+    assert any("covering all included business receipts from documents #2, #3" in issue for issue in issues)
+
+
+def test_consolidated_business_link_keeps_the_cross_form_books_gate():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    nec = _included_business_form("1099-NEC")
+    k = _form("active-k", "1099-K", "Processor", "c" * 64,
+              self_employment_gross=120, form_1099k_box_1a=120)
+    issues, _ = _issues(consolidated, nec, k)
+    assert any("receipt-level book" in issue for issue in issues)
+
+
+def test_mixed_business_forms_in_one_container_cannot_hide_overlap():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=240)
+    nec = _included_business_form("1099-NEC")
+    k = _included_business_form("1099-K", doc_id="another", digest="c" * 64)
+    issues, _ = _issues(consolidated, nec, k)
+    assert any("Keep the business forms active separately to trace overlap" in issue for issue in issues)
+
+
+def test_included_consolidated_interest_keeps_its_existing_disposition():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    interest = dict(_form("interest", "1099-INT", "Broker", "b" * 64), skipped="in consolidated",
+                    key_boxes={}, source_form={"included_in": "consolidated"})
+    assert _issues(consolidated, interest) == ((), ("Document #2 is reported within consolidated document #1.",))
+
+
 @pytest.mark.parametrize("kept_type, flag, accepted", [
     ("Form W-2c", True, True), ("W-2", True, False),            # a W-2 is corrected only by a W-2c
     ("1099-INT Corrected", True, True), ("1099-INT", True, False), ("Corrected 1099-INT", False, False),

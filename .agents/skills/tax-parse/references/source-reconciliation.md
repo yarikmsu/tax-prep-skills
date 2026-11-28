@@ -28,6 +28,18 @@ record and `source_sha256`, including copies and replaced versions.
   every 1099 from that issuer.
 - A standalone 1099 already reported inside a consolidated statement is a
   skip with `source_form.included_in` naming the consolidated record.
+  On an included Form 1099-NEC, record Box 1 in
+  `source_form.included_boxes.self_employment_gross`. For an included Form
+  1099-K, record Box 1a in `source_form.included_boxes.form_1099k_box_1a`
+  and record the amount routed to business in
+  `source_form.included_boxes.self_employment_gross`. This link requires the
+  full Box 1a amount routed to business. Keep a Form 1099-K with a mixed or
+  nonbusiness route active and route its receipts separately. The retained
+  consolidated record carries the combined gross for the included business
+  forms in `key_boxes.self_employment_gross`. The included amounts serve as
+  evidence and the retained record contributes the gross to the return.
+  If one statement includes both positive 1099-NEC and 1099-K amounts, use
+  separate active business source records so the books can track overlap.
 - A skipped W-2 or 1099 beside an active one from the same issuer and
   recipient needs one of `duplicate_of`, `superseded_by` or `included_in`.
   A reason alone is not checked, and a real second form would vanish.
