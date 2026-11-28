@@ -2722,3 +2722,127 @@ def test_an_unknown_kind_is_refused_outside_the_window_too():
     del holdings["transaction_coverage"]  # the coverage check reads kinds too
     with pytest.raises(lh.LossHarvestError, match=r"recent_transactions\[1\] kind"):
         _build(holdings=holdings)
+
+
+def _scan_as(status, lots, txns=(), *, state=None, pairs=()):
+    result, profile = _load("result.json"), _load("taxpayer_profile.json")
+    result["meta"]["filing_status"] = profile["filing_status"] = status
+    if state is not None:
+        profile["address"] = {"state": state}
+    holdings = _holdings_with(lots, list(txns))
+    holdings["wash_sale_classifications"] = [_review_pair(*pair) for pair in pairs]
+    return lh.build_harvest(result, profile, _load("tax_law_2026.json"), holdings, 2026,
+                            name="status", today=TODAY)
+
+
+def _owned(lot_id, owner, acquired="2025-03-01", account="Brokerage", quantity=50):
+    return dict(_losing_lot(lot_id, "VTI", acquired, quantity, account), owner=owner)
+
+
+@pytest.mark.parametrize("status", ["mfs", " MFS ", "Mfs"])
+def test_a_separate_return_is_read_in_any_spelling(status):
+    """The rates canonicalised "mfs" to the $1,500 cap while the spouse rule
+    compared the raw string, so the spouse's loss doubled the harvest."""
+    report = _scan_as(status, [_owned("T1", "taxpayer"), _owned("S1", "spouse", account="Spouse")])
+    assert report.eligible_lot_ids == ["T1"] and report.spouse_loss == 1000
+    with pytest.raises(lh.LossHarvestError, match="lot T1.*owner"):
+        _scan_as(status, [_losing_lot("T1", "VTI", "2025-03-01", 50)])
+
+
+@pytest.mark.parametrize("status,counted", [("HoH", False), ("Single", False), ("QSS", False),
+                                            ("MFJ", True)])
+def test_only_a_joint_return_counts_the_spouses_lots(status, counted):
+    report = _scan_as(status, [_owned("T1", "taxpayer"), _owned("S1", "spouse", account="Spouse")])
+    assert ("S1" in report.eligible_lot_ids) is counted
+    assert report.spouse_loss == (0 if counted else 1000)
+    # Other statuses may still omit owner; only a separate return requires it.
+    assert _scan_as(status, [_losing_lot("T1", "VTI", "2025-03-01", 50)]).eligible_lot_ids == ["T1"]
+
+
+def test_a_spouses_lot_earns_no_own_purchase_exclusion():
+    """A spouse's lot at the buy's key cannot make the buy the taxpayer's own
+    acquisition, even with the buy marked as the taxpayer's."""
+    buy = dict(_in_window_buy("VTI", 50, account="Joint"), owner_is_taxpayer=True)
+    report = _scan_as("MFS", [_owned("T1", "taxpayer"),
+                              _owned("S1", "spouse", acquired="2026-12-01", account="Joint")], [buy])
+    assert report.eligible_lot_ids == [] and report.wash_sale_blocked_loss == 1000
+
+
+def test_a_spouses_tax_advantaged_lot_is_not_listed_as_the_filers():
+    lots = [_owned("T1", "taxpayer"),
+            dict(_owned("S2", "spouse", account="Spouse IRA"), tax_advantaged=True)]
+    md = lh.render_markdown(_scan_as("MFS", lots))
+    assert "## Tax-advantaged account positions" not in md
+
+
+@pytest.mark.parametrize("order", [("A2", "B"), ("B", "A2")])
+def test_lot_id_breaks_a_tie_in_loss_per_share(order):
+    lots = {"A2": _losing_lot("A2", "VTI", "2024-01-01", 10),
+            "B": _losing_lot("B", "VTI", "2024-01-01", 20)}
+    report, by_id = _scan([lots[lot_id] for lot_id in order], [_in_window_buy("VTI", 10)])
+    assert by_id["A2"].wash_sale_status == "fully_blocked"
+    assert report.total_loss_harvested == 0 and report.unverified_loss == 400
+
+
+def test_the_sale_order_is_stated_when_no_lot_is_eligible():
+    lots = [_losing_lot("A", "VTI", "2024-01-01", 10),
+            dict(_losing_lot("B", "VTI", "2024-01-01", 10, "Other"), cost_basis=11000, current_value=1000)]
+    md = lh.render_markdown(_scan(lots, [_in_window_buy("VTI", 10)])[0])
+    assert "No lot is cleared to harvest" in md
+    assert "the one with the highest loss per share first" in md
+
+
+def test_the_caveats_state_when_a_quantity_less_buy_is_the_lots_own():
+    md = lh.render_markdown(_scan([_losing_lot("A", "VTI", "2024-01-01", 10)], [])[0])
+    assert "only when that lot is the only one at the key" in md
+    assert "are assumed to BE that lot's acquisition" not in md
+
+
+def test_an_unsold_lots_own_purchase_replaces_an_older_lot():
+    """NEW is held back, so the plan keeps it: the purchase that created it
+    replaces OLD's sale, which was shown clear."""
+    old = dict(_losing_lot("OLD", "VTI", "2020-01-01", 10, "B"), cost_basis=2000, current_value=1000)
+    new = dict(_losing_lot("NEW", "VTI", "2026-12-05", 10, "A"), cost_basis=1010, current_value=1000)
+    txns = [_in_window_buy("VTI", 10, account="A", date="2026-12-05"),
+            _in_window_buy("VOO", 3, account="C", date="2026-12-05")]
+    report, by_id = _scan([old, new], txns, [("VTI", "VOO", "identical")])
+    assert report.eligible_lot_ids == []
+    assert by_id["OLD"].held_back
+    assert any("bought lot NEW, which this plan does not sell" in gap
+               for gap in by_id["OLD"].classification_gaps)
+
+
+def test_a_lot_bought_in_the_same_purchase_is_replaced_by_its_unsold_sibling():
+    first = dict(_losing_lot("L0", "VOO", "2026-12-01", 20, "B"), cost_basis=2020, current_value=2000)
+    second = dict(_losing_lot("L1", "VOO", "2026-12-01", 20, "B"), cost_basis=4000, current_value=2000)
+    txns = [_in_window_buy("VOO", 40, account="B"), _in_window_buy("VTI", 10, account="A"),
+            _in_window_buy("VOO", 3, account="C")]
+    report, by_id = _scan([first, second], txns, [("VTI", "VOO", "identical")])
+    assert report.eligible_lot_ids == []
+    assert by_id["L0"].held_back and by_id["L1"].held_back
+
+
+def test_history_must_list_every_share_bought_in_the_window():
+    """A 10-share buy beside 60 shares bought that day (the taxpayer's 10 and
+    the spouse's 50) cleared the lot the unlisted 50 replace."""
+    lots = [_owned("T1", "taxpayer"),
+            _owned("T2", "taxpayer", acquired="2026-12-01", account="Joint", quantity=10),
+            _owned("S1", "spouse", acquired="2026-12-01", account="Joint", quantity=50)]
+    buy = dict(_in_window_buy("VTI", 10, account="Joint"), owner_is_taxpayer=True)
+    report = _scan_as("MFS", lots, [buy])
+    assert report.eligible_lot_ids == []
+    assert all("lists fewer shares" in (lot.history_gap or "") for lot in report.lots if lot.held_back)
+    report = _scan_as("MFS", lots, [buy, dict(_in_window_buy("VTI", 50, account="Joint"),
+                                               owner_is_taxpayer=False)])
+    assert not any(lot.history_gap for lot in report.lots)
+
+
+@pytest.mark.parametrize("status,state,refused", [("MFS", "CA", True), ("MFS", "WA", True),
+                                                  ("MFJ", "CA", False), ("MFS", "NY", False)])
+def test_a_separate_return_in_a_community_property_state_is_refused(status, state, refused):
+    lots = [_owned("T1", "taxpayer")]
+    if refused:
+        with pytest.raises(lh.LossHarvestError, match="Form 8958"):
+            _scan_as(status, lots, state=state)
+    else:
+        _scan_as(status, lots, state=state)

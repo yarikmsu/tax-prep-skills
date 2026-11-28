@@ -396,7 +396,7 @@ def _strict_bool(d: dict, key: str, *, default: bool = False) -> bool:
     must NOT silently coerce to True/False because the flag value drives
     whether a trusted reminder fires. A retiree whose profile says
     `"subject_to_rmd_primary": "no"` should hard-error, not get a phantom RMD.
-    Reuses the strict pattern established in loss_harvest._optional_bool.
+    The same strictness loss_harvest applies to a lot's required tax_advantaged.
     """
     if key not in d or d[key] is None:
         return default

@@ -326,8 +326,9 @@ no extractor reads. Its extensions are the tie-out's, held equal by test.
   by the basis fraction via `compute_form_8606`; degrades to full-taxable otherwise.
 - **`/tax-harvest`** — tax-loss harvesting scanner: after `/tax-compute`, reads `holdings.json`
   (open lots + recent_transactions). Each lot requires a `tax_advantaged` boolean. On a
-  separate return each lot also requires `owner`, either `taxpayer` or `spouse`. Spouse
-  losses are reported separately while spouse purchases stay in the replacement pool.
+  separate return each lot also requires `owner`, either `taxpayer` or `spouse`; one in a
+  community-property state is refused (Form 8958). Off a joint return spouse losses are
+  reported separately while spouse purchases stay in the replacement pool.
   The scanner classifies losing lots as ELIGIBLE or wash-sale-BLOCKED
   (§1091, ±30 days, all accounts in the file pooled), computes the post-harvest Schedule D
   netting against the baseline gains in `result.json` (reusing `scenario._net_capital_gains`
