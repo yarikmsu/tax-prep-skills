@@ -227,8 +227,13 @@ def _included_in_active(records: dict, record: LedgerRecord) -> bool:
 
 
 def _own_1099k_section(record: LedgerRecord) -> bool:
-    """A statement other than a Form 1099-K that reports Box 1a itself."""
-    return _base_form(record.form_type) != "1099K" and dict(record.key_boxes).get(K_REPORTED_GROSS, 0) > 0
+    """A consolidated statement that reports a Form 1099-K's Box 1a itself.
+
+    Only a consolidated one: a 1099-NEC carrying the box by mistake (its
+    TY2026 Box 1a) read as a 1099-K and turned off the books gate beside a
+    real one.
+    """
+    return _consolidated(_base_form(record.form_type)) and dict(record.key_boxes).get(K_REPORTED_GROSS, 0) > 0
 
 
 def _review_forms(ledger: list[LedgerRecord], year: object,
@@ -414,8 +419,15 @@ def _book_total(ledger: list[LedgerRecord], year: object,
     joint = classes.pop("joint", set())
     books = [r for r in ledger if r.business_receipts]
     if not books:
-        if any(_BUSINESS_FORMS <= forms | joint for forms in [*classes.values(), set()]):
-            raise ValueError("Reconcile business Forms 1099-NEC and 1099-K to a receipt-level book before final export.")
+        for forms in [*classes.values(), set()]:
+            if _BUSINESS_FORMS <= forms:
+                raise ValueError("Reconcile business Forms 1099-NEC and 1099-K to a receipt-level book "
+                                 "before final export.")
+            if _BUSINESS_FORMS <= forms | joint:
+                # A book has one owner, so a joint record can never be on one.
+                raise ValueError("A business Form 1099-NEC or 1099-K is recorded for both spouses. Record "
+                                 "its recipient, then reconcile that recipient's Forms 1099-NEC and 1099-K "
+                                 "to a receipt-level book before final export.")
         return None, 0, 0
     if type(year) is not int or any((r.source_form or {}).get("tax_year") != year for r in books):
         raise ValueError("business books must identify the covered tax year")

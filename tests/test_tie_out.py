@@ -618,7 +618,16 @@ def test_a_joint_business_form_counts_for_each_spouses_books_gate():
     nec = _form("nec", "1099-NEC", "Client", "a" * 64, person="joint", self_employment_gross=120)
     k = _form("k", "1099-K", "Processor", "b" * 64, self_employment_gross=120, form_1099k_box_1a=120)
     issues, _ = _issues(nec, k)
-    assert any("receipt-level book" in issue for issue in issues)
+    assert any("Record its recipient" in issue and "receipt-level book" in issue for issue in issues)
+
+
+def test_a_1099_nec_carrying_box_1a_is_not_read_as_a_1099_k_section():
+    """Read as a 1099-K, a 1099-NEC with the box beside a real 1099-K was one
+    form class, and the books gate for the pair turned off."""
+    nec = _form("nec", "1099-NEC", "Client", "a" * 64, self_employment_gross=8000, form_1099k_box_1a=8000)
+    k = _form("k", "1099-K", "Processor", "b" * 64, self_employment_gross=500, form_1099k_box_1a=500)
+    issues, _ = _issues(nec, k)
+    assert any("Reconcile business Forms 1099-NEC and 1099-K" in issue for issue in issues)
 
 
 def test_a_fraction_of_a_cent_in_the_consolidated_gross_is_named():
