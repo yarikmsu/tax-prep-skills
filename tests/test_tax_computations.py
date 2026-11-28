@@ -8277,9 +8277,12 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "tax_computations/federal/irmaa.py::read_irmaa_tiers": "direct",
         "tax_computations/federal/international.py::check_form_8938_required": "direct",
         "tax_computations/federal/penalties.py::compute_form_2210": "direct",
+        "tax_computations/federal/payments.py::check_extension_allocation": (
+            "conditional: no allocation applies to a missing or zero extension payment. "
+            "The filing status is validated before deciding ownership of any positive payment."),
         "tax_computations/federal/payments.py::reviewed_payments": (
-            "conditional: a legacy return without payment activity returns no payment workpaper "
-            "for every status; estimate ownership uses the validated status on the reviewed path"),
+            "conditional: only positive extension payments and reviewed federal payment rows "
+            "depend on filing status. The applicable ownership checks validate it."),
         "tax_computations/federal/rentals.py::compute_rental_passive_losses": "direct",
         "tax_computations/federal/rentals.py::compute_residential_rental_return": "direct",
         "tax_computations/federal/schedule_c.py::medicare_status_key": "direct",
@@ -8314,6 +8317,9 @@ class TestEveryEngineEntryPointValidatesItsFilingStatus:
         "ptet.py::analyze": "delegates: _salt_cap",
         "return_builder.py::build": "delegates: _build_with_payment_workpaper",
 
+        "return_builder.py::check": (
+            "conditional: only a positive extension payment can make its checks depend on "
+            "filing status, which the extension allocation check validates before branching."),
         "projection/__init__.py::compute_safe_harbor": (
             "conditional: the status picks the 110% factor on the PRIOR-YEAR "
             "prong only; the 90%-of-current-year prong never reads it, and the "
