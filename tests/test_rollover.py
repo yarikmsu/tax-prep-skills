@@ -509,10 +509,15 @@ def _prior_with_baskets(section):
 
 
 @pytest.mark.parametrize("section", [None, {"method": None, "foreign_tax_paid_usd": 0, "ftc_allowed": 0},
-                                     {"method": "deduction", "foreign_tax_paid_usd": 400, "ftc_allowed": 0}])
-def test_category_carryovers_survive_a_year_without_form_1116(section):
+                                     {"method": "deduction", "foreign_tax_paid_usd": 400, "ftc_allowed": 0},
+                                     {"method": "not_claimed", "foreign_tax_paid_usd": 400, "ftc_allowed": 0}])
+def test_category_carryovers_after_a_year_without_form_1116_wait_for_its_schedule_b(section):
+    # Excess limitation absorbs carryovers whether or not a credit was claimed
+    # (Treas. Reg. §1.904-2(c)(3)(ii)), and a year with no method may have
+    # filed Form 1116 by hand: carried unreduced, they over-state the credit.
     (change,) = _basket_changes(_prior_with_baskets(section))
-    assert change.json_path == "prior_year.imported_ftc_baskets" and change.action_suggested == "ask"
+    assert change.json_path == "prior_year.imported_ftc_baskets" and change.action_suggested == "skip"
+    assert "1.904-2(c)(3)(ii)" in change.reason and "Schedule B" in change.reason
     # 2014's tenth carryforward year was 2024.
     assert change.prior_value == [{"basket": "passive", "carryforward_by_origin_year": {"2021": 125}}]
     if section and section["method"] == "deduction":

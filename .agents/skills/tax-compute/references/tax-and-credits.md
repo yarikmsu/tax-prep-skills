@@ -321,7 +321,10 @@ Schedule B line 4 uses a carryover only against an excess limitation,
 oldest origin year first, and the new carryforward is at most line 14 less
 line 10 less line 23. Section 951A category income has no carryover in or
 out. Reconcile the opening balances in `prior_year.imported_ftc_baskets`
-using the prior Schedule B before applying them. Sum amounts actually used in `carryover_applied_usd` and the
+using the prior Schedule B before applying them. Rollover carries them past a
+simplified-election year unreduced, but not past a year that deducted foreign
+tax, claimed none or recorded no method: its excess limitation still absorbed
+them, so import that return's Schedule B. Sum amounts actually used in `carryover_applied_usd` and the
 current-year closing balances in `carryforward_created_usd`. Attach the
 reviewed worksheets for all categories and bind them, the result, profile,
 and covered-year tax-law file to `input.form_1116_review` as `reviewed`.

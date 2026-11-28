@@ -911,7 +911,7 @@ def _ftc_changes(prior: PriorReturn, current: CurrentState, entry: dict) -> list
 
 
 def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict) -> list[Change]:
-    from agents.lib.tax_computations.federal.foreign_tax_credit import (
+    from agents.lib.tax_computations.federal.international import (
         CARRYOVER_PATH, carryover_baskets, verify_form_1116,
     )
 
@@ -940,9 +940,19 @@ def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict
     if current.profile.get("tax_year", prior.year + 1) != prior.year + 1:
         raise RolloverError("Reconcile Form 1116 carryovers for the intervening tax years.")
     reason = "Review Form 1116 Schedule B balances and ownership by category and origin year."
+    action = "ask"
     if method != "form_1116":
         reason += " " + _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
-    return [Change("carryforwards", CARRYOVER_PATH, "taxpayer_profile.json", rows, target, "ask", reason)]
+    if method not in ("form_1116", "simplified"):
+        # Only the election year leaves them whole (Form 1116 instructions:
+        # "Don't reduce the carryback or carryforward"). A deduction year or one
+        # claiming neither still absorbs them up to its excess limitation, and an
+        # archive with no method may have filed Form 1116 by hand.
+        action = "skip"
+        reason += (" Excess limitation absorbs these carryovers whether or not a credit was claimed "
+                   "(Treas. Reg. §1.904-2(c)(3)(ii)): import the filed return's Schedule B with "
+                   "prior_return rather than carrying these balances unreduced.")
+    return [Change("carryforwards", CARRYOVER_PATH, "taxpayer_profile.json", rows, target, action, reason)]
 
 
 def _diff_identity(prior: PriorReturn, current: CurrentState) -> list[Change]:
@@ -1510,7 +1520,7 @@ def _main(argv: list[str]) -> int:
         return 1
 
     if args.cmd == "diff":
-        from agents.lib.tax_computations.federal.foreign_tax_credit import CARRYOVER_PATH
+        from agents.lib.tax_computations.federal.international import CARRYOVER_PATH
 
         private_ftc = {CARRYOVER_PATH, "prior_year.unused_ftc_carryforward"}
         if args.json:
