@@ -367,6 +367,47 @@ class _Context:
     qualified_dividends: float
     net_ltcg: float
     schedule_d_tax: tuple[float, float] | None = None
+    # Form 2555's line 16 comes from the Foreign Earned Income Tax Worksheet,
+    # which stacks the exclusion: the regular tax on line 15 bounds neither side.
+    foreign_earned_income: bool = False
+
+
+# The Tax Table prices a $50 row at its midpoint, at most $25 below the
+# income, so below its ceiling the worksheet's line 44 can sit that far under
+# the exact tax (Form 1040 instructions, Tax Table).
+_TAX_TABLE_HALF_ROW = 25
+
+
+def _whole_dollar_slack(amount: float) -> "tuple[float, float]":
+    """The amount and its whole-dollar rounding, either of which a filer may enter."""
+    rounded = float(math.floor(amount + 0.5))
+    return min(amount, rounded), max(amount, rounded)
+
+
+def _check_worksheet_tax(worksheet_tax: float, table_ceiling: float, taxable: float, ctx: "_Context") -> None:
+    """The Schedule D Tax Worksheet's own bounds on its line 47.
+
+    Line 47 is the smaller of line 45 and line 46, the regular tax on line 1,
+    so from the Tax Table ceiling up it never exceeds the regular tax. It is
+    never below the tax on line 18, line 1 less line 10, and line 10 is at
+    most the qualified dividends plus the net capital gain: a $0 figure is not
+    a worksheet. Below the ceiling line 44 uses the Tax Table, so the floor
+    allows half a row; the cap there waits on AA121.
+    """
+    if taxable == 0 and worksheet_tax > 0:
+        raise Blocked("Schedule D Tax Worksheet tax exceeds the regular tax on Form 1040 line 15.")
+    if ctx.foreign_earned_income:
+        return
+    ordinary = max(0.0, taxable - ctx.qualified_dividends - ctx.net_ltcg)
+    if taxable < table_ceiling:
+        ordinary = max(0.0, ordinary - _TAX_TABLE_HALF_ROW)
+    floor = _whole_dollar_slack(compute_bracket_tax(ordinary, ctx.brackets)[0])[0]
+    if worksheet_tax < floor:
+        raise Blocked("Schedule D Tax Worksheet tax is below the tax on Form 1040 line 15 less the qualified "
+                      "dividends and net capital gain, which its line 18 taxes.")
+    if taxable >= table_ceiling and worksheet_tax > _whole_dollar_slack(
+            compute_bracket_tax(taxable, ctx.brackets)[0])[1]:
+        raise Blocked("Schedule D Tax Worksheet tax exceeds the regular tax on Form 1040 line 15.")
 
 
 def _tax(g, ctx: "_Context") -> float:
@@ -374,9 +415,7 @@ def _tax(g, ctx: "_Context") -> float:
     taxable = g("line_15_taxable_income")
     if ctx.schedule_d_tax is not None:
         worksheet_tax, table_ceiling = ctx.schedule_d_tax
-        if (taxable >= table_ceiling and worksheet_tax > compute_bracket_tax(taxable, ctx.brackets)[0]
-                or taxable == 0 and worksheet_tax > 0):
-            raise Blocked("Schedule D Tax Worksheet tax exceeds the regular tax on Form 1040 line 15.")
+        _check_worksheet_tax(worksheet_tax, table_ceiling, taxable, ctx)
         return worksheet_tax
     if ctx.limits is not None:
         cg_zero, cg_fifteen = ctx.limits
@@ -933,7 +972,8 @@ def ledger_income(ledger, where: str = "parse_ledger.json") -> "dict[str, float]
     return out
 
 
-def _context(result: dict, tax_law: dict, filing_status: str, *, special_rate_gains: bool = False) -> _Context:
+def _context(result: dict, tax_law: dict, filing_status: str, *, special_rate_gains: bool = False,
+             foreign_earned_income: bool = False) -> _Context:
     """The law and the Schedule D figures line 16 prices.
 
     `net_ltcg` is Schedule D line 15 run through the shared `net_capital_gains`
@@ -961,9 +1001,13 @@ def _context(result: dict, tax_law: dict, filing_status: str, *, special_rate_ga
         ceiling = _maybe_num(raw_ceiling)
         if ceiling is None or ceiling <= 0 or ceiling != raw_ceiling or not ceiling.is_integer():
             raise Unpriceable("Fetch the covered-year federal Tax Table ceiling before applying the Schedule D Tax Worksheet.")
-        return _Context(brackets, None, 0.0, 0.0, schedule_d_tax=(tax, ceiling))
     net_st, net_lt = _schedule_d_nets(result)
     cap_input, _ordinary_short = net_capital_gains(net_st, net_lt)
+    if worksheet_tax is not None:
+        qualified = _num((result.get("form_1040") or {}).get("line_3a_qualified_dividends", 0),
+                         "form_1040.line_3a_qualified_dividends")
+        return _Context(brackets, None, qualified, max(0.0, cap_input), schedule_d_tax=(tax, ceiling),
+                        foreign_earned_income=foreign_earned_income)
     # The floor below is what decides whether the WORKSHEET RUNS, not what the
     # worksheet is handed: `compute_qdcg_tax` clamps a negative `net_ltcg`
     # itself, so a small loss reaches the same tax either way. A loss LARGER
@@ -1111,7 +1155,8 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
         return _num(working.get(field, 0), f"form_1040.{field}")
 
     ctx = _context({**result, "form_1040": working}, tax_law, filing_status,
-                   special_rate_gains=has_special_rate_gains(ledger, profile or {}))
+                   special_rate_gains=has_special_rate_gains(ledger, profile or {}, result),
+                   foreign_earned_income=((profile or {}).get("flags") or {}).get("lives_abroad") is True)
     if ctx.schedule_d_tax is not None and _pfic_is_in_play(result):
         _tax(g, ctx)  # The PFIC return keeps its reviewed line 15 by hand.
     # LAST OF ALL, and after `_context`: the waiver `--check` records as a pass

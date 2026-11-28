@@ -4,11 +4,13 @@ For a declared California Form 540NR part-year plan, retain actual receipt and
 service dates, each W-2 CA Box 16 wage amount (including a confirmed zero when
 absent), payroll workday and source evidence, stock-exercise source and basis
 worksheets, and resident and nonresident income allocations. Keep differences
-in tax law separate from sourcing. Use workday records and source evidence
-for allocations based on where the wages were earned. Use the existing CA withholding, PTET and
+in tax law separate from sourcing; annual wages divided by residence days is
+not evidence. Use workday records and source evidence for allocations based on
+where the wages were earned. Use the existing CA withholding, PTET and
 ISO ledger categories once, regardless of mailing address. Leave uncertain
-allocations open for tax-compute's `state-return-ca-part-year.md` reference.
-Use the taxpayer's reviewed residence facts and income-source evidence.
+allocations open for tax-compute's `state-return-ca-part-year.md` reference;
+parsing never guesses domicile. Use the taxpayer's reviewed residence facts
+and income-source evidence.
 
 ### W-2 Extraction
 Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)

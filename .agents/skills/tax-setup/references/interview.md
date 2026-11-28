@@ -134,9 +134,10 @@ interview never captures is invisible to every downstream check.
   1099-S was received** — if yes, the sale must be reported even when
   fully excluded)
 - Did you sell real property for which depreciation was allowed or allowable,
-  including rental property or a home used for business? Set
-  `sold_depreciated_real_property` and collect the depreciation and sale
-  records for Schedule D Tax Worksheet review.
+  including rental property or a home used for business, or receive an
+  installment payment on such a sale? Set `sold_depreciated_real_property` to
+  true or false — the capability gate refuses it unanswered — and collect the
+  depreciation and sale records for Schedule D Tax Worksheet review.
 - Did you receive an inheritance? → sets `received_inheritance` (bequests
   themselves are not income, but capture date-of-death FMV basis
   documentation now; EXCEPTION — income in respect of a decedent (§691):

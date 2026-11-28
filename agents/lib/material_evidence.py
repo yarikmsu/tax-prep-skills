@@ -204,7 +204,7 @@ def _required_filing_inputs(result: dict, profile: dict, law: dict | None = None
     flags = profile.get("flags") or {}
     form = result.get("form_1040") or {}
     required = {DEDUCTION_ITEM: True}
-    if has_special_rate_gains(ledger or [], profile):
+    if has_special_rate_gains(ledger or [], profile, result):
         required[SCHEDULE_D_WORKSHEET_ITEM] = True
 
     def flags_set(*names):
@@ -351,12 +351,16 @@ def filing_input_issues(captured: dict[str, bytes | None], *, ledger: list | Non
             if outcome == "not_applicable" and positive:
                 reasons.append(f"{prefix} The return still reports an applicable amount or election.")
                 continue
-            if not mandatory <= inputs.keys() or any(not captured.get(name) or
-                    inputs[name] != receipt._sha256(captured[name] or b"") for name in mandatory):
-                reasons.append(f"{prefix} The result, profile or covered-year law needs fresh review.")
+            # The worksheet reads box 2b and 2d amounts the return does not
+            # restate, so a re-read source changes only the ledger.
+            bound = mandatory | ({"parse_ledger.json"} if item_id == SCHEDULE_D_WORKSHEET_ITEM else set())
+            if not bound <= inputs.keys() or any(not captured.get(name) or
+                    inputs[name] != receipt._sha256(captured[name] or b"") for name in bound):
+                ledger_note = " or parse ledger" if "parse_ledger.json" in bound else ""
+                reasons.append(f"{prefix} The result, profile or covered-year law{ledger_note} needs fresh review.")
                 continue
             method = item.get("deduction_method")
-            if not _worksheet_attached(item_id, method, inputs, mandatory):
+            if not _worksheet_attached(item_id, method, inputs, bound):
                 reasons.append(f"{prefix} Attach the reviewed worksheet as a source.")
                 continue
             if item_id == SCHEDULE_D_WORKSHEET_ITEM:

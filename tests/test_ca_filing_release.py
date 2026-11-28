@@ -129,15 +129,27 @@ def test_reit_special_rate_distribution_blocks_release_until_worksheet_is_review
     release.record_deduction(workspace)
     worksheet = "schedule-d-tax-review.json"
     release.write_json(workspace / worksheet, {"line_47_tax": 22892})
+    worksheet_inputs = ("--input", result_path.name, "--input", "taxpayer_profile.json", "--input", release.LAW,
+                        "--input", ledger_path.name, "--input", worksheet, "--input", broker["file"])
+    release.run(workspace, "material_evidence", "--id", "input.schedule_d_tax_worksheet",
+                "--label", "Schedule D Tax Worksheet", "--outcome", "computed", *worksheet_inputs)
+    release.validate(workspace)
+    _assert_refused(workspace, f"{reason}. Record the worksheet outcome as reviewed.")
     release.run(workspace, "material_evidence", "--id", "input.schedule_d_tax_worksheet",
                 "--label", "Reviewed Schedule D Tax Worksheet", "--outcome", "reviewed",
                 "--input", result_path.name, "--input", "taxpayer_profile.json", "--input", release.LAW,
-                "--input", worksheet, "--input", broker["file"])
+                "--input", ledger_path.name, "--input", worksheet, "--input", broker["file"])
     release.validate(workspace)
     assert release.read_json(result_path)["form_1040"]["line_16_tax"] == 22892
     _assert_ready(workspace)
     release.write_json(workspace / worksheet, {"line_47_tax": 22891})
     _assert_refused(workspace, reason)
+    release.write_json(workspace / worksheet, {"line_47_tax": 22892})
+    _assert_ready(workspace)
+    # A re-read box 2b changes only the ledger: the worksheet priced the old one.
+    broker["key_boxes"]["unrecaptured_section_1250_gain"] = 10
+    release.write_json(ledger_path, ledger)
+    _assert_refused(workspace, f"{reason}. The result, profile or covered-year law or parse ledger needs fresh review.")
 
 
 def test_next_year_estimate_requires_credit_review_before_release(workspace):
