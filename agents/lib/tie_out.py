@@ -877,7 +877,9 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         is_misc = "1099MISC" in re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
         if (skipped is None and (is_misc or MISC_OTHER in boxes)) or "misc_income" in rec:
             try:
-                misc_income = validate_misc_income(rec.get("misc_income"), boxes, skipped=skipped is not None)
+                included_in = source_form.get("included_in") if source_reconciliation._base_form(form_type) == "1099MISC" else None
+                misc_income = validate_misc_income(rec.get("misc_income"), boxes, skipped=skipped is not None,
+                                                   included_in=included_in)
                 if misc_income["box_1"] and (rental_source is None or rental_source["kind"] != "information_return"):
                     raise ValueError("1099-MISC box1 needs a reconciled rental information-return source, separate from complete property books")
             except ValueError as exc:
@@ -2801,7 +2803,9 @@ def derive_schedule1_other_workpaper(ledger: "list[LedgerRecord]", result: dict,
             continue
         if rec.skipped is not None:
             if rec.misc_income is not None:
-                source = validate_misc_income(rec.misc_income, boxes, skipped=True)
+                included_in = ((rec.source_form or {}).get("included_in")
+                               if source_reconciliation._base_form(rec.form_type) == "1099MISC" else None)
+                source = validate_misc_income(rec.misc_income, boxes, skipped=True, included_in=included_in)
                 source_years.append(source["tax_year"])
             continue
         source = validate_misc_income(rec.misc_income, boxes)

@@ -9,6 +9,7 @@ import pytest
 from agents.lib import parse_records, parse_utils, receipt
 from agents.lib.workspace import ABANDONED_NAME
 from evals import ca_filing_2025 as release
+from tests.test_misc_income import source as misc_source
 
 
 # Independent worksheet results. The derivation and source forms are in
@@ -312,6 +313,51 @@ def test_included_business_receipts_missing_from_consolidated_statement_block_re
     report = release.run(workspace, "tie_out", "--json", expected=2)
     assert "Consolidated document #1 needs self_employment_gross" in report
     _assert_refused(workspace, "the tie_out gate recorded")
+
+
+def test_included_misc_missing_from_consolidated_statement_blocks_release(workspace):
+    release.compute(workspace)
+    records = {record["doc_id"]: record for _, record in parse_records.read_records(workspace)}
+    retained = records["broker"]
+    retained["form_type"] = "Consolidated 1099"
+    parse_records.write_record(workspace, retained)
+    source = workspace / "documents" / "included-misc.pdf"
+    release._document(source, "Synthetic Form 1099-MISC", [("Box 8 Substitute payments", "125.00")])
+    included = {
+        "doc_id": source.stem, "file": source.relative_to(workspace).as_posix(),
+        "person": retained["person"], "payer": retained["payer"], "form_type": "1099-MISC",
+        "source_sha256": sha256(source.read_bytes()).hexdigest(),
+        "skipped": "included in consolidated statement", "key_boxes": {},
+        "source_form": {"tax_year": release.YEAR, "included_in": retained["doc_id"]},
+    }
+    parse_records.write_record(workspace, included)
+    release.run(workspace, "parse_records", "--build-ledger")
+    release.run(workspace, "return_builder", "--check")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "record reviewed misc_income" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    included["misc_income"] = misc_source(box_3=0, box_3_business=0, box_3_other=0,
+                                          box_4=0, box_5=0, box_6=0, box_8=125)
+    parse_records.write_record(workspace, included)
+    release.run(workspace, "parse_records", "--build-ledger")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "Consolidated document #1 needs miscellaneous_other_income" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    retained["misc_income"] = included["misc_income"]
+    retained["key_boxes"]["miscellaneous_other_income"] = 125
+    parse_records.write_record(workspace, retained)
+    release.run(workspace, "parse_records", "--build-ledger")
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["schedule_1_other_income"] = {"remaining_income": 0, "remaining_income_confirmed": True}
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    release.record_deduction(workspace)
+    release.validate(workspace)
+    assert release.read_json(result_path)["form_1040"]["line_8_schedule1_other"] == 125
+    _assert_ready(workspace, forms=("form_1040", "schedule_1_other_income", "schedule_d", "california_540"))
 
 
 def test_changed_business_remittance_reopens_overlap_review(workspace):
