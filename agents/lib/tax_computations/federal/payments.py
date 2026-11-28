@@ -154,7 +154,8 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     parsed = []
     refs = set()
     has_late_estimate = False
-    has_unconfirmed_balance = False
+    balance_count = 0
+    unconfirmed_balance: list[int] = []
     third_due = next_business_day(date(year, 9, 15))
     for index, raw in enumerate(rows, 1):
         ref, item = _payment_row(raw, index, year, status)
@@ -169,12 +170,16 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
         # balance-due date.
         if item["kind"] == "estimate" and date.fromisoformat(item["date"]) > third_due:
             has_late_estimate = True
-        if item["kind"] == "balance_due" and raw.get("distinct_payment_confirmed") is not True:
-            has_unconfirmed_balance = True
-    if has_late_estimate and has_unconfirmed_balance:
-        raise ValueError("A balance-due payment is recorded beside an estimate paid after the third "
-                         "installment's due date. Confirm separate remittances with "
-                         "distinct_payment_confirmed on every balance-due row")
+        if item["kind"] == "balance_due":
+            balance_count += 1
+            if raw.get("distinct_payment_confirmed") is not True:
+                unconfirmed_balance.append(index)
+    if unconfirmed_balance and (balance_count > 1 or has_late_estimate):
+        reason = ("Two or more balance-due payments are recorded" if balance_count > 1 else
+                  "A balance-due payment is recorded beside an estimate paid after the third installment's due date")
+        rows_named = ", ".join(f"estimated_payments.federal[{index}]" for index in unconfirmed_balance)
+        raise ValueError(f"{reason}. Confirm each is a separate remittance and set distinct_payment_confirmed "
+                         f"on every balance-due row ({rows_named})")
     _check_extension_not_an_estimate(result, rows, parsed, year)
     if not math.isfinite(sum(row["amount"] for row in parsed)):
         raise ValueError("Federal payment records exceed the finite range for a total")

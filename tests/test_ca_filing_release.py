@@ -129,6 +129,37 @@ def test_early_payment_near_a_posted_estimate_blocks_release(workspace):
     _assert_refused(workspace, "the tie_out gate recorded")
 
 
+def test_multiple_balance_due_payments_block_release_until_verified(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.write_w2(workspace / "documents" / "w2-two.pdf", 57000, 7000, 4700)
+    profile_path = workspace / "taxpayer_profile.json"
+    profile = release.read_json(profile_path)
+    rows = [
+        {"payment_id": "earlier-payment", "kind": "balance_due", "amount": 600,
+         "date": "2026-01-16", "person": "primary", "tax_year": release.YEAR},
+        {"payment_id": "later-payment", "kind": "balance_due", "amount": 600.01,
+         "date": "2026-01-17", "person": "primary", "tax_year": release.YEAR},
+    ]
+    profile["estimated_payments"]["federal"] = rows[:1]
+    profile["estimated_payments"]["federal_review"].update(estimate_count=0, estimate_total=0)
+    release.write_json(profile_path, profile)
+    release.compute(workspace)
+
+    profile["estimated_payments"]["federal"] = rows
+    release.write_json(profile_path, profile)
+
+    for module, args in (("return_builder", ("--check",)), ("tie_out", ("--json",))):
+        assert "distinct_payment_confirmed" in release.run(workspace, module, *args, expected=2)
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    for row in rows:
+        row["distinct_payment_confirmed"] = True
+    release.write_json(profile_path, profile)
+    release.compute(workspace)
+    assert release.read_json(workspace / "result.json")["form_2210"]["balance_due_paid"] == 1200.01
+    _assert_ready(workspace)
+
+
 def test_unallocated_joint_extension_payment_blocks_non_joint_release(workspace):
     release.compute(workspace)
     result_path = workspace / "result.json"

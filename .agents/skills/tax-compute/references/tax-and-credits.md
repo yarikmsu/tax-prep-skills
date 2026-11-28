@@ -508,11 +508,11 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   the effective date.
 - `balance_due` for a reviewed payment already made with an early-filed balance-due
   return, using the covered-year Table 1 effective date. It affects Form
-  2210 timing and the remaining remittance in the filing checklist. When an
-  estimate is dated after the third installment's due date (September 15, or
-  the next business day), confirm each balance-due row is a separate
-  remittance and set `distinct_payment_confirmed: true` on each one: a payment
-  typed twice a day or a cent apart differs only by its label.
+  2210 timing and the remaining remittance in the filing checklist. If there
+  are multiple balance-due rows, or an estimate is dated after the third
+  installment's due date (September 15, or the next business day), confirm
+  each balance-due row represents a separate remittance and set
+  `distinct_payment_confirmed: true` on every balance-due row.
   Record the reviewed federal extension payment in
   `form_1040.schedule_3_line_10_extension_payment` and include it in
   Form 1040 line 31. If line 31 includes payments besides excess Social
