@@ -507,10 +507,10 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   the effective date.
 - `balance_due` for a reviewed payment already made with an early-filed balance-due
   return, using the covered-year Table 1 effective date. It affects Form
-  2210 timing and the remaining remittance in the filing checklist. When
-  the effective date and amount match an estimate, confirm separate
-  remittances before setting `distinct_payment_confirmed: true` on the
-  balance-due row.
+  2210 timing and the remaining remittance in the filing checklist. If any
+  estimate falls between January 1 and April 15 of the following year, confirm
+  each balance-due row is a separate remittance and set
+  `distinct_payment_confirmed: true` on each one.
   Record the reviewed federal extension payment in
   `form_1040.schedule_3_line_10_extension_payment` and include it in
   Form 1040 line 31. If line 31 includes payments besides excess Social
@@ -518,6 +518,12 @@ return), `date` (effective ISO date), `person` (`primary`, `spouse` or `joint`),
   payment before recording any balance-due rows. When line 10 is positive,
   verify each balance-due row is a separate remittance and mark it
   `not_extension_payment_confirmed: true`.
+  For a positive line 10 on a non-joint return, set
+  `form_1040.schedule_3_line_10_joint_4868` to `true` or `false` after
+  checking the original extension. If the extension was joint, record only
+  the agreed share belonging to this return and set
+  `form_1040.schedule_3_line_10_allocation_confirmed: true`.
+  [2025 Form 4868 instructions](https://www.irs.gov/pub/irs-prior/f4868--2025.pdf)
 
 For a separate return, include only the taxpayer's own amounts and confirmed
 allocations from joint payments. Record `allocation_confirmed: true` on each

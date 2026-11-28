@@ -633,7 +633,7 @@ def _schedule_d_nets(result: dict) -> "tuple[float, float]":
     )
 
 
-def check(result: dict, profile: "dict | None" = None) -> None:
+def check(result: dict, profile: "dict | None" = None, *, filing_status: str | None = None) -> None:
     """Everything wrong with the return AS RECORDED, in one place and before
     any arithmetic.
 
@@ -651,7 +651,8 @@ def check(result: dict, profile: "dict | None" = None) -> None:
     """
     _check_components(result.get("form_1040") or {})
     _check_the_amt(result)
-    _check_the_payments(result)
+    _check_the_payments(result, filing_status or (result.get("meta") or {}).get("filing_status")
+                        or (profile or {}).get("filing_status"))
     _check_charitable_vintages(result, profile)
     if profile is not None:
         from agents.lib.tax_computations.federal.ira_basis import validate_individual_8606
@@ -706,7 +707,7 @@ def _check_charitable_vintages(result, profile):
             raise Blocked(f"{jurisdiction} charitable carryover unresolved: {exc}") from exc
 
 
-def _check_the_payments(result: dict) -> None:
+def _check_the_payments(result: dict, filing_status: str | None) -> None:
     """Excess social security withholding is inside line 31, not beside it.
 
     `schedule_3_line_11_excess_ss` is persisted at the 1040 level so
@@ -736,7 +737,8 @@ def _check_the_payments(result: dict) -> None:
             "up, which loses the credit, or that it is being counted twice.")
     # Schedule 3 line 10 is inside Part II as well. Null means not yet
     # reviewed; a recorded amount must be a real payment that line 31 holds.
-    if (result.get("form_1040") or {}).get("schedule_3_line_10_extension_payment") is not None:
+    form = result.get("form_1040") or {}
+    if form.get(federal_payments.EXTENSION_PAYMENT) is not None:
         extension = _path_num(result, "form_1040.schedule_3_line_10_extension_payment",
                               "schedule_3_line_10_extension_payment")
         if extension < 0 or extension + excess - part_2 > CENT:
@@ -745,6 +747,10 @@ def _check_the_payments(result: dict) -> None:
                 f"excess social security of {excess:,.2f} and a Schedule 3 Part II total "
                 f"of {part_2:,.2f} on Form 1040 line 31. Both lines are inside Part II, "
                 "so line 31 must hold them: correct line 10 or line 31.")
+        try:
+            federal_payments.check_extension_allocation(form, filing_status)
+        except ValueError as exc:
+            raise Blocked(str(exc)) from None
 
 
 
@@ -1074,7 +1080,7 @@ def _build_with_payment_workpaper(result: dict, tax_law: dict, ledger, filing_st
     result = {**result, "form_1040": {**result["form_1040"],
         **({"line_8_schedule1_other": settled_income} if settled_income is not None else {}),
         **({"line_25c_other_withholding": other_withholding["total"]} if other_withholding is not None else {})}}
-    check(result, profile)
+    check(result, profile, filing_status=filing_status)
 
     try:
         payments = federal_payments.reviewed_payments(result, profile or {}, filing_status)

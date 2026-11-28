@@ -1586,6 +1586,32 @@ def test_an_estimate_matching_the_extension_payment_needs_separate_remittances(t
     assert reviewed_payments(result, profile).line_26 == 1000
 
 
+@pytest.mark.parametrize("estimate_date,needs_confirmation", [
+    ("2026-12-31", False), ("2027-01-01", True), ("2027-01-15", True),
+    ("2027-04-15", True), ("2027-04-16", False),
+])
+def test_estimates_near_balance_due_payments_require_separate_remittances(tmp_path, estimate_date,
+                                                                  needs_confirmation):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    estimate = _federal_row("posted-estimate", 500, date=estimate_date)
+    estimate["late_credit_confirmed"] = True
+    near_match = _federal_row("early-payment", 500.01, date="2027-01-16", kind="balance_due")
+    later = _federal_row("later-payment", 1000, date="2027-02-01", kind="balance_due")
+    profile = _set_federal_payments(ws, [near_match, estimate, later], 1, 500)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"}}
+    if needs_confirmation:
+        with pytest.raises(ValueError, match="distinct_payment_confirmed"):
+            reviewed_payments(result, profile)
+        near_match["distinct_payment_confirmed"] = True
+        with pytest.raises(ValueError, match="distinct_payment_confirmed"):
+            reviewed_payments(result, profile)
+        later["distinct_payment_confirmed"] = True
+    reviewed = reviewed_payments(result, profile)
+    assert reviewed.line_26 == 500 and len(reviewed.rows) == 3
+
+
 @pytest.mark.parametrize("extension,line_31,excess", [
     (-5, 0, 0), (1000, 0, 0), (600, 1000, 500), ("1000", 1000, 0),
 ])
@@ -1601,6 +1627,37 @@ def test_an_extension_payment_inside_line_31_builds(tmp_path):
     ws = _workspace(tmp_path, {"line_31_schedule3_part2": 1500, "schedule_3_line_11_excess_ss": 500,
                               "schedule_3_line_10_extension_payment": 1000})
     assert RB._main(["--workspace", str(ws)]) == 0
+
+
+@pytest.mark.parametrize("joint,allocation,extension,problem", [
+    (None, None, 1000, "schedule_3_line_10_joint_4868"),
+    ("false", None, 1000, "schedule_3_line_10_joint_4868"),
+    (True, None, 1000, "schedule_3_line_10_allocation_confirmed"),
+    (True, "true", 1000, "schedule_3_line_10_allocation_confirmed"),
+    (True, True, 1000, None),
+    (False, None, 1000, None),
+    (None, None, 0, None),
+])
+def test_separate_return_extension_payment_requires_reviewed_ownership(tmp_path, joint, allocation,
+                                                                     extension, problem):
+    from agents.lib.tax_computations.federal.payments import filing_differences
+
+    ws = _workspace(tmp_path, {"line_31_schedule3_part2": extension,
+                              "schedule_3_line_10_extension_payment": extension})
+    result, profile, _, law, _ = RB.load(ws)
+    result["meta"]["filing_status"] = profile["filing_status"] = "MFS"
+    if joint is not None:
+        result["form_1040"]["schedule_3_line_10_joint_4868"] = joint
+    if allocation is not None:
+        result["form_1040"]["schedule_3_line_10_allocation_confirmed"] = allocation
+    issues = filing_differences(result, profile, law)
+    if problem:
+        with pytest.raises(RB.Blocked, match=problem):
+            RB.check(result, profile)
+        assert any(problem in issue for issue in issues)
+    else:
+        RB.check(result, profile)
+        assert not issues
 
 
 def test_2210_refundable_credits_exclude_the_extension_payment(tmp_path):
