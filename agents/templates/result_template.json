@@ -412,6 +412,7 @@
 
   "form_1116_ftc": {
     "_include_if": "has_foreign_tax_paid flag is true",
+    "_note_method": "REQUIRED whenever this section exists or the parse ledger records foreign_tax_paid: form_1116 (Form 1116 attached), simplified (the §904(j) election, no Form 1116), deduction (Schedule A line 6) or not_claimed. Only form_1116 and simplified put a credit on form_1040.schedule_3_line_1_foreign_tax_credit; only form_1116 may apply a carryover or create a carryforward, and only it reaches the filing package or /tax-rollover's carryforward. foreign_tax_paid_on_statements_usd equals the ledger total under every method, so a dropped statement amount still fails the tie-out.",
     "method": null,
     "category": null,
     "foreign_tax_paid_local_currency": 0,

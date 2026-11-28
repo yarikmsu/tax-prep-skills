@@ -182,7 +182,7 @@ Based on `taxpayer_profile.json` flags:
 | has_self_employment | Schedule C, Schedule SE |
 | has_capital_gains | Schedule D, Form 8949 |
 | has_hsa | Form 8889 |
-| has_foreign_tax_paid | Form 1116 (or simplified if ≤ $600 MFJ) |
+| has_foreign_tax_paid | Form 1116, unless the §904(j) election under Foreign Tax Credit in Step 7 applies, or the tax is deducted or not claimed |
 | has_foreign_accounts | Form 8938 threshold check, FBAR flag |
 | dependents with CTC | CTC worksheet (Schedule 8812) |
 | has_ira_contributions | Form 8606 / Schedule 1 line 20 |

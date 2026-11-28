@@ -108,7 +108,7 @@ from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402
     compute_other_forms_withholding, compute_w2g_totals,
 )
 from agents.lib.tax_computations.federal.international import (  # noqa: E402
-    check_foreign_tax_credit, FTC_STATEMENT_TAX,
+    check_foreign_tax_credit, FTC_STATEMENT_TAX, QUALIFIED_PAYEE_STATEMENTS,
 )
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
@@ -2515,10 +2515,14 @@ def _foreign_tax_credit_checks(ledger: list[LedgerRecord], result: dict, profile
         if record.skipped is not None or not dict(record.key_boxes).get("foreign_tax_paid"):
             continue
         code = source_reconciliation.form_code(record.form_type)
-        payee_statement = ("1099DIV" in code or "1099INT" in code or source_reconciliation._consolidated(code)
+        # A consolidated statement qualifies only as a consolidated Form 1099: a
+        # foreign broker's "Consolidated Tax Certificate" is no U.S. payee statement.
+        payee_statement = ("1099DIV" in code or "1099INT" in code
+                           or ("1099" in code and source_reconciliation._consolidated(code))
                            or "K3" in code or ("K1" in code and "1041" in code))
         if not payee_statement or not record.source_sha256:
-            problems.append(f"Document #{number} needs a source-bound qualified payee statement for foreign tax paid.")
+            problems.append(f"Document #{number} needs a source-bound qualified payee statement for foreign tax paid: "
+                            f"{QUALIFIED_PAYEE_STATEMENTS}.")
     try:
         check_foreign_tax_credit(result, profile, law, statement_tax)
     except (ValueError, TypeError, OverflowError) as exc:

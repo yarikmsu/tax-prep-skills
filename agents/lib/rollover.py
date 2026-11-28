@@ -451,13 +451,20 @@ def _transform_abs(raw):
     return abs(_amount(raw))
 
 
+def _ftc_paid_less_allowed(raw: dict) -> float:
+    return max(_amount(raw.get("foreign_tax_paid_usd")) - _amount(raw.get("ftc_allowed")), 0)
+
+
 def _transform_ftc_unused(raw):
-    """Unused taxes originate only in a year without the simplified election."""
-    if not isinstance(raw, dict) or raw.get("method") == "simplified":
+    """Unused taxes originate only in a Form 1116 year.
+
+    A simplified election, a deduction or tax not claimed has no limitation to
+    exceed, so paid less allowed there is no carryforward. An archive with no
+    method is resolved by `_ftc_review_changes`, never applied.
+    """
+    if not isinstance(raw, dict) or raw.get("method") != "form_1116":
         return 0
-    paid = _amount(raw.get("foreign_tax_paid_usd"))
-    allowed = _amount(raw.get("ftc_allowed"))
-    return max(paid - allowed, 0)
+    return _ftc_paid_less_allowed(raw)
 
 
 def _transform_ira_basis(raw):
@@ -822,12 +829,8 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         prior_value = transform(raw) if transform else raw
         target_doc = current.profile if entry["target_file"] == "taxpayer_profile.json" else current.result
         current_value = _get_path(target_doc, entry["target_path"], default=0)
-        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict) and raw.get("method") == "simplified":
-            opening = _amount(_get_path(prior.profile, entry["target_path"], 0))
-            if opening > 0:
-                out.append(Change("carryforwards", entry["target_path"], entry["target_file"], opening,
-                                  current_value, "ask", "Review the surviving older foreign tax carryovers by origin year. "
-                                  "The simplified election year used and generated none."))
+        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict) and raw.get("method") != "form_1116":
+            out.extend(_ftc_review_changes(prior, entry, raw, current_value))
             continue
         if not prior_value and not (entry.get("transform") == "ca_ptet_vintages" and current_value):
             continue
@@ -864,6 +867,39 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
             reason=reason,
         ))
     return out
+
+
+_FTC_NO_CARRYFORWARD = {
+    "simplified": "The simplified election year used and generated none.",
+    "deduction": "A deduction year generated none and reduces each older carryover by the credit it would have used.",
+    "not_claimed": "A year claiming no foreign tax generated none.",
+}
+
+
+def _ftc_review_changes(prior: PriorReturn, entry: dict, raw: dict, current_value) -> list[Change]:
+    """Foreign tax carryforwards from a prior year that did not file Form 1116.
+
+    Every one is "ask". A recorded method other than Form 1116 created no
+    carryforward, so only an older opening balance survives, and its origin
+    years decide what is left. An archive with no method may be any of the
+    four; paid less allowed is offered for review, never applied.
+    """
+    method = raw.get("method")
+    target, target_file = entry["target_path"], entry["target_file"]
+    if method is None:
+        legacy = _ftc_paid_less_allowed(raw)
+        if not legacy:
+            return []
+        return [Change("carryforwards", target, target_file, legacy, current_value, "ask",
+                       "The prior return does not record whether it filed Form 1116, took the simplified election, "
+                       "deducted foreign tax or claimed none. Confirm the Form 1116 Schedule B carryforward by "
+                       "category and origin year before using paid less allowed.")]
+    opening = _amount(_get_path(prior.profile, target, 0))
+    if opening <= 0:
+        return []
+    reason = _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
+    return [Change("carryforwards", target, target_file, opening, current_value, "ask",
+                   f"Review the surviving older foreign tax carryovers by origin year. {reason}")]
 
 
 def _diff_identity(prior: PriorReturn, current: CurrentState) -> list[Change]:

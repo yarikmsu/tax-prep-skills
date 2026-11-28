@@ -267,16 +267,29 @@ Pass the full Schedule 8812 inputs, not just the child count:
 **Foreign Tax Credit (Line 20 via Schedule 3):**
 Record the qualified payee statement total in
 `form_1116_ftc.foreign_tax_paid_on_statements_usd` and the total foreign tax
-paid in `foreign_tax_paid_usd`. Complete the covered-year Form 1116 when
-required and set `method` to `form_1116`. For the §904(j) election, set
-`method` to `simplified` only after confirming that all foreign-source
-income qualifies as passive and that all of it and its tax were reported on
-qualified payee statements. Set both corresponding `*_confirmed` fields.
-Compare the paid tax to the covered-year `foreign_tax_credit_simplified`
-limit. Use `max_mfj` for a joint return and `max_single` for other statuses.
+paid in `foreign_tax_paid_usd`. Qualified payee statements are Form 1099-DIV,
+Form 1099-INT, Schedule K-1 (Form 1041), Schedule K-3 (Form 1065 or 1120-S),
+or a substitute statement for one. Always set `method` once the section
+exists or the ledger records foreign tax paid; the tie-out refuses a
+section without one:
+- `form_1116`: complete the covered-year Form 1116.
+- `simplified`: the §904(j) election. Use it only after confirming that all
+  foreign-source income qualifies as passive and that all of it and its tax
+  were reported on qualified payee statements. Set both corresponding
+  `*_confirmed` fields. The foreign tax paid on those statements must be
+  within the covered-year `foreign_tax_credit_simplified` limit: `max_mfj`
+  for a joint return only, `max_single` for every other status, a surviving
+  spouse included. The credit is the smaller of the creditable foreign tax
+  and the regular tax: Form 1040 line 16 plus Schedule 2 line 1z, never the
+  AMT.
+- `deduction`: the foreign tax is an itemized deduction on Schedule A line 6.
+- `not_claimed`: the return claims neither.
+
+Only `form_1116` and `simplified` put a credit on Schedule 3 line 1. Only
+`form_1116` may apply a carryover or create a carryforward, so record zero
+for `carryover_applied_usd` and `carryforward_created_usd` under every other
+method, and keep any earlier unused balances with their origin years.
 Review creditability and reductions under the covered-year instructions.
-Record zero for `carryover_applied_usd` and `carryforward_created_usd` in an
-election year. Keep any earlier unused balances with their origin years.
 Record the reviewed `ftc_allowed` in
 `form_1040.schedule_3_line_1_foreign_tax_credit` and include it in line 20.
 [2025 Form 1116 instructions](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
