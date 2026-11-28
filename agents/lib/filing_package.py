@@ -30,6 +30,7 @@ from agents.lib.rollover import (  # noqa: E402
     RolloverError,
 )
 from agents.lib import receipt  # noqa: E402
+from agents.lib.tax_computations.federal.international import form_8938_account_totals  # noqa: E402
 from agents.lib.tax_computations.federal.payments import reviewed_balance_due  # noqa: E402
 from agents.lib.tax_computations.state.registry import (  # noqa: E402
     STATE_SECTIONS,
@@ -362,7 +363,15 @@ def assembly_order(result: dict) -> list:
         order.append({"key": "other_forms_withholding", "title": "Form 1040 line 25c withholding reconciliation", "sequence": None})
     # Form 8938 files WITH the return but the template models it as an
     # international-compliance block; keep it after the sequenced forms.
-    if _section_present(result, "form_8938_fatca"):
+    fatca = result.get("form_8938_fatca")
+    if isinstance(fatca, dict) and fatca.get("required") is True:
+        accounts = fatca.get("accounts")
+        if not isinstance(accounts, list) or not accounts:
+            raise FilingPackageError("Required Form 8938 needs its account records.")
+        try:
+            form_8938_account_totals(accounts)
+        except ValueError as exc:
+            raise FilingPackageError(str(exc)) from None
         order.append({"key": "form_8938_fatca",
                       "title": "Form 8938 (Statement of Specified Foreign "
                                "Financial Assets)", "sequence": "175"})

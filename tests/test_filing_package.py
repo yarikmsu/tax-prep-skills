@@ -41,7 +41,8 @@ def test_full_table_ordering_pins_every_sequence():
     """Review round: pin the WHOLE table so any single sequence typo fails.
     Every mapped section present at once -> exact expected order."""
     r = _result(**{k: {"x": 1} for k in FP._FEDERAL_SEQUENCE})
-    r["form_8938_fatca"] = {"total": 1}
+    r["form_8938_fatca"] = {"required": True,
+                            "accounts": [{"year_end_value_usd": 120000, "max_value_usd": 120000}]}
     r["california_540"] = {"ca_total_tax": 1}
     r["schedule_ca_itemized"] = {"total": 1}
     seqs = [e["sequence"] for e in FP.assembly_order(r)]
@@ -51,6 +52,21 @@ def test_full_table_ordering_pins_every_sequence():
     assert seqs == [None, "01", "06", "07", "08", "09", "12", "12A",
                     "19", "32", "48", "50", "52", "55", "71", "175",
                     "STATE", "STATE"]
+
+
+def test_form_8938_threshold_analysis_keeps_schedule_b_without_adding_form_8938():
+    r = _result(form_8938_fatca={"required": False, "accounts": [
+        {"year_end_value_usd": 40000, "max_value_usd": 50000}]})
+    order = FP.assembly_order(r)
+    assert any(e["sequence"] == "08" for e in order)
+    assert all(e["key"] != "form_8938_fatca" for e in order)
+
+
+@pytest.mark.parametrize("section", [{"required": True}, {"required": True, "accounts": []},
+                                      {"required": True, "accounts": [{"year_end_value_usd": 120000}]}])
+def test_required_form_8938_needs_complete_account_values(section):
+    with pytest.raises(FP.FilingPackageError, match="Form 8938.*account"):
+        FP.assembly_order(_result(form_8938_fatca=section))
 
 
 def test_every_federal_sequence_has_digits():
