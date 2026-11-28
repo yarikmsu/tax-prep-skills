@@ -1620,6 +1620,24 @@ def test_estimates_near_balance_due_payments_require_separate_remittances(tmp_pa
     assert reviewed.line_26 == 500 and len(reviewed.rows) == 3
 
 
+@pytest.mark.parametrize("estimate_date,needs_confirmation", [("2024-09-16", False), ("2024-09-17", True)])
+def test_the_third_installment_date_rolls_past_a_weekend(estimate_date, needs_confirmation):
+    # September 15, 2024 was a Sunday, so the third installment was due on the 16th.
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    rows = [_federal_row("estimate", 500, date=estimate_date, year=2024),
+            _federal_row("early-payment", 600, kind="balance_due", date="2025-02-01", year=2024)]
+    profile = {"tax_year": 2024, "filing_status": "MFJ", "prior_year": {"estimated_payments_applied": None},
+               "estimated_payments": {"federal": rows, "federal_review": {
+                   "confirmed": True, "tax_year": 2024, "estimate_count": 1, "estimate_total": 500}}}
+    result = {"meta": {"tax_year": 2024, "filing_status": "MFJ"}}
+    if needs_confirmation:
+        with pytest.raises(ValueError, match="third installment.*distinct_payment_confirmed"):
+            reviewed_payments(result, profile)
+    else:
+        assert reviewed_payments(result, profile).line_26 == 500
+
+
 def test_balance_due_payments_without_estimates_need_no_confirmation(tmp_path):
     from agents.lib.tax_computations.federal.payments import reviewed_payments
 
