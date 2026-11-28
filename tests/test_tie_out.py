@@ -502,6 +502,27 @@ def test_a_misc_source_from_another_year_is_refused_on_either_side(side):
     assert any("different filing year" in issue for issue in _issues(consolidated, standalone)[0])
 
 
+@pytest.mark.parametrize("label,form", [
+    ("MISC 1099", "1099MISC"), ("Substitute 1099-MISC", "1099MISC"), ("NEC 1099", "1099NEC"),
+    ("Stripe Connect 1099-K", "1099K"), ("1099-G Connecticut", None), ("1099-INT Seneca", None),
+    ("1099-B Miscellaneous", None), ("Consolidated 1099 (DIV, INT, MISC, B)", None),
+])
+def test_a_form_name_counts_only_beside_the_number(label, form):
+    # "CONNECT" holds the letters NEC: read anywhere, a 1099-K left both 1099-K rules.
+    from agents.lib.tax_computations.federal import source_reconciliation as reconciliation
+
+    base = reconciliation._base_form(label)
+    assert base == form if form else base not in ("1099NEC", "1099K", "1099MISC")
+
+
+def test_a_statement_title_listing_misc_needs_no_misc_inventory():
+    # Only the name beside the number makes a 1099-MISC; a consolidated
+    # statement's title listing its sections asks nothing of a dividend-only one.
+    statement = _form("consolidated", "Consolidated 1099 (DIV, INT, MISC, B)", "Broker", "a" * 64,
+                      ordinary_dividends=40)
+    assert len(_ledger(statement)) == 1
+
+
 @pytest.mark.parametrize("form_type", ["Substitute 1099-MISC", "MISC 1099", "Form 1099 MISC"])
 def test_included_misc_spellings_need_their_review(form_type):
     consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
