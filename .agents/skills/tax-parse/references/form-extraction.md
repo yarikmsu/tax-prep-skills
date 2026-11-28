@@ -71,7 +71,11 @@ and follow the [tip/overtime source review](tips-overtime.md).
 
 ### 1099-DIV Extraction
 Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (capital gain distributions), 2b (unrecaptured section 1250 gain), 2d (collectibles gain), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). Read boxes 2b and 2d on standalone and consolidated statements. They are already included in box 2a. For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).
-Note: Foreign tax paid in Box 7 → feeds Form 1116
+Capture foreign tax paid from 1099-DIV box 7 and 1099-INT box 6 in
+`foreign_tax_paid`. Preserve the USD amount and reviewed source, including
+when the payer reports the boxes in a consolidated statement. Use the same
+category for documented amounts on other qualified payee statements under
+the covered-year Form 1116 instructions.
 
 ### 1099-B Extraction
 Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, box 3 (collectibles or QOF indicators), boxes 14-16 (state, state tax withheld).

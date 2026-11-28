@@ -107,6 +107,9 @@ from agents.lib.tax_computations.federal.gambling_income import (  # noqa: E402
     GAMBLING_REPORTED, GAMBLING_WITHHOLDING, is_w2g_form, validate_w2g_income,
     compute_other_forms_withholding, compute_w2g_totals,
 )
+from agents.lib.tax_computations.federal.international import (  # noqa: E402
+    check_foreign_tax_credit, FTC_STATEMENT_TAX, QUALIFIED_PAYEE_STATEMENTS,
+)
 from agents.lib.workspace import (  # noqa: E402
     WorkspaceError,
     add_workspace_argument,
@@ -260,6 +263,7 @@ CATEGORY_TARGETS = {
     # which counts as present — a dropped mutual-fund distribution therefore
     # FAILS the sum check rather than hiding as unverifiable.
     "capital_gain_distributions": ("schedule_d", ["part_ii_long_term.line_13_cap_gain_dist"]),
+    "foreign_tax_paid": ("form_1116_ftc", [FTC_STATEMENT_TAX]),
     # J1: employer-stock (RSU/ESPP/NQSO) Form 8949 code-B basis corrections.
     # The ledger records the POSITIVE sum of (adjusted basis − 1099-B basis) for
     # lots sold this year; the result side is the NEGATED sum of the signed
@@ -2504,6 +2508,28 @@ def _joint_return(result: dict, profile: dict) -> bool:
     return statuses == {"MFJ"}
 
 
+def _foreign_tax_credit_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
+                               law: dict, statement_tax: float) -> list[str]:
+    problems = []
+    for number, record in enumerate(ledger, 1):
+        if record.skipped is not None or not dict(record.key_boxes).get("foreign_tax_paid"):
+            continue
+        code = source_reconciliation.form_code(record.form_type)
+        # A consolidated statement qualifies only as a consolidated Form 1099: a
+        # foreign broker's "Consolidated Tax Certificate" is no U.S. payee statement.
+        payee_statement = ("1099DIV" in code or "1099INT" in code
+                           or ("1099" in code and source_reconciliation._consolidated(code))
+                           or "K3" in code or ("K1" in code and "1041" in code))
+        if not payee_statement or not record.source_sha256:
+            problems.append(f"Document #{number} needs a source-bound qualified payee statement for foreign tax paid: "
+                            f"{QUALIFIED_PAYEE_STATEMENTS}.")
+    try:
+        check_foreign_tax_credit(result, profile, law, statement_tax)
+    except (ValueError, TypeError, OverflowError) as exc:
+        problems.append(f"Foreign tax credit: {redact(exc)}")
+    return problems
+
+
 def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
                       tax_law: dict, *, employer_sources: dict[str, str] | None = None) -> list[str]:
     from agents.lib.tax_computations._shared import _amount
@@ -3406,6 +3432,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         missing_targets.append(f"Schedule C, Schedule SE or Form 8959: {redact(exc)}")
     missing_targets.extend(_other_state_routing_checks(ledger, result, profile))
     missing_targets.extend(_other_forms_withholding_checks(ledger, result, profile))
+    missing_targets.extend(_foreign_tax_credit_checks(ledger, result, profile or {}, tax_law or {},
+                                                      sums.get("foreign_tax_paid", 0)))
     missing_targets.extend(_rental_checks(ledger, result, profile, tax_law))
     missing_targets.extend(_schedule1_other_checks(ledger, result, profile))
     missing_targets.extend(_government_income_checks(ledger, result, profile))

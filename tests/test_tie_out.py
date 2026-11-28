@@ -1154,6 +1154,185 @@ def test_skipped_records_excluded_from_sums():
 _SOCIAL_SECURITY_LAW = {"federal": {"social_security": {"wage_base": 176100, "employee_rate": .062}}}
 
 
+def _ftc_return(*, paid, claimed, status="Single", form_type="Consolidated 1099", **changes):
+    return {"meta": {"tax_year": 2025, "filing_status": status},
+            "form_1040": {"line_16_tax": 1000, "line_20_schedule3_line8": claimed,
+                          "schedule_3_line_1_foreign_tax_credit": claimed},
+            "form_1116_ftc": {"method": "simplified", "foreign_tax_paid_usd": paid,
+                              "foreign_tax_paid_on_statements_usd": paid if form_type else 0,
+                              "ftc_allowed": claimed, "all_foreign_source_income_passive_confirmed": True,
+                              "all_foreign_income_and_taxes_on_payee_statements_confirmed": True, **changes}}
+
+
+_FTC_LAW = {"federal": {"foreign_tax_credit_simplified": {"max_single": 300, "max_mfj": 600}}}
+
+
+def _evaluate_ftc(result, paid, form_type="Consolidated 1099", profile=None, *, digest="a" * 64, law=None):
+    records = [_form("fund", form_type, "Fund", digest, foreign_tax_paid=paid)] if form_type else []
+    ledger = _ledger(*records)
+    return T.evaluate(ledger, result, [record.file for record in ledger], tax_law=law or _FTC_LAW, profile=profile)
+
+
+def _ftc_issues(result, paid, form_type="Consolidated 1099", **kwargs):
+    return _evaluate_ftc(result, paid, form_type, **kwargs).missing_result_targets
+
+
+@pytest.mark.parametrize("form_type", ["1099-INT", "1099-DIV", "Consolidated 1099", "Schedule K-3"])
+def test_qualified_statements_support_the_simplified_foreign_tax_credit(form_type):
+    result = _ftc_return(paid=250, claimed=250, form_type=form_type)
+    report = _evaluate_ftc(result, 250, form_type)
+    assert not report.failed
+    assert any(check.category == "foreign_tax_paid" and check.ok for check in report.sum_checks)
+    result["form_1116_ftc"]["foreign_tax_paid_on_statements_usd"] = 249.99
+    assert _evaluate_ftc(result, 250, form_type).failed
+
+
+def test_small_foreign_tax_credit_needs_a_payee_statement():
+    result = _ftc_return(paid=200, claimed=200, form_type=None)
+    report = _evaluate_ftc(result, 0, form_type=None)
+    assert any("qualified payee statements" in issue for issue in report.missing_result_targets)
+    result = _ftc_return(paid=200, claimed=200)
+    assert _evaluate_ftc(result, 200, form_type="foreign bank receipt").failed
+    result["form_1116_ftc"]["method"] = None
+    report = _evaluate_ftc(result, 200)
+    assert any("Record how the return treats foreign tax paid" in issue for issue in report.missing_result_targets)
+
+
+@pytest.mark.parametrize("form_type", ["Consolidated Tax Certificate", "Annual Consolidated Statement",
+                                       "Composite Annual Tax Voucher", "Schedule K-1 (Form 1065)"])
+def test_only_qualified_payee_statements_carry_foreign_tax_paid(form_type):
+    # 2025 Form 1116 instructions: "Qualified payee statements include Form
+    # 1099-DIV, Form 1099-INT, Schedule K-1 (Form 1041), Schedule K-3 (Form
+    # 1065), Schedule K-3 (Form 1120-S), or similar substitute statements." A
+    # consolidated statement qualifies only as a consolidated Form 1099.
+    issues = _ftc_issues(_ftc_return(paid=250, claimed=250), 250, form_type)
+    assert any(issue.endswith("Schedule K-1 (Form 1041), Schedule K-3 (Form 1065 or 1120-S), "
+                              "or a substitute statement for one.") for issue in issues), issues
+
+
+def test_a_trust_k1_qualifies_and_every_payee_statement_needs_its_digest():
+    result = _ftc_return(paid=250, claimed=250)
+    assert not _evaluate_ftc(result, 250, "Schedule K-1 (Form 1041)").failed
+    issues = _ftc_issues(result, 250, "1099-DIV", digest=None)
+    assert any("source-bound qualified payee statement" in issue for issue in issues), issues
+
+
+def test_foreign_tax_paid_needs_an_explicit_treatment():
+    # Form 1040 line 20 has no decomposition here, so a credit typed into it
+    # with Schedule 3 line 1 left at zero is visible only as a missing method.
+    result = _ftc_return(paid=450, claimed=0, method=None)
+    result["form_1040"]["line_20_schedule3_line8"] = 450
+    for method in (None, "credit"):
+        result["form_1116_ftc"]["method"] = method
+        assert any("Record how the return treats foreign tax paid" in issue
+                   for issue in _ftc_issues(result, 450)), method
+    del result["form_1116_ftc"]
+    assert any("Record the form_1116_ftc workpaper and its method" in issue for issue in _ftc_issues(result, 450))
+    result["form_1040"]["schedule_3_line_1_foreign_tax_credit"] = 450
+    assert any("requires Form 1116 or a verified simplified election" in issue
+               for issue in _ftc_issues(result, 0, form_type=None))
+
+
+@pytest.mark.parametrize("method", ["deduction", "not_claimed"])
+def test_a_deducted_or_unclaimed_foreign_tax_still_reconciles_its_statements(method):
+    def case(**changes):
+        return _ftc_return(paid=450, claimed=0, method=method, **changes)
+
+    assert not _evaluate_ftc(case(), 450).failed  # above the simplified limit: no election is made
+    assert _evaluate_ftc(case(foreign_tax_paid_on_statements_usd=400), 450).failed
+    for field in ("carryover_applied_usd", "carryforward_created_usd"):
+        assert any("cannot apply a carryover" in issue for issue in _ftc_issues(case(**{field: 1}), 450))
+    claimed = case(ftc_allowed=300)
+    claimed["form_1040"].update(schedule_3_line_1_foreign_tax_credit=300, line_20_schedule3_line8=300)
+    assert any("leaves Schedule 3 line 1 at zero" in issue for issue in _ftc_issues(claimed, 450))
+
+
+def _amt_case(result):
+    result["form_1040"].update(line_16_tax=200, line_17_schedule2_part1=100)
+    result["form_6251"] = {"amt": 100}
+
+
+_SIMPLIFIED_REFUSALS = {
+    "passive unconfirmed": (lambda r, p: r["form_1116_ftc"].update(all_foreign_source_income_passive_confirmed=None),
+                            "qualify as passive"),
+    "statements unconfirmed": (lambda r, p: r["form_1116_ftc"].update(
+        all_foreign_income_and_taxes_on_payee_statements_confirmed=False), "qualify as passive"),
+    "tax paid off the statements": (lambda r, p: r["form_1116_ftc"].update(foreign_tax_paid_usd=260),
+                                    "qualify as passive"),
+    "paid below the statements": (lambda r, p: r["form_1116_ftc"].update(foreign_tax_paid_usd=240),
+                                  "Reconcile foreign tax paid"),
+    "credit above tax paid": (lambda r, p: (r["form_1116_ftc"].update(foreign_tax_paid_usd=250, ftc_allowed=260),
+                                            r["form_1040"].update(schedule_3_line_1_foreign_tax_credit=260,
+                                                                  line_20_schedule3_line8=260)),
+                              "exceeds foreign tax paid or regular income tax"),
+    "credit above line 16": (lambda r, p: r["form_1040"].update(line_16_tax=249.99),
+                             "exceeds foreign tax paid or regular income tax"),
+    "AMT counted as regular tax": (lambda r, p: _amt_case(r), "exceeds foreign tax paid or regular income tax"),
+    "credit is not the reviewed credit": (lambda r, p: r["form_1116_ftc"].update(ftc_allowed=240),
+                                          "must match the reviewed credit"),
+    "credit outside line 20": (lambda r, p: r["form_1040"].update(line_20_schedule3_line8=249.99),
+                               "included in Form 1040 line 20"),
+    "return and profile disagree": (lambda r, p: p.update(filing_status="MFJ"), "must agree on filing status"),
+    "a cent over the single limit": (lambda r, p: r["form_1116_ftc"].update(
+        foreign_tax_paid_usd=300.01, foreign_tax_paid_on_statements_usd=300.01), "exceeds the simplified election"),
+    "separate return at the joint limit": (lambda r, p: (
+        r["meta"].update(filing_status="MFS"), p.update(filing_status="MFS"),
+        r["form_1116_ftc"].update(foreign_tax_paid_usd=600, foreign_tax_paid_on_statements_usd=600)),
+        "exceeds the simplified election"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_SIMPLIFIED_REFUSALS))
+def test_every_simplified_election_rule_refuses_on_its_own(name):
+    change, message = _SIMPLIFIED_REFUSALS[name]
+    result, profile = _ftc_return(paid=250, claimed=250), {"filing_status": "Single"}
+    assert not _evaluate_ftc(result, 250, profile=profile).failed
+    change(result, profile)
+    paid = result["form_1116_ftc"]["foreign_tax_paid_on_statements_usd"]
+    issues = _ftc_issues(result, paid, profile=profile)
+    assert any(message in issue for issue in issues), issues
+
+
+def test_the_simplified_limit_and_regular_tax_bounds_are_inclusive():
+    exactly = _ftc_return(paid=300, claimed=300)
+    exactly["form_1040"]["line_16_tax"] = 300
+    assert not _evaluate_ftc(exactly, 300).failed
+    # "the total of Form 1040 ... line 16, and Schedule 2 (Form 1040), Part I,
+    # line 1z": line 17 less the Form 6251 AMT is line 1z.
+    with_1z = _ftc_return(paid=250, claimed=250)
+    with_1z["form_1040"].update(line_16_tax=200, line_17_schedule2_part1=50)
+    assert not _evaluate_ftc(with_1z, 250).failed
+    separate = _ftc_return(paid=300, claimed=300, status="MFS")
+    assert not _evaluate_ftc(separate, 300, profile={"filing_status": "MFS"}).failed
+
+
+def test_the_simplified_election_needs_tax_on_a_statement_and_a_fetched_limit():
+    nothing = _ftc_return(paid=0, claimed=0, form_type=None)
+    assert any("qualify as passive" in issue for issue in _ftc_issues(nothing, 0, form_type=None))
+    unfetched = {"federal": {"foreign_tax_credit_simplified": {"max_single": 0, "max_mfj": 600}}}
+    issues = _ftc_issues(_ftc_return(paid=250, claimed=250), 250, law=unfetched)
+    assert any("Fetch the covered-year simplified" in issue for issue in issues), issues
+
+
+def test_surviving_spouse_uses_the_single_simplified_limit_on_tax_paid():
+    qss = _ftc_return(paid=450, claimed=200, status="QSS")
+    report = _evaluate_ftc(qss, 450)
+    assert any("exceeds the simplified election limit" in issue for issue in report.missing_result_targets)
+    joint = _ftc_return(paid=450, claimed=200, status="MFJ")
+    assert not _evaluate_ftc(joint, 450).failed
+
+
+def test_simplified_election_leaves_an_unused_prior_credit_available():
+    profile = {"filing_status": "Single", "prior_year": {"unused_ftc_carryforward": 800}}
+    result = _ftc_return(paid=250, claimed=250)
+    assert not _evaluate_ftc(result, 250, profile=profile).failed
+    for field in ("carryover_applied_usd", "carryforward_created_usd"):
+        result["form_1116_ftc"][field] = 1
+        report = _evaluate_ftc(result, 250, profile=profile)
+        assert any("cannot apply a carryover" in issue for issue in report.missing_result_targets)
+        del result["form_1116_ftc"][field]
+
+
 def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
     record = _record(doc_id=f"ss-{number}", file=f"documents/ss-{number}.pdf",
                      payer=payer or f"Employer {number}", person=person,

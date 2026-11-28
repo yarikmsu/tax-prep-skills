@@ -30,17 +30,32 @@ def test_1040_always_first_no_sequence():
 
 
 def test_sequence_ordering_12_before_12a_before_19():
-    r = _result(form_1116_ftc={"credit": 300},
+    r = _result(form_1116_ftc={"method": "form_1116", "credit": 300},
                 form_8949={"rows": [1]},
                 schedule_d={"line_16": 5000})
     keys = [e["key"] for e in FP.assembly_order(r)]
     assert keys == ["form_1040", "schedule_d", "form_8949", "form_1116_ftc"]
 
 
+def test_simplified_foreign_tax_credit_goes_on_schedule_3_without_form_1116():
+    result = _result(form_1116_ftc={"method": "simplified", "ftc_allowed": 250})
+    result["form_1040"].update(schedule_3_line_1_foreign_tax_credit=250, line_20_schedule3_line8=250)
+    assert [row["sequence"] for row in FP.assembly_order(result)] == [None, "03"]
+
+
+@pytest.mark.parametrize("method", [None, "deduction", "not_claimed"])
+def test_only_a_form_1116_year_attaches_form_1116(method):
+    result = _result(form_1116_ftc={"method": method, "foreign_tax_paid_usd": 450})
+    assert [row["sequence"] for row in FP.assembly_order(result)] == [None]
+    result["form_1116_ftc"]["method"] = "form_1116"
+    assert [row["sequence"] for row in FP.assembly_order(result)] == [None, "19"]
+
+
 def test_full_table_ordering_pins_every_sequence():
     """Review round: pin the WHOLE table so any single sequence typo fails.
     Every mapped section present at once -> exact expected order."""
     r = _result(**{k: {"x": 1} for k in FP._FEDERAL_SEQUENCE})
+    r["form_1116_ftc"]["method"] = "form_1116"
     r["form_8938_fatca"] = {"required": True,
                             "accounts": [{"year_end_value_usd": 120000, "max_value_usd": 120000}]}
     r["california_540"] = {"ca_total_tax": 1}
@@ -1244,6 +1259,17 @@ def test_a_surviving_spouse_needs_the_thresholds_its_taxes_use():
             missing("federal.niit.threshold.mfj")} <= issues
     assert not {missing("federal.additional_medicare_tax.threshold.mfj"),
                 missing("federal.niit.threshold.single")} & issues
+
+
+def test_a_surviving_spouse_needs_the_single_simplified_foreign_tax_limit():
+    # The election's joint figure is for "married filing a joint return" only.
+    from agents.lib.tax_computations.federal.applicable_law import filing_issues
+
+    result = {"meta": {"tax_year": 2025, "filing_status": "QSS"}, "form_1040": {"line_1a_wages": 100000},
+              "form_1116_ftc": {"method": "simplified", "foreign_tax_paid_usd": 450}}
+    issues = set(filing_issues(result, {}, {"tax_year": 2025}))
+    path = "federal.foreign_tax_credit_simplified.max_{}: required covered-year figure is missing."
+    assert path.format("single") in issues and path.format("mfj") not in issues
 
 
 def test_one_spouses_business_loss_does_not_hide_the_others_medicare_tax():

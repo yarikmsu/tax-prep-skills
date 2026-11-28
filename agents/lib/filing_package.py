@@ -374,6 +374,10 @@ def assembly_order(result: dict, *, tax_law: dict | None = None) -> list:
     for key, (title, seq) in _FEDERAL_SEQUENCE.items():
         if _section_present(result, key):
             section = result.get(key) or {}
+            # The workpaper also records a simplified election, a deduction or
+            # tax not claimed; only a Form 1116 year attaches the form.
+            if key == "form_1116_ftc" and section.get("method") != "form_1116":
+                continue
             if key == "form_2210" and section.get("payment_table") is not None and (
                     section.get("method") == "irs_calculates" or section.get("no_penalty")):
                 continue

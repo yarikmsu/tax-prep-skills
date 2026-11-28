@@ -373,8 +373,8 @@ class TestTheJsonBoundaryRefusesWhatNoTransformShouldSee:
                                          _transform_ira_basis)
         assert _transform_abs(True) == 0
         assert _transform_abs(-4000) == 4000
-        assert _transform_ftc_unused({"foreign_tax_paid_usd": True, "ftc_allowed": 0}) == 0
-        assert _transform_ftc_unused({"foreign_tax_paid_usd": 500, "ftc_allowed": False}) == 500
+        assert _transform_ftc_unused({"method": "form_1116", "foreign_tax_paid_usd": True, "ftc_allowed": 0}) == 0
+        assert _transform_ftc_unused({"method": "form_1116", "foreign_tax_paid_usd": 500, "ftc_allowed": False}) == 500
         assert _transform_ira_basis(True) == 0
 
 
@@ -427,14 +427,54 @@ def test_compute_diff_qbi_loss_carryforward():
     assert qbi[0].prior_value == 800  # abs(-800)
 
 
-def test_compute_diff_ftc_unused():
-    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+def _ftc_carryforwards(prior):
     current = _load_current("current_2025_empty")
     diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
-    ftc = [c for c in diff["carryforwards"] if c.json_path == "prior_year.unused_ftc_carryforward"]
+    return [c for c in diff["carryforwards"] if c.json_path == "prior_year.unused_ftc_carryforward"]
+
+
+def test_compute_diff_ftc_unused():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    ftc = _ftc_carryforwards(prior)
     assert len(ftc) == 1
-    # foreign_tax_paid_usd 1200 - ftc_allowed 900 = 300 unused
+    # foreign_tax_paid_usd 1200 - ftc_allowed 900 = 300 unused. The archive
+    # records no method, and a simplified, deduction or unclaimed year with
+    # these figures carries nothing, so the figure is offered, never applied.
     assert ftc[0].prior_value == 300
+    assert ftc[0].action_suggested == "ask" and "Schedule B" in ftc[0].reason
+    prior.result["form_1116_ftc"]["method"] = "form_1116"
+    (applied,) = _ftc_carryforwards(prior)
+    assert (applied.prior_value, applied.action_suggested) == (300, "apply")
+
+
+@pytest.mark.parametrize("method", ["deduction", "not_claimed"])
+def test_a_year_without_the_credit_creates_no_ftc_carryforward(method):
+    from agents.lib.rollover import _transform_ftc_unused
+
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1116_ftc"]["method"] = method
+    assert _transform_ftc_unused(prior.result["form_1116_ftc"]) == 0
+    assert not _ftc_carryforwards(prior)
+    prior.profile.setdefault("prior_year", {})["unused_ftc_carryforward"] = 800
+    (earlier,) = _ftc_carryforwards(prior)
+    assert (earlier.prior_value, earlier.action_suggested) == (800, "ask")
+    assert "origin year" in earlier.reason
+
+
+def test_simplified_ftc_does_not_create_a_carryforward_and_flags_older_balances():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1116_ftc"] = {"method": "simplified", "foreign_tax_paid_usd": 250, "ftc_allowed": 100}
+    current = _load_current("current_2025_empty")
+
+    def changes():
+        diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+        return [c for c in diff["carryforwards"] if c.json_path == "prior_year.unused_ftc_carryforward"]
+
+    assert not changes()
+    prior.profile.setdefault("prior_year", {})["unused_ftc_carryforward"] = 800
+    (earlier,) = changes()
+    assert earlier.action_suggested == "ask" and earlier.prior_value == 800
+    assert "origin year" in earlier.reason
 
 
 def test_compute_diff_ira_basis_carryforward():

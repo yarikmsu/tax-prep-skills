@@ -349,7 +349,7 @@ Verify the software return includes all required forms:
 | Form 8889 | HSA activity | Present? |
 | Form 8959 | Medicare wages > $200K (employer withholding threshold; actual Addl Medicare threshold varies by filing status from `tax_law JSON` `additional_medicare_tax.threshold`) | Present? |
 | Form 8995 | QBI/REIT dividends | Present? |
-| Form 1116 | Foreign tax credit > simplified limit (from `tax_law JSON` `foreign_tax_credit_simplified`) | Present? |
+| Form 1116 | Any foreign tax credit without the §904(j) election. The election needs all foreign-source income passive, it and its tax on qualified payee statements, and foreign tax paid within `tax_law JSON` `foreign_tax_credit_simplified` (`max_mfj` for a joint return only, `max_single` otherwise); its credit is the smaller of that tax and the regular tax | Present? |
 | Form 8938 | Foreign assets above threshold | Present/absent correctly? |
 | Schedule SE | SE income > $400 | Present? |
 
