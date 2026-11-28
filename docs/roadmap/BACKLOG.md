@@ -74,11 +74,15 @@ AA137 (#148-#151) and AA139 (#152-#155), each fixed in review before merge.
 
 **Shipped from the owner's 2026-11-27 queue:** AA127 step 2b (#158) and AA140
 steps 1-3 (#159-#161), each fixed in review before merge. What review left that
-can over-state a return is AA141, queued first.
+can over-state a return became AA141.
 
-**Next for implementation (owner, 2026-11-27; extended 2026-11-28):** AA141
-steps 1-4; AA122 step 1; AA134 step 1; AA133; AA124 steps 1-2; AA122 step 2;
-AA134 step 2; AA121; AA120 steps 1-2; AA127 steps 3a, 3b and 4; AA123 step 1;
+**Shipped from the 2026-11-28 extension:** AA141 steps 1-4 (#164-#167), AA122
+step 1 (#168), AA134 step 1 (#169), AA133 (#170) and AA124 steps 1-2 (#171,
+#172), each fixed in review before merge. What review left that can over-state
+a return is AA142, not yet queued.
+
+**Next for implementation (owner, 2026-11-27; extended 2026-11-28):** AA122
+step 2; AA134 step 2; AA121; AA120 steps 1-2; AA127 steps 3a, 3b and 4; AA123 step 1;
 AA126; AA125 steps 1-2; AA117 steps 1-3; AA118 steps 1-2; AA119 steps 1-4;
 AA135 steps 1-2; AA116 steps 1-2; AA110 steps 1-3; AA111 steps 1-4 — in that
 order, each step a pull request of its own. Their entries name the code, the
@@ -111,9 +115,9 @@ Trigger and range behavior is documented in
 | When | What | Why |
 |---|---|---|
 | **0. Before 2026-12-31: small, dated planning fixes** | **AA84** the day FTB's missing inputs publish. | Q18. TY2026 filing work cannot be used before that year's documents arrive. AA127 step 2b shipped in #158. AA84 is blocked (blocked table). |
-| **1. Filing quality on every return, before TY2026 documents arrive** | **AA141** — a railroad employee's excess bounded by employer, a 1099-MISC inside a consolidated statement, and payment rows the step-3 rule does not compare. **AA115** gains one negative case per fix. | AA140 shipped in #159-#161; AA141 is what its review left that can over-state a filed return. W-2s arrive by January 31; corrected 1099s often in March. |
+| **1. Filing quality on every return, before TY2026 documents arrive** | **AA142** — two faults in one W-2 pair, Tier 1 withheld below the maximum and a remittance typed as both kinds, with the investor and itemizer gaps it lists. **AA115** gains one negative case per fix. | AA141 shipped in #164-#167; AA142 is what its review and those of #168-#172 left that can over-state a filed return, not yet written to the queue standard. W-2s arrive by January 31; corrected 1099s often in March. |
 | **2. Filing quality: as FTB and the IRS publish** | **AA83** — the TY2026 Form 540. **AA80** — the TY2026 part-year return. **AA48** — the TY2026 Form 8949 boxes. **Y8** — the 2027 §6621 quarters, the 2026 exchange rates and the TY2026 state tables. | AA83 decides whether any CA resident can file a TY2026 return here. AA48 blocks every TY2026 crypto import. AA80 serves fewer filers. Since AA58, Form 2210 leaves a quarter the cache does not hold uncomputed, so Y8 is the reminder to fetch it. The blocked table dates each check. |
-| **3. Filing quality for investors and itemizers** | **AA122** step 1 — special-rate gains block a final package. **AA134** step 1 — a missing Form 8938 value is refused. **AA133** — charitable substantiation. **AA124** — the simplified election, then Form 1116. AA122 step 2 — the Schedule D Tax Worksheet. AA134 step 2 — the asset inventory. **AA121** — the federal Tax Table. | In that order (owner, 2026-11-27): the two small refusals first, since each stops a wrong answer the engine gives today. REIT and international funds, gifts of appreciated stock and foreign accounts are what a brokerage household holds, and the $40,000 SALT cap brings more CA filers to Schedule A. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
+| **3. Filing quality for investors and itemizers** | **AA122** step 2 — the Schedule D Tax Worksheet. **AA134** step 2 — the asset inventory. **AA121** — the federal Tax Table. | In that order (owner, 2026-11-27). AA122 and AA134 step 1, AA133 and AA124 shipped in #168-#172. REIT funds and foreign accounts are what a brokerage household holds. AA121 (Q19) is a few dollars either way and reaches every filer whose ordinary income is under $100,000, investors with larger totals included. |
 | **4. Filing quality: mandatory forms with low reach** | **AA120** — the advance-payment question, then a reviewed Form 8962 on its Form 1040 path. | P0 for a filer it reaches, but no current user is known to have Marketplace coverage. Since #132 such a filer is held to a draft; what is missing is the route to a final package. It moves to tier 1 the day such a filer appears. |
 | **5. After-tax outcome** | **AA127** steps 3a, 3b and 4 — the sale date the plan assumes, the effects by year, then matching in the order of sale. **AA123** step 1 — California's screened family credits; step 2, the federal EIC, waits on a replay. **AA126** — Medicare costs in the single-year ladder. **AA125** — 1099-Q intake, then the election comparison. | Q16 sets AA123's shape, and AA125's comparison reads AA123's screen. AA126 reaches filers about 63 and older. |
 | **6. Ease of use** | **AA118** — setup and the support table from one coverage source. **AA117** — one document inventory. **AA119** — one finalization command. **AA135** — evidence-based review. | AA117's Windows path defect blocks every Windows tie-out rather than passing a wrong return. |
@@ -846,37 +850,18 @@ Trigger and range behavior is documented in
 
 - **AA122 (P1, M): Price special-rate gains with the Schedule D Tax Worksheet.**
   Known since V1 and written in `tax-gotchas.md` and `return_builder.py`'s
-  docstring, but nothing flags it: a REIT fund's 1099-DIV box 2b unrecaptured
-  §1250 gain, a box 2d collectibles gain, a 1099-B sale marked collectibles
-  (gold and silver ETFs) or a sale of depreciated real property is priced by
-  `compute_qdcg_tax` at 0/15/20%, and the tax is under-stated with every gate
-  green. Two steps, each one pull request.
-  **Step 1, hold the final package.** `tax-parse` reads 1099-DIV boxes 1a, 1b,
-  2a, 5, 12 and 14-16 (`references/form-extraction.md`) and the 1099-B
-  collectibles box only on the crypto path. Record boxes 2b and 2d, and the
-  1099-B collectibles box, as ledger categories in `tie_out.py`
-  (`_INFORMATIONAL`; `_ALL_CATEGORIES` follows from it, and
-  `test_every_category_documented_in_tax_parse_skill` needs each row in the
-  SKILL.md category table). Add a
-  profile flag for a sale of depreciated real property, in
-  `taxpayer_profile_template.json` and the `tax-setup` interview beside the
-  rental and home-sale questions. Then add `input.schedule_d_tax_worksheet` to
-  `material_evidence._FILING_INPUT_LABELS` and `_required_filing_inputs`,
-  required when any of them is positive. This is an `input.` item, not a
-  `required_form` rule: nothing can close a `form.` item until AA120 step 2.
-  Closing it as `reviewed` attaches the worked worksheet; its tax is recorded as
-  `schedule_d.tax_worksheet_tax`, and `return_builder._tax` takes it for line 16.
-  The worksheet's last line is the smaller of its own tax and the regular tax
-  on the same taxable income, so refuse a figure above that regular tax; below
-  $100,000 the worksheet prices it with the Tax Table, which can exceed exact
-  brackets by a few dollars, so that bound waits on AA121 there. There is no
-  lower bound at `compute_qdcg_tax`: the worksheet taxes a 25% or 28% gain at
-  the ordinary rate where that is lower, so $125 of box 2b gain on $48,350 of
-  ordinary income (TY2025 single) is $3.75 below it. A draft keeps the
-  0/15/20% figure with the banner. Tests: a REIT distribution with box 2b
-  (held, then closed with a worksheet), a box 2d case, a recorded tax above the
-  regular tax at $100,000 or more (refused), the $48,350 case (accepted), and
-  an ordinary long-term control (no item).
+  docstring: a REIT fund's 1099-DIV box 2b unrecaptured §1250 gain, a box 2d
+  collectibles gain, a 1099-B sale marked collectibles (gold and silver ETFs) or
+  a sale of depreciated real property is priced by `compute_qdcg_tax` at
+  0/15/20%, which under-states the tax; until #168 every gate stayed green. Two
+  steps, each one pull request.
+  **Step 1 shipped in #168:** boxes 2b and 2d and the 1099-B collectibles mark
+  are ledger categories, `sold_depreciated_real_property` is a required gate
+  question, and `input.schedule_d_tax_worksheet` holds the final package until
+  a reviewed figure is recorded in `schedule_d.tax_worksheet_tax`, which line 16
+  takes. The figure is bounded below by the tax on line 15 less qualified
+  dividends and net capital gain, and above by the regular tax from the Tax
+  Table ceiling up; a draft keeps the 0/15/20% figure with the banner.
   **Step 2, compute the worksheet.** Carry the 28% and unrecaptured §1250
   amounts as Schedule D lines 18 and 19 in `result_template.json`'s
   `schedule_d`, net them as the covered-year Schedule D instructions direct, and
@@ -999,45 +984,6 @@ Trigger and range behavior is documented in
   TY2025](https://www.irs.gov/pub/irs-prior/p596--2025.pdf) · [Rev. Proc.
   2024-40](https://www.irs.gov/pub/irs-drop/rp-24-40.pdf) · [FTB 3514
   instructions, 2025](https://www.ftb.ca.gov/forms/2025/2025-3514-booklet.html)
-
-- **AA124 (P1, M): Require Form 1116 evidence or a verified simplified
-  election.** `compute_ftc_limitation` in
-  `agents/lib/tax_computations/federal/international.py` divides foreign-source
-  income by the figure it is given, AGI by its docstring, with no
-  qualified-dividend adjustment, so its error runs in either direction, and
-  nothing in the engine calls it: the agent
-  fills `form_1116_ftc` and Schedule 3 line 1 (`line_20_schedule3_line8`'s
-  component) by hand, under keys that do not match the function's output. The
-  simplified election lives only in `tax-compute/references/tax-and-credits.md`,
-  which compares the credit to `foreign_tax_credit_simplified` and checks passive
-  sources only. International index funds put brokerage holders past the
-  simplified limit. Two steps, each one pull request.
-  **Step 1, the simplified election and the source amount.** Record foreign tax
-  paid from 1099-DIV box 7 and 1099-INT box 6 as a ledger category
-  (`tax-parse` and `tie_out.CATEGORY_TARGETS`), so the tie-out catches a dropped
-  amount. Add an engine check for §904(j): all foreign-source income passive
-  and reported on a payee statement, foreign tax paid (not the credit) within
-  $300, or $600 on a joint return only (`applicable_law` reads `max_mfj` for a
-  surviving spouse today). The election itself then bars carrying any foreign
-  tax into or out of that year, so refuse a carryover applied to an election
-  year and a carryforward created by one; carryovers between other years are
-  unaffected. A credit without Form 1116 is refused unless every condition
-  holds. Tests: a qualifying brokerage statement, a case within the dollar limit
-  with no payee statement, a surviving spouse at $450, and an election year
-  with a prior carryover available (election allowed, carryover not applied).
-  **Step 2, Form 1116.** Require the covered year's Form 1116 inputs: line 18
-  from its worksheet (for TY2025, Form 1040 line 11b minus line 14 plus
-  Schedule 1-A line 37, before the qualified-dividend and capital-gain
-  adjustments; leaving out the Schedule 1-A add-back over-states the
-  limitation), each
-  category separately, and carryovers by category and origin year. One
-  carryover path: `rollover._transform_ftc_unused` writes a single total while
-  `prior_return._ftc_baskets` imports baskets by category and origin year, and
-  nothing in compute reads either. A reviewed external Form 1116 is acceptable
-  where the engine cannot compute a line. Tests: a multi-category case with a
-  carryover, the credit reaching Schedule 3 line 1. Found by the 2026-11-18
-  external review. [IRS Form 1116 instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
 
 - **AA125 (P3, L): Compare eligible elections on the full return.** The summed
   "Total potential savings" line left the tax-compute optimization report in
@@ -1391,52 +1337,12 @@ Trigger and range behavior is documented in
   TY2025](https://www.irs.gov/pub/irs-prior/i1040sd--2025.pdf) ·
   [Treas. Reg. §1.1091-1](https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1/subject-group-ECFR4a3aa9fd5a8fa4c/section-1.1091-1)
 
-- **AA133 (P1, M): Hold the final package until each gift is substantiated
-  (Q17).** One pull request. `compute_schedule_a`
-  (`agents/lib/tax_computations/__init__.py`) takes cash and noncash totals and
-  one boolean, `charitable_over_250_substantiated`, which no skill passes, so
-  every itemizer with gifts gets the "SUBSTANTIATION UNKNOWN" note and a
-  deduction in full, and "noncash gifts over $500 require Form 8283 (not
-  modeled)" is a note only. Per Q17, add `input.charitable_substantiation` to
-  `material_evidence._FILING_INPUT_LABELS` and `_required_filing_inputs`,
-  required when `schedule_a.use_itemized` is true and the year's gifts are
-  positive. `filing_input_issues` then refuses `not_applicable` while a gift is
-  deducted and asks for the evidence as sources: the contemporaneous written
-  acknowledgment of each gift of $250 or more, and for noncash gifts over $5,000
-  the qualified appraisal the covered-year Form 8283 instructions require,
-  except for publicly traded securities, which need none at any amount
-  (§170(f)(11)(A)(ii)(I)). An
-  open item holds the final package and keeps the draft banner, through the
-  existing reasons; nothing removes a gift. Form 8283 has no result section, so
-  `_FEDERAL_SEQUENCE` cannot list it: add it in
-  `filing_package._derived_schedules`, and to the attachment checklist, when
-  noncash gifts exceed $500. A carryover alone needs no current-year
-  acknowledgment; its vintage keeps the `source_ref` the ledger already
-  requires. Tests: an unsupported cash gift (draft only), appreciated stock that
-  needs Form 8283 (listed), listed stock over $5,000 (no appraisal asked),
-  several similar noncash items over $5,000 together (appraisal asked), a
-  carryover with no current gifts (no item), and a standard-deduction filer (no
-  item). Done when each rule turns a test red when reverted, and
-  `tax-compute/references/income-and-agi.md` replaces its "record the answer in
-  answers.md" step with the outcome. Found by the 2026-11-18 external review.
-  [IRS Schedule A instructions,
-  TY2025](https://www.irs.gov/pub/irs-prior/i1040sca--2025.pdf) · [IRS Form 8283
-  instructions, Rev. 12/2025](https://www.irs.gov/pub/irs-prior/i8283--2025.pdf)
-
 - **AA134 (P1, M): Require a reviewed asset inventory for Form 8938.** Two
   steps, each one pull request.
-  **Step 1 (XS), the missing value.** `check_form_8938_required` in
-  `agents/lib/tax_computations/federal/international.py` reads
-  `acct.get("max_value_usd", 0)` and `acct.get("year_end_value_usd", 0)`, so
-  `[{"year_end_value_usd": 40000}]` for a single filer returns `required: False`
-  however high the account ran during the year, and `_coerce_numeric` lets
-  `"nan"` and a negative value through. Refuse an account missing either value,
-  naming the field and the account, and a non-finite or negative value
-  (AGENTS.md §8). `filing_package` lists Form 8938 when the section is present
-  rather than when `form_8938_fatca.required` is true: list it on `required`,
-  and refuse a `required: true` block without its accounts. Tests in
-  `TestCheckForm8938Required` (`tests/test_tax_computations.py`) and
-  `tests/test_filing_package.py`.
+  **Step 1 shipped in #169:** an account missing either value, or with a
+  non-finite or negative one, is refused, and the package lists Form 8938 on a
+  boolean `form_8938_fatca.required`, refusing false above the living-abroad
+  threshold.
   **Step 2, the inventory.** Each specified asset records its owner
   (`taxpayer`, `spouse` or `joint`), year-end and maximum values with the
   valuation method and source, and the covered-year rules apply: on a joint
@@ -1536,103 +1442,34 @@ Trigger and range behavior is documented in
   workpapers](https://www.irs.gov/irm/part4/irm_04-010-009) · [Form 8867
   instructions, Rev. 11/2025](https://www.irs.gov/instructions/i8867)
 
-- **AA141 (P2, M): Close what the reviews of #159-#161 left that over-states a
-  return.** Four steps, each one pull request, in order of reach. Each is done
-  when its rule turns its test red when reverted and AA115 gains its negative
-  case in `tests/test_ca_filing_release.py`.
-  **Step 1, two balance-due rows.** `reviewed_payments` in
-  `agents/lib/tax_computations/federal/payments.py` asks for
-  `distinct_payment_confirmed` on balance-due rows only beside an estimate dated
-  after the third installment's due date, so one early balance-due remittance
-  typed twice, a day or a cent apart, counts twice for Form 2210 and the
-  settlement. With two or more `balance_due` rows, require the flag on every
-  one, in the same loop that sets `has_unconfirmed_balance`. Tests in
-  `tests/test_return_builder.py`: two rows dated 2027-01-16 and 2027-01-17 for
-  $600.00 and $600.01 with no estimate (refused, then accepted once both carry
-  the flag). The `("2026-06-15", False)` and `("2026-09-15", False)` cases of
-  `test_estimates_near_balance_due_payments_require_separate_remittances` hold
-  two unflagged balance-due rows and now need both flags; the one-row case is
-  `test_balance_due_payments_without_estimates_need_no_confirmation`. The profile template's
-  `_comment_federal` and `tax-compute/references/tax-and-credits.md` state it.
-  **Step 2, a mistyped EIN.** `_employer_groups` in `agents/lib/tie_out.py`
-  keeps two W-2s with different `source_form.employer_ein` apart even when their
-  `_payer_tokens` are related ("Acme" and "Acme Inc"), so one misread digit in
-  Box b supports a Schedule 3 line 11 credit. In `_person_excess`, when the
-  credit with those related-name pairs merged is lower than the EIN credit,
-  require a reviewed `input.excess_ss_employers` outcome bound to
-  `parse_ledger.json` and each W-2 in the pair. Add it to
-  `material_evidence._FILING_INPUT_LABELS` and read it the way
-  `source_reconciliation.review` reads `input.1099k_personal_routing`: through
-  `material_evidence.reviewed_ledger_sources`, each W-2's `source_sha256` equal
-  to its bound digest. Pass the sources to `_excess_ss_checks` from
-  `evaluate`, and drop an open item where the gate drops the two existing ones.
-  Without the outcome, refuse naming both documents. Tests in
-  `tests/test_tie_out.py`: "Acme" and "Acme Inc" with EINs 12-0000001 and
-  12-0000002, each 100,000 of Box 3 wages and 6,200 withheld, claiming 1,481.80
-  (refused, then accepted with the outcome bound); the same pair below the wage
-  base (no item); and unrelated names with different EINs (unchanged). Two
-  existing tests accept credits this step holds and become "refused, then
-  accepted with the outcome": `test_distinct_employer_eins_support_the_credit_even_when_names_match`
-  (one name twice, two EINs) and the last assertion of
-  `test_a_w2_without_an_ein_never_merges_two_eins_into_a_zero_credit`, whose three
-  names are related.
-  `tax-parse/references/form-extraction.md` tells the parser to re-read Box b
-  before recording the outcome.
-  **Step 3, a railroad employee's bound by employer.** `_rrta_bound` sums every
-  Social Security and Tier 1 tax the employee's W-2s withheld and subtracts one
-  year's maximum, so one railroad employer's own over-withholding, which that
-  employer refunds (Topic 608), fits inside the bound. Group the person's active
-  W-2s, railroad ones included, with `_employer_groups`; cap each group's
-  combined Social Security and Tier 1 withholding at `base * rate`; the bound is
-  their sum less one maximum, zero for a single group. Line 11 is one figure for
-  the return, so the check is a range: at least the other employees' exact
-  credit and at most that credit plus the railroad bound. Main tests only the
-  upper end, so beside a primary credit of $1,481.80 a railroad spouse's return
-  passes with line 11 at 0 or 1,000. While any of the railroad person's W-2s
-  lacks `employer_ein`, a claim above the other employees' credit is refused with
-  `_review_employer_ein`: two EIN-less W-2s of one employer whose names do not
-  nest ("Acme Corp", "Acme Inc") would otherwise split it into two groups. Tests
-  in `tests/test_tie_out.py`: one railroad employer withholding $12,000 of Tier 1
-  on $200,000 with line 11 at 1,081.80 (refused; it passes on main); a railroad
-  employer and a Social Security employer, each with an EIN and $6,200 withheld
-  (1,481.80 accepted, 1,481.81 refused); the railroad spouse beside a primary
-  credit of $1,481.80 with line 11 at 1,000 (refused). Two existing tests change:
-  `test_railroad_credit_remains_a_bound_without_an_ein` (no EINs, $1,481.80) is
-  now refused until both W-2s carry one, while
-  `tests/test_filing_package.py::test_a_spouses_railroad_tax_leaves_the_other_spouses_credit_checked`
-  still passes, its claim being the other spouse's own credit.
-  `tax-and-credits.md` restates the bound.
-  **Step 4, a 1099-MISC inside a consolidated statement.** Since #160 an
-  included 1099-NEC or 1099-K carries its amount and the consolidated record
-  must cover it. An included 1099-MISC still gets the disclosure alone, and it
-  cannot carry its amounts: `validate_misc_income` in
-  `agents/lib/tax_computations/federal/misc_income.py` refuses reportable
-  `misc_income` on any skipped record. Allow it on a skip whose
-  `source_form.included_in` names a consolidated record (pass the link from
-  `load_ledger`, and from `derive_schedule1_other_workpaper` in `tie_out.py`,
-  which re-validates skipped 1099-MISC records); in `source_reconciliation._review_forms` require that reviewed
-  `misc_income` on an included 1099-MISC, and require the consolidated record's
-  `key_boxes` to carry at least each category `classify_misc_income` maps
-  (`self_employment_gross`, `miscellaneous_other_income`,
-  `federal_withholding_1099`), summed over its included forms with one amount
-  per digest as #160 does. A consolidated record carrying any of those
-  categories already needs its own reviewed `misc_income`, mapping its key boxes
-  exactly (`load_ledger`): its 1099-MISC section goes there, and amounts from its
-  other sections in `other_business_gross` and `other_federal_withholding`.
-  Its business gross joins the included 1099-NEC and
-  1099-K receipts in the same coverage sum. Box 1 rents on an included
-  1099-MISC are refused: record that form active with its rental source. Tests
-  in `tests/test_tie_out.py`:
-  an included 1099-MISC with $900 of box 3 business and a consolidated record
-  carrying none (refused, naming both documents); carrying $900 (passes, the
-  disclosure printed); an included 1099-MISC with box 8 substitute payments
-  covered by `miscellaneous_other_income` (passes); and an included 1099-INT
-  (unchanged). `tax-parse/references/source-reconciliation.md` states it.
-  Not queued: a joint Form 4868 payment typed as a `balance_due` or `estimate`
-  row with `person: "primary"` on both spouses' separate returns. One workspace
-  cannot see the other return; the `federal_review` confirmation of sources and
-  allocation is the control. Found by the reviews of #159, #160 and #161.
-  [IRS Topic 608](https://www.irs.gov/taxtopics/tc608)
+- **AA142 (P3, M): Close what the reviews of #164-#172 left that can over-state
+  a return.** Not yet written to the queue standard. Each gap is done when its
+  rule turns a test red when reverted.
+  **Excess Social Security.** `_review_related` in `agents/lib/tie_out.py`
+  misses two faults in one pair: a misread Box b beside a spelling its rules do
+  not relate ("USA" and "United States", an OCR error). `_rrta_bound` takes
+  Tier 1 as withheld, the ledger carrying no RRTA compensation, so a railroad
+  employer's Tier 1 over-withholding below the maximum is left to the payments
+  review.
+  **Payments.** A remittance typed once as `balance_due` and again as a
+  next-year estimate passes once the balance-due row carries
+  `distinct_payment_confirmed`; the IRS payment-history count and total are
+  the only control.
+  **Special-rate gains.** `input.schedule_d_tax_worksheet` is not required for
+  collectibles sold without a 1099-B collectibles mark (physical metal, coins)
+  or for a §1202 exclusion. `compute_form_6251` in
+  `agents/lib/tax_computations/federal/amt.py` reads no Schedule D line 18 or
+  19, so Form 6251 Part III taxes those gains at 0/15/20% and under-states the
+  tentative minimum tax of a filer who has them.
+  **Charitable gifts.** A household item over $500 not in good used condition
+  needs a qualified appraisal (§170(f)(16)(C)) that the substantiation item does
+  not ask for, and a vehicle the charity used, deducted at fair market value,
+  gets no Form 1098-C attach line.
+  **Form 1116.** The line 18 adjustment bound is loose, and line 17 has no bound
+  of its own; both pass only through the reviewed workpaper.
+  **Form 8938.** The package's ceiling reads `FORM_8938_THRESHOLDS`, from which
+  the cache is seeded, rather than the cache.
+  Found by the reviews of #164-#172.
 
 ### Recovered design follow-ups — reviewed against the engine on 2026-10-03
 
@@ -1972,6 +1809,11 @@ merge.
 | AA137 | #148, #149, #150, #151 | Form 8959 Part II from Schedule SE with sourced floors under lines 2, 3, 4 and 17; the Medicare screens read box 5, never below line 1a; boxes 4 and 6 are informational; excess Social Security is checked per person and employer, a railroad employee's share bounded. Part I with no Schedule SE earnings is the reviewed other-taxes outcome's, as on a wage-only return; Form 8959 tax also left in `remaining_other_taxes` beside the confirmation is not detectable; the projection still screens Medicare on line 1a; employer identity and an excess typed into line 31 alone are AA140's. |
 | AA139 | #152, #153, #154, #155 | Every dollar of Box 1a is routed, with a reviewed personal routing on any business return; an overlap needs a separate bound evidence file; each received form clears one expected entry; a long PDF and each crypto CSV bind to one digest. A rental 1099-K has no route, books are required only for the NEC and K pair across the household, and the intake prompt lists a missing payer once; a 1099 inside a consolidated statement is AA140's; the crypto JSON's digests are self-reported. |
 | AA140 | #159, #160, #161 | Excess Social Security is grouped by W-2 Box b EIN, a positive credit needing one on each of that employee's W-2s; an included 1099-NEC or 1099-K carries its amount, which the consolidated statement must cover, and a statement's own Box 1a is routed and counts as a 1099-K; a balance-due row beside a late installment and a following-year estimate beside line 10 need separate remittances, and line 10 off a joint return needs the Form 4868 ownership. A railroad bound by employer, a mistyped EIN, an included 1099-MISC and two payment row shapes are AA141's. |
+| AA141 | #164, #165, #166, #167 | Two or more balance-due rows each need separate remittances confirmed; related employer names with different EINs need a reviewed outcome when merging them lowers the credit; a railroad employee's share is bounded by employer, Social Security counted on that employer's own wages; an included 1099-MISC carries its amounts, which the statement must cover. Two faults in one W-2 pair, Tier 1 withheld below the maximum and a remittance typed as both kinds are AA142's; one included form linked into two statements rests on the series id, and a joint Form 4868 payment typed as a row on both separate returns on the `federal_review` confirmation. |
+| AA122 | #168 | OPEN: special-rate gains hold the final package until a reviewed Schedule D Tax Worksheet figure, bounded both ways, is recorded; step 2 computes the worksheet. Collectibles without a 1099-B mark and a §1202 exclusion are AA142's. |
+| AA134 | #169 | OPEN: a missing, non-finite or negative account value is refused, and the package lists Form 8938 on a boolean verdict; step 2, the asset inventory, remains. The package's ceiling reading the built-in thresholds is AA142's. |
+| AA133 | #170 | Each itemized gift needs its acknowledgment, and over $5,000 per item or group of similar items its appraisal, securities excepted; Form 8283 is listed over $500 of noncash gifts and in a carryover year; a vehicle the charity sold needs its Form 1098-C; a California-only itemizer is held. Intellectual property and inventory are asked for an appraisal they do not need, the safe direction, and the securities and vehicle labels are the reviewer's; a household item not in good used condition and a vehicle the charity used are AA142's. |
+| AA124 | #171, #172 | Foreign tax paid is a ledger category; the simplified credit needs every §904(j) condition, deducting or not claiming has a path, and Form 1116 needs each category's lines, Schedule B by origin year and a reviewed outcome, carryovers following one path from compute to rollover. The election's limit compares tax paid rather than creditable tax, and a high-tax kickout can refuse a correct external line 14, both the safe direction; the loose line 18 bound and line 17 are AA142's. |
 | AA109 | #124 | A header label reaches a value one cell off its column, past a blank row or under a header wrapped over two rows, and a dependents row one cell off its header masks in CSV and Excel. Whole values bound every crossing run; only routing, account and transit columns keep nine digits, and a comb in any other named column masks. A whole date stays whole only in an owned date column or under a flag label, so a count before a date beside any other label masks both, the safe direction. An unknown PDF glyph is a possible digit at any width, and only an IRS OMB number is metadata. What it left is AA110. |
 | AA106 | #121 | Partially readable identifier fields refuse before extraction returns: overlaid on a label, crossed by letters or rows, or with some digits mapped. No glyph is decoded. An unknown glyph is a possible digit only within the widths of readable digits in its own font, so an unmapped dash or checkbox beside readable figures does not refuse the page. What it left is in AA109. |
 | AA108 | #120 | A header label introduces a comb or dashed value crossing cells on the next row only, and a whole comb past a spacer or another cell on the label's row masks. A filled label stays open for variant spellings below it. A flag beside a whole date keeps both. What it left is AA109. |
