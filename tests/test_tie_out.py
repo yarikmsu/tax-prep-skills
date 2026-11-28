@@ -1154,6 +1154,63 @@ def test_skipped_records_excluded_from_sums():
 _SOCIAL_SECURITY_LAW = {"federal": {"social_security": {"wage_base": 176100, "employee_rate": .062}}}
 
 
+def _ftc_return(*, paid, claimed, status="Single", form_type="Consolidated 1099", **changes):
+    return {"meta": {"tax_year": 2025, "filing_status": status},
+            "form_1040": {"line_16_tax": 1000, "line_20_schedule3_line8": claimed,
+                          "schedule_3_line_1_foreign_tax_credit": claimed},
+            "form_1116_ftc": {"method": "simplified", "foreign_tax_paid_usd": paid,
+                              "foreign_tax_paid_on_statements_usd": paid if form_type else 0,
+                              "ftc_allowed": claimed, "all_foreign_source_income_passive_confirmed": True,
+                              "all_foreign_income_and_taxes_on_payee_statements_confirmed": True, **changes}}
+
+
+def _evaluate_ftc(result, paid, form_type="Consolidated 1099", profile=None):
+    records = [_form("fund", form_type, "Fund", "a" * 64, foreign_tax_paid=paid)] if form_type else []
+    ledger = _ledger(*records)
+    law = {"federal": {"foreign_tax_credit_simplified": {"max_single": 300, "max_mfj": 600}}}
+    return T.evaluate(ledger, result, [record.file for record in ledger], tax_law=law, profile=profile)
+
+
+@pytest.mark.parametrize("form_type", ["1099-INT", "1099-DIV", "Consolidated 1099", "Schedule K-3"])
+def test_qualified_statements_support_the_simplified_foreign_tax_credit(form_type):
+    result = _ftc_return(paid=250, claimed=250, form_type=form_type)
+    report = _evaluate_ftc(result, 250, form_type)
+    assert not report.failed
+    assert any(check.category == "foreign_tax_paid" and check.ok for check in report.sum_checks)
+    result["form_1116_ftc"]["foreign_tax_paid_on_statements_usd"] = 249.99
+    assert _evaluate_ftc(result, 250, form_type).failed
+
+
+def test_small_foreign_tax_credit_needs_a_payee_statement():
+    result = _ftc_return(paid=200, claimed=200, form_type=None)
+    report = _evaluate_ftc(result, 0, form_type=None)
+    assert any("qualified payee statements" in issue for issue in report.missing_result_targets)
+    result = _ftc_return(paid=200, claimed=200)
+    assert _evaluate_ftc(result, 200, form_type="foreign bank receipt").failed
+    result["form_1116_ftc"]["method"] = None
+    report = _evaluate_ftc(result, 200)
+    assert any("requires Form 1116 or a verified simplified election" in issue for issue in report.missing_result_targets)
+
+
+def test_surviving_spouse_uses_the_single_simplified_limit_on_tax_paid():
+    qss = _ftc_return(paid=450, claimed=200, status="QSS")
+    report = _evaluate_ftc(qss, 450)
+    assert any("exceeds the simplified election limit" in issue for issue in report.missing_result_targets)
+    joint = _ftc_return(paid=450, claimed=200, status="MFJ")
+    assert not _evaluate_ftc(joint, 450).failed
+
+
+def test_simplified_election_leaves_an_unused_prior_credit_available():
+    profile = {"filing_status": "Single", "prior_year": {"unused_ftc_carryforward": 800}}
+    result = _ftc_return(paid=250, claimed=250)
+    assert not _evaluate_ftc(result, 250, profile=profile).failed
+    for field in ("carryover_applied_usd", "carryforward_created_usd"):
+        result["form_1116_ftc"][field] = 1
+        report = _evaluate_ftc(result, 250, profile=profile)
+        assert any("cannot apply a carryover" in issue for issue in report.missing_result_targets)
+        del result["form_1116_ftc"][field]
+
+
 def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
     record = _record(doc_id=f"ss-{number}", file=f"documents/ss-{number}.pdf",
                      payer=payer or f"Employer {number}", person=person,

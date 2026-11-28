@@ -37,6 +37,12 @@ def test_sequence_ordering_12_before_12a_before_19():
     assert keys == ["form_1040", "schedule_d", "form_8949", "form_1116_ftc"]
 
 
+def test_simplified_foreign_tax_credit_goes_on_schedule_3_without_form_1116():
+    result = _result(form_1116_ftc={"method": "simplified", "ftc_allowed": 250})
+    result["form_1040"].update(schedule_3_line_1_foreign_tax_credit=250, line_20_schedule3_line8=250)
+    assert [row["sequence"] for row in FP.assembly_order(result)] == [None, "03"]
+
+
 def test_full_table_ordering_pins_every_sequence():
     """Review round: pin the WHOLE table so any single sequence typo fails.
     Every mapped section present at once -> exact expected order."""

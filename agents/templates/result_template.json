@@ -82,6 +82,7 @@
     "line_18_tax_plus_schedule2": 0,
     "line_19_ctc": 0,
     "line_20_schedule3_line8": 0,
+    "schedule_3_line_1_foreign_tax_credit": 0,
     "line_21_total_credits": 0,
     "line_22_tax_minus_credits": 0,
     "line_23_other_taxes": 0,
@@ -411,9 +412,15 @@
 
   "form_1116_ftc": {
     "_include_if": "has_foreign_tax_paid flag is true",
-    "category": "General category income (passive)",
+    "method": null,
+    "category": null,
     "foreign_tax_paid_local_currency": 0,
     "foreign_tax_paid_usd": 0,
+    "foreign_tax_paid_on_statements_usd": 0,
+    "all_foreign_source_income_passive_confirmed": null,
+    "all_foreign_income_and_taxes_on_payee_statements_confirmed": null,
+    "carryover_applied_usd": 0,
+    "carryforward_created_usd": 0,
     "foreign_source_income": {
       "_note": "Add named sub-keys per income source, e.g. bank_deposit_interest, savings_interest",
       "total": 0

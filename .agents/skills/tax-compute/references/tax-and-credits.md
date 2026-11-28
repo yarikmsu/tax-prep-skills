@@ -265,8 +265,21 @@ Pass the full Schedule 8812 inputs, not just the child count:
   computed figure may be understated; verify in tax software.
 
 **Foreign Tax Credit (Line 20 via Schedule 3):**
-Use `compute_ftc_limitation()` — compare tax paid vs. limitation.
-If FTC ≤ simplified limit (from `tax_law JSON` `foreign_tax_credit_simplified`) from passive sources: no Form 1116 needed.
+Record the qualified payee statement total in
+`form_1116_ftc.foreign_tax_paid_on_statements_usd` and the total foreign tax
+paid in `foreign_tax_paid_usd`. Complete the covered-year Form 1116 when
+required and set `method` to `form_1116`. For the §904(j) election, set
+`method` to `simplified` only after confirming that all foreign-source
+income qualifies as passive and that all of it and its tax were reported on
+qualified payee statements. Set both corresponding `*_confirmed` fields.
+Compare the paid tax to the covered-year `foreign_tax_credit_simplified`
+limit. Use `max_mfj` for a joint return and `max_single` for other statuses.
+Review creditability and reductions under the covered-year instructions.
+Record zero for `carryover_applied_usd` and `carryforward_created_usd` in an
+election year. Keep any earlier unused balances with their origin years.
+Record the reviewed `ftc_allowed` in
+`form_1040.schedule_3_line_1_foreign_tax_credit` and include it in line 20.
+[2025 Form 1116 instructions](https://www.irs.gov/pub/irs-prior/i1116--2025.pdf)
 
 **Education credits (Form 8863 → Schedule 3 line 3 + 1040 line 29):**
 When `flags.has_education_expenses` is true, use `compute_education_credits()`:

@@ -452,8 +452,8 @@ def _transform_abs(raw):
 
 
 def _transform_ftc_unused(raw):
-    """raw is the form_1116_ftc block (dict). Unused = paid - allowed."""
-    if not isinstance(raw, dict):
+    """Unused taxes originate only in a year without the simplified election."""
+    if not isinstance(raw, dict) or raw.get("method") == "simplified":
         return 0
     paid = _amount(raw.get("foreign_tax_paid_usd"))
     allowed = _amount(raw.get("ftc_allowed"))
@@ -822,6 +822,13 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         prior_value = transform(raw) if transform else raw
         target_doc = current.profile if entry["target_file"] == "taxpayer_profile.json" else current.result
         current_value = _get_path(target_doc, entry["target_path"], default=0)
+        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict) and raw.get("method") == "simplified":
+            opening = _amount(_get_path(prior.profile, entry["target_path"], 0))
+            if opening > 0:
+                out.append(Change("carryforwards", entry["target_path"], entry["target_file"], opening,
+                                  current_value, "ask", "Review the surviving older foreign tax carryovers by origin year. "
+                                  "The simplified election year used and generated none."))
+            continue
         if not prior_value and not (entry.get("transform") == "ca_ptet_vintages" and current_value):
             continue
         if current_value and current_value != prior_value:

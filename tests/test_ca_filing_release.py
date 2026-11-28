@@ -418,6 +418,49 @@ def test_included_misc_missing_from_consolidated_statement_blocks_release(worksp
     _assert_ready(workspace, forms=("form_1040", "schedule_1_other_income", "schedule_d", "california_540"))
 
 
+def test_foreign_tax_credit_needs_a_verified_election_to_release_without_form_1116(workspace):
+    from agents.lib.tax_computations.state.ca import CA_INVESTMENT_COMPONENTS
+
+    release.compute(workspace)
+    source = workspace / "documents" / "foreign-tax-dividends.pdf"
+    release._document(source, "Synthetic Form 1099-DIV", [
+        ("Box 1a Ordinary dividends", "1,000.00"), ("Box 7 Foreign tax paid", "200.00"),
+    ])
+    parse_records.write_record(workspace, {
+        "doc_id": source.stem, "file": source.relative_to(workspace).as_posix(),
+        "person": "primary", "payer": "Synthetic Broker", "form_type": "1099-DIV",
+        "source_sha256": sha256(source.read_bytes()).hexdigest(),
+        "source_form": {"tax_year": release.YEAR, "series_id": source.stem},
+        "key_boxes": dict.fromkeys(CA_INVESTMENT_COMPONENTS, 0) | {"ordinary_dividends": 1000, "foreign_tax_paid": 200},
+        "ca_investments": {"tax_year": release.YEAR, "reviewed": True, "municipal_interest": [], "funds": []},
+    })
+    release.run(workspace, "parse_records", "--build-ledger")
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"].update(schedule_3_line_1_foreign_tax_credit=200, line_20_schedule3_line8=200)
+    result["form_1116_ftc"] = {"method": "simplified", "ftc_allowed": 200, "foreign_tax_paid_usd": 200,
+                              "foreign_tax_paid_on_statements_usd": 200,
+                              "all_foreign_source_income_passive_confirmed": True}
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "qualified payee statements" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    result = release.read_json(result_path)
+    result["form_1116_ftc"]["all_foreign_income_and_taxes_on_payee_statements_confirmed"] = True
+    release.write_json(result_path, result)
+    review = "foreign-tax-credit-review.json"
+    release.write_json(workspace / review, {"method": "simplified", "foreign_tax_credit": 200})
+    release.run(workspace, "material_evidence", "--id", "input.nonrefundable_credits", "--label", "Credit review",
+                "--outcome", "reviewed", "--input", result_path.name, "--input", "taxpayer_profile.json",
+                "--input", release.LAW, "--input", review, "--input", source.relative_to(workspace).as_posix())
+    release.record_deduction(workspace)
+    release.validate(workspace)
+    package = _assert_ready(workspace, forms=("form_1040", None, "schedule_d", "california_540"))
+    assert [row["sequence"] for row in package["assembly_order"] if row["sequence"] in {"03", "19"}] == ["03"]
+
+
 def test_changed_business_remittance_reopens_overlap_review(workspace):
     release.add_overlapping_business(workspace)
     release.compute(workspace)

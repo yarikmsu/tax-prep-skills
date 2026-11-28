@@ -66,8 +66,6 @@ Run the document scanner:
 sh agents/lib/run.sh agents/lib/parse_utils.py scan documents/
 ```
 
-This returns a JSON list of all parseable files with auto-detected types.
-
 If no documents found, ask the user where their documents are located — UNLESS
 `answers.md` affirmatively states the intake is empty. An empty `documents/` is
 two different situations and only the taxpayer can tell them apart: documents
@@ -383,6 +381,7 @@ Rules:
   | W-2G box 4 | `federal_withholding_w2g` → checked other-form withholding and actual Form1040 line25c; never the 1099 line25b |
   | State/local withholding (W-2, 1099/W-2G, CA Forms 592-B/593) | Use the separate [withholding routes](references/withholding.md); never combine jurisdictions or CA lines 71 and 73 |
   | 1099-INT box 1 (+3) | `taxable_interest` stays inclusive; preserve the federally included box-3 part as `us_obligation_interest`. Box 8 → both inclusive `tax_exempt_interest` and component `municipal_interest`, with issuer-state detail |
+  | 1099-INT box 6 / 1099-DIV box 7 | `foreign_tax_paid` in USD from qualified payee statements, including their consolidated equivalents; count each amount once |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
   | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |
   | 1099-DIV box 2b | `unrecaptured_section_1250_gain` (part of box 2a; Schedule D Tax Worksheet review) |

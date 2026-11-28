@@ -116,7 +116,8 @@ def _federal_figures(result: dict, profile: dict, law: dict, year: int, status: 
     if flags.get("has_ira_contributions") is True or _section_present(result, "ira_contribution"):
         fields.add("federal.ira_limits.contribution_limit")
     if flags.get("has_foreign_tax_paid") is True or _section_present(result, "form_1116_ftc"):
-        fields.add(f"federal.foreign_tax_credit_simplified.max_{two_status_key}")
+        election_key = "mfj" if status == "mfj" else "single"
+        fields.add(f"federal.foreign_tax_credit_simplified.max_{election_key}")
     business_income = schedule_c_net(result, profile)
     # Triggered by the INPUTS. Keyed on Form 8959's section, a missing figure
     # left no section, so the requirement never arose: circular.

@@ -18,6 +18,7 @@ from agents.lib.tax_computations._shared import (
     _coerce_numeric,
     _normalize_filing_status,
 )
+from agents.lib.tax_computations.federal.government_benefits import _money
 from agents.lib.tax_computations.federal.penalties import (
     compute_underpayment_interest,
 )
@@ -32,6 +33,57 @@ FORM_8938_THRESHOLDS = {
     "mfj_foreign": {"year_end": 400000, "any_time": 600000},
     "single_foreign": {"year_end": 200000, "any_time": 300000},
 }
+
+FTC_CREDIT_FIELD = "schedule_3_line_1_foreign_tax_credit"
+FTC_STATEMENT_TAX = "foreign_tax_paid_on_statements_usd"
+
+
+def check_foreign_tax_credit(result: dict, profile: dict, law: dict, statement_tax: float) -> None:
+    """Check Schedule 3 line 1 and verify the election to omit Form 1116."""
+    form = result.get("form_1040") or {}
+    credit = _money(form.get(FTC_CREDIT_FIELD, 0), "Schedule 3 line 1 foreign tax credit")
+    section = result.get("form_1116_ftc")
+    if section is None:
+        if credit:
+            raise ValueError("Schedule 3 line 1 requires Form 1116 or a verified simplified election.")
+        return
+    if not isinstance(section, dict):
+        raise ValueError("The foreign tax credit workpaper must be an object.")
+    method = section.get("method")
+    if method not in (None, "form_1116", "simplified"):
+        raise ValueError("Choose a recognized foreign tax credit method.")
+    paid = _money(section.get("foreign_tax_paid_usd", 0), "Total foreign tax paid")
+    recorded = _money(section.get(FTC_STATEMENT_TAX, 0), "Foreign tax paid on statements")
+    if recorded != round(statement_tax, 2) or paid < recorded:
+        raise ValueError("Reconcile foreign tax paid to the full amount reported on the payee statements.")
+    allowed = _money(section.get("ftc_allowed", 0), "Reviewed foreign tax credit")
+    if credit != allowed or credit > _money(form.get("line_20_schedule3_line8", 0), "Form 1040 line 20"):
+        raise ValueError("Schedule 3 line 1 must match the reviewed credit and be included in Form 1040 line 20.")
+    if credit and method is None:
+        raise ValueError("Schedule 3 line 1 requires Form 1116 or a verified simplified election.")
+    if method != "simplified":
+        return
+
+    if (section.get("all_foreign_source_income_passive_confirmed") is not True
+            or section.get("all_foreign_income_and_taxes_on_payee_statements_confirmed") is not True
+            or not statement_tax or paid != recorded):
+        raise ValueError("The simplified election needs all foreign-source income to qualify as passive and all income "
+                         "and tax on qualified payee statements.")
+    if any(_money(section.get(field, 0), f"Foreign tax {field}") > 0
+           for field in ("carryover_applied_usd", "carryforward_created_usd")):
+        raise ValueError("A simplified election cannot apply a carryover or create a carryforward for this year.")
+    status = _normalize_filing_status((result.get("meta") or {}).get("filing_status") or profile.get("filing_status"))
+    if profile.get("filing_status") and _normalize_filing_status(profile["filing_status"]) != status:
+        raise ValueError("The return and profile must agree on filing status for the simplified election.")
+    limits = (law.get("federal") or {}).get("foreign_tax_credit_simplified") or {}
+    key = "max_mfj" if status == "MFJ" else "max_single"
+    limit = _money(limits.get(key), "Covered-year simplified foreign tax credit limit")
+    if limit <= 0:
+        raise ValueError("Fetch the covered-year simplified foreign tax credit limit.")
+    if paid > limit:
+        raise ValueError("Foreign tax paid exceeds the simplified election limit for this filing status. Use Form 1116.")
+    if credit > paid or credit > _money(form.get("line_16_tax", 0), "Form 1040 line 16 regular income tax"):
+        raise ValueError("The simplified credit exceeds foreign tax paid or regular income tax.")
 
 
 def compute_ftc_limitation(

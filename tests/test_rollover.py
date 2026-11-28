@@ -437,6 +437,22 @@ def test_compute_diff_ftc_unused():
     assert ftc[0].prior_value == 300
 
 
+def test_simplified_ftc_does_not_create_a_carryforward_and_flags_older_balances():
+    prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
+    prior.result["form_1116_ftc"] = {"method": "simplified", "foreign_tax_paid_usd": 250, "ftc_allowed": 100}
+    current = _load_current("current_2025_empty")
+
+    def changes():
+        diff = compute_diff(prior, current, categories={"carryforwards"}, tax_law_new=current.tax_law)
+        return [c for c in diff["carryforwards"] if c.json_path == "prior_year.unused_ftc_carryforward"]
+
+    assert not changes()
+    prior.profile.setdefault("prior_year", {})["unused_ftc_carryforward"] = 800
+    (earlier,) = changes()
+    assert earlier.action_suggested == "ask" and earlier.prior_value == 800
+    assert "origin year" in earlier.reason
+
+
 def test_compute_diff_ira_basis_carryforward():
     """Legacy MFJ line 14 cannot be assigned to either spouse without evidence."""
     prior = load_prior(FIXTURES / "prior_2024_clean", year=2024)
