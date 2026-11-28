@@ -459,8 +459,9 @@ def _transform_ftc_unused(raw):
     """Unused taxes originate only in a Form 1116 year.
 
     A simplified election, a deduction or tax not claimed has no limitation to
-    exceed, so paid less allowed there is no carryforward. An archive with no
-    method is resolved by `_ftc_review_changes`, never applied.
+    exceed, so paid less allowed there is no carryforward. The carryforward
+    diff routes this entry through `_ftc_changes`, which rolls Schedule B
+    baskets instead of this aggregate.
     """
     if not isinstance(raw, dict) or raw.get("method") != "form_1116":
         return 0
@@ -801,6 +802,9 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         if entry.get("transform") == "ira_basis":
             out.extend(_ira_changes(prior, current))
             continue
+        if entry.get("transform") == "ftc_unused":
+            out.extend(_ftc_changes(prior, current, entry))
+            continue
         source_path = _ca_source_path(prior.result, entry["source_path"])
         raw = _get_path(prior.result, source_path)
         if raw is None:
@@ -825,18 +829,10 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
                 raw = rental_carryforward_from_workpaper(prior.result.get("schedule_e_rentals"), prior.year)
             except (ValueError, TypeError) as exc:
                 raise RolloverError(str(exc)) from None
-        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict):
-            reviewed = _ftc_basket_changes(prior, current, raw)
-            if reviewed is not None:
-                out.extend(reviewed)
-                continue
         transform = TRANSFORMS.get(entry.get("transform"))
         prior_value = transform(raw) if transform else raw
         target_doc = current.profile if entry["target_file"] == "taxpayer_profile.json" else current.result
         current_value = _get_path(target_doc, entry["target_path"], default=0)
-        if entry.get("transform") == "ftc_unused" and isinstance(raw, dict) and raw.get("method") != "form_1116":
-            out.extend(_ftc_review_changes(prior, entry, raw, current_value))
-            continue
         if not prior_value and not (entry.get("transform") == "ca_ptet_vintages" and current_value):
             continue
         if current_value and current_value != prior_value:
@@ -845,9 +841,6 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
         else:
             action = "apply"
             reason = f"Pulled from {source_path}"
-        if entry.get("transform") == "ftc_unused":
-            action = "skip"
-            reason = "Resolve the legacy balance using Form 1116 Schedule B by category and origin year."
         if entry.get("transform") == "rental_carryforward":
             old_status = _status_code(_get_path(prior.result, "meta.filing_status") or prior.profile.get("filing_status"))
             new_status = _status_code(current.profile.get("filing_status"))
@@ -878,56 +871,63 @@ def _diff_carryforwards(prior: PriorReturn, current: CurrentState) -> list[Chang
 
 
 _FTC_NO_CARRYFORWARD = {
+    None: "The prior return does not record its foreign tax method.",
     "simplified": "The simplified election year used and generated none.",
     "deduction": "A deduction year generated none and reduces each older carryover by the credit it would have used.",
     "not_claimed": "A year claiming no foreign tax generated none.",
 }
 
 
-def _ftc_review_changes(prior: PriorReturn, entry: dict, raw: dict, current_value) -> list[Change]:
-    """Foreign tax carryforwards from a prior year that did not file Form 1116.
+def _ftc_changes(prior: PriorReturn, current: CurrentState, entry: dict) -> list[Change]:
+    """Foreign tax carryovers into the new year, by category and origin year.
 
-    Every one is "ask". A recorded method other than Form 1116 created no
-    carryforward, so only an older opening balance survives, and its origin
-    years decide what is left. An archive with no method may be any of the
-    four; paid less allowed is offered for review, never applied.
+    A Form 1116 year passes on its verified Schedule B closing balances. Any
+    other year, or a prior return without the workpaper, passes on its opening
+    baskets less the origin years that expire. Every change is "ask". The
+    legacy aggregate is offered only for review: paid less allowed from an
+    archive with no method, which may be any of the four, or an older opening
+    balance when no basket carries.
     """
-    method = raw.get("method")
+    raw = prior.result.get("form_1116_ftc")
+    section = raw if isinstance(raw, dict) else {}
+    method = section.get("method")
+    changes = _ftc_basket_changes(prior, current, section)
+    if method == "form_1116":
+        return changes
     target, target_file = entry["target_path"], entry["target_file"]
-    if method is None:
-        legacy = _ftc_paid_less_allowed(raw)
-        if not legacy:
-            return []
-        return [Change("carryforwards", target, target_file, legacy, current_value, "ask",
-                       "The prior return does not record whether it filed Form 1116, took the simplified election, "
-                       "deducted foreign tax or claimed none. Confirm the Form 1116 Schedule B carryforward by "
-                       "category and origin year before using paid less allowed.")]
-    opening = _amount(_get_path(prior.profile, target, 0))
-    if opening <= 0:
-        return []
-    reason = _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
-    return [Change("carryforwards", target, target_file, opening, current_value, "ask",
-                   f"Review the surviving older foreign tax carryovers by origin year. {reason}")]
+    current_value = _get_path(current.profile, target, default=0)
+    legacy = _ftc_paid_less_allowed(section) if method is None else 0
+    opening = 0 if changes else _amount(_get_path(prior.profile, target, 0))
+    if legacy:
+        changes.append(Change("carryforwards", target, target_file, legacy, current_value, "ask",
+                              "The prior return does not record whether it filed Form 1116, took the simplified "
+                              "election, deducted foreign tax or claimed none. Confirm the Form 1116 Schedule B "
+                              "carryforward by category and origin year before using paid less allowed."))
+    elif opening > 0:
+        reason = _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
+        changes.append(Change("carryforwards", target, target_file, opening, current_value, "ask",
+                              f"Review the surviving older foreign tax carryovers by origin year. {reason}"))
+    return changes
 
 
-def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict) -> list[Change] | None:
+def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict) -> list[Change]:
     from agents.lib.tax_computations.federal.foreign_tax_credit import (
         CARRYOVER_PATH, carryover_baskets, verify_form_1116,
     )
 
     method = section.get("method")
-    if method not in ("form_1116", "simplified"):
-        return None
     try:
         if method == "form_1116":
             rows = verify_form_1116(section, prior.result, prior.profile)
         else:
             existing = _get_path(prior.profile, CARRYOVER_PATH, [])
             if not existing:
-                return None  # The legacy aggregate can still be raised for manual review.
+                return []
             balances = carryover_baskets(existing, prior.year)
             rows = []
             for row in existing:
+                # Ten years forward from the origin year: an origin before
+                # prior.year - 9 had its last year on the prior return.
                 amounts = {origin: amount for origin, amount in balances[row["basket"]].items()
                            if int(origin) >= prior.year - 9}
                 if amounts:
@@ -939,8 +939,10 @@ def _ftc_basket_changes(prior: PriorReturn, current: CurrentState, section: dict
         return []
     if current.profile.get("tax_year", prior.year + 1) != prior.year + 1:
         raise RolloverError("Reconcile Form 1116 carryovers for the intervening tax years.")
-    return [Change("carryforwards", CARRYOVER_PATH, "taxpayer_profile.json", rows, target,
-                   "ask", "Review Form 1116 Schedule B balances and ownership by category and origin year.")]
+    reason = "Review Form 1116 Schedule B balances and ownership by category and origin year."
+    if method != "form_1116":
+        reason += " " + _FTC_NO_CARRYFORWARD.get(method, "The prior foreign tax method is not one this toolkit records.")
+    return [Change("carryforwards", CARRYOVER_PATH, "taxpayer_profile.json", rows, target, "ask", reason)]
 
 
 def _diff_identity(prior: PriorReturn, current: CurrentState) -> list[Change]:

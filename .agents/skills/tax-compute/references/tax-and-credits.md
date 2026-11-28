@@ -295,14 +295,18 @@ Record the reviewed `ftc_allowed` in
 
 For Form 1116, complete `form_1116_ftc.review` with the `tax_year` and the
 reviewed `line_18_base`, `line_18_adjustment` and `line_18`. The TY2025
-base is Form 1040 line 11b less line 14 plus Schedule 1-A line 37. Review
-the worldwide qualified dividend and capital gain worksheet or document
-the applicable adjustment exception. Record `line_20`, the separate
-credits, and `line_34_boycott_reduction`. Choose `method: checked` inside
-the review for the TY2025 ordinary passive, general, or foreign branch
-calculation and record `schedule_2_line_1z`. Use `method: external` inside
-the review for other years or calculations requiring other lines or
-worksheets. Review those forms against the instructions for the return year.
+base is Form 1040 line 11b less line 14 plus Schedule 1-A line 37, the
+senior deduction in `schedule_1a.senior.allowed`, never the whole line 13b.
+Review the worldwide qualified dividend and capital gain worksheet or
+document the applicable adjustment exception; the adjustment can never
+exceed Form 1040 line 3a plus a positive line 7. Record `line_20`, the
+separate credits, and `line_34_boycott_reduction`. Line 20 is Form 1040
+line 16 plus Schedule 2 line 1z and never includes the Form 6251 AMT.
+Choose `method: checked` inside the review for the TY2025 ordinary
+passive, general, or foreign branch calculation and record
+`schedule_2_line_1z`. Use `method: external` inside the review for other
+years or calculations requiring other lines or worksheets. Review those
+forms against the instructions for the return year.
 
 Record each separate `categories` entry with `basket` and a workspace
 relative `source_ref` identifying the form or workpaper. Enter
@@ -312,9 +316,12 @@ and `line_24_credit`, plus `line_19_ratio` for the checked method. Review
 Schedule B alongside the form. Record line 4 amounts as positive numbers
 in `used_carryover_by_origin_year` and line 8 amounts in
 `closing_carryforward_by_origin_year`, both keyed by four-digit origin year.
-Use empty objects when there are no balances. Reconcile the opening balances
-in `prior_year.imported_ftc_baskets` using the prior Schedule B before
-applying them. Sum amounts actually used in `carryover_applied_usd` and the
+Use empty objects when there are no balances. Under either method,
+Schedule B line 4 uses a carryover only against an excess limitation,
+oldest origin year first, and the new carryforward is at most line 14 less
+line 10 less line 23. Section 951A category income has no carryover in or
+out. Reconcile the opening balances in `prior_year.imported_ftc_baskets`
+using the prior Schedule B before applying them. Sum amounts actually used in `carryover_applied_usd` and the
 current-year closing balances in `carryforward_created_usd`. Attach the
 reviewed worksheets for all categories and bind them, the result, profile,
 and covered-year tax-law file to `input.form_1116_review` as `reviewed`.

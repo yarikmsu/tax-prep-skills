@@ -1620,6 +1620,9 @@ def test_form_1116_filing_review_binds_each_category_source():
             "names": [*_ALL, "reviews/worksheet.json"]}
     items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item)}
     assert material_evidence.filing_input_issues(_captured(form, items, sections=sections)) == []
+    items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item, outcome="computed")}
+    issues = material_evidence.filing_input_issues(_captured(form, items, sections=sections))
+    assert any("each separate category" in issue for issue in issues), issues
     review["categories"].append({"source_ref": "reviews/unbound.json"})
     items = {**_deduction(), material_evidence.FORM_1116_ITEM: dict(item)}
     issues = material_evidence.filing_input_issues(_captured(form, items, sections=sections))

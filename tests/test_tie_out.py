@@ -1336,8 +1336,13 @@ def test_simplified_election_leaves_an_unused_prior_credit_available():
 def _form_1116_return():
     result = _ftc_return(paid=800, claimed=900, method="form_1116",
                          carryover_applied_usd=100, carryforward_created_usd=0)
-    result["form_1040"].update(line_11_agi=120000, line_14_total_deductions=30000,
-                               line_13b_schedule_1a_deductions=10000, line_16_tax=20000)
+    # Line 18 worksheet: 120,000 - 26,000 + 6,000 of Schedule 1-A line 37 (the
+    # senior part of line 13b) = 100,000; the 8,409.01 of qualified dividends
+    # are taxed at 15%, so worksheet line 9 = 8,409.01 x 0.5946 = 5,000.
+    result["form_1040"].update(line_11_agi=120000, line_14_total_deductions=26000,
+                               line_13b_schedule_1a_deductions=10000, line_16_tax=20000,
+                               line_3a_qualified_dividends=8409.01, line_3b_ordinary_dividends=8409.01)
+    result["schedule_1a"] = {"tips": {"allowed": 4000}, "senior": {"allowed": 6000}, "total": 10000}
     result["form_1116_ftc"]["review"] = {
         "tax_year": 2025, "method": "checked", "line_18_base": 100000,
         "line_18_adjustment": 5000, "line_18": 95000, "line_20": 20000,
@@ -1388,6 +1393,171 @@ def test_form_1116_requires_a_covered_year_workpaper_or_reviewed_external_form()
     result["meta"]["tax_year"] = profile["tax_year"] = 2026
     assert _evaluate_ftc(result, 800, profile=profile).failed
     result["form_1116_ftc"]["review"]["method"] = "external"
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+
+
+def _passive(result):
+    return result["form_1116_ftc"]["review"]["categories"][0]
+
+
+def _general(result):
+    return result["form_1116_ftc"]["review"]["categories"][1]
+
+
+def _review(result):
+    return result["form_1116_ftc"]["review"]
+
+
+def _claim(result, credit):
+    result["form_1116_ftc"]["ftc_allowed"] = credit
+    result["form_1040"].update(schedule_3_line_1_foreign_tax_credit=credit, line_20_schedule3_line8=credit)
+
+
+def _amt_in_line_20(result):
+    # Form 1040 line 17 is the Form 6251 AMT alone, so Schedule 2 line 1z is 0.
+    result["form_1040"]["line_17_schedule2_part1"] = 5000
+    result["form_6251"] = {"amt": 5000}
+    _review(result).update(schedule_2_line_1z=5000, line_20=25000)
+
+
+def _negative_current_tax(result):
+    _passive(result).update(line_14_eligible_tax=200, line_24_credit=200)
+
+
+def _reduction_carried_forward(result):
+    # General: line 9 5,000 less a 4,000 line 12 reduction (tax on excluded
+    # income) is 1,000 available; against a 1,000 limitation, Schedule B line
+    # 6 is zero. A reduced tax is never carried forward.
+    _general(result).update(line_9_tax_paid=5000, line_14_eligible_tax=1000, line_23_limitation=1000,
+                            line_24_credit=1000, closing_carryforward_by_origin_year={"2025": 4000})
+    result["form_1116_ftc"].update(foreign_tax_paid_usd=5300, carryforward_created_usd=4000)
+    _claim(result, 1400)
+
+
+def _expired_origin_kept(result, profile):
+    profile["prior_year"]["imported_ftc_baskets"][0]["carryforward_by_origin_year"] = {"2015": 250}
+    _passive(result).update(line_10_carryover_by_origin_year={"2015": 250}, used_carryover_by_origin_year={"2015": 100},
+                            closing_carryforward_by_origin_year={"2015": 150})
+
+
+_FORM_1116_REFUSALS = {
+    "line 18 is not base less adjustment": (lambda r, p: _review(r).update(line_18=95000.01),
+                                            "must match its adjusted worldwide income worksheet"),
+    "adjustment above dividends and gain": (lambda r, p: r["form_1040"].update(line_3a_qualified_dividends=4999.99),
+                                            "exceeds the qualified dividends and capital gain"),
+    "Schedule 1-A total added back": (lambda r, p: _review(r).update(line_18_base=104000, line_18=99000),
+                                      "plus Schedule 1-A line 37"),
+    "Schedule 1-A not recorded": (lambda r, p: r.pop("schedule_1a"), "Record schedule_1a.senior"),
+    "senior above line 13b": (lambda r, p: r["schedule_1a"]["senior"].update(allowed=10000.01),
+                              "exceeds the Schedule 1-A total"),
+    "AMT counted in line 20": (lambda r, p: _amt_in_line_20(r), "reconcile to Form 1040 line 16 and Schedule 2"),
+    "line 20 is not line 16 plus 1z": (lambda r, p: _review(r).update(line_20=20000.01),
+                                       "reconcile to Form 1040 line 16 and Schedule 2"),
+    "external line 20 above regular tax": (lambda r, p: _review(r).update(method="external", line_20=20000.01),
+                                           "exceeds Form 1040 line 16 plus Schedule 2 line 1z"),
+    "line 10 above the opening balance": (lambda r, p: _passive(r).update(
+        line_10_carryover_by_origin_year={"2023": 250.01}), "exceeds the available carryover"),
+    "line 14 above lines 9 and 10": (lambda r, p: _passive(r).update(line_14_eligible_tax=550.01),
+                                     "overstates eligible foreign tax"),
+    "line 24 is not the smaller of 14 and 23": (lambda r, p: _general(r).update(line_24_credit=499.99),
+                                                "reconcile its eligible tax, limitation and credit"),
+    "credit without foreign income": (lambda r, p: _general(r).update(line_17_foreign_income=0),
+                                      "reconcile its eligible tax, limitation and credit"),
+    "carryover used that line 10 lacks": (lambda r, p: _passive(r).update(
+        used_carryover_by_origin_year={"2023": 100, "2022": 1}), "overstates carryover used"),
+    "checked method outside its categories": (lambda r, p: _general(r).update(basket="treaty_resourced"),
+                                              "needs the reviewed external form"),
+    "line 19 ratio": (lambda r, p: _general(r).update(line_19_ratio=.0501), "line 19 ratio inconsistent"),
+    "line 23 is not ratio times line 20": (lambda r, p: _general(r).update(line_23_limitation=1000.51),
+                                           "line 23 limitation inconsistent"),
+    "carryover used before current tax": (lambda r, p: _passive(r).update(
+        used_carryover_by_origin_year={"2023": 250}, closing_carryforward_by_origin_year={}),
+        "only against an excess limitation"),
+    "current-year tax below zero": (lambda r, p: _negative_current_tax(r), "needs the reviewed external reconciliation"),
+    "new carryforward above the excess": (lambda r, p: _passive(r).update(
+        closing_carryforward_by_origin_year={"2023": 150, "2025": 1}), "closing carryforward to Schedule B"),
+    "line 12 reduction carried forward": (lambda r, p: _reduction_carried_forward(r),
+                                          "closing carryforward to Schedule B"),
+    "tenth-year origin carried forward": (_expired_origin_kept, "outside the reviewed origin years"),
+    "opening category never reviewed": (lambda r, p: p["prior_year"]["imported_ftc_baskets"].append(
+        {"basket": "foreign_branch", "carryforward_by_origin_year": {"2023": 10}}), "Reconcile each opening"),
+    "opening older than ten years": (lambda r, p: p["prior_year"]["imported_ftc_baskets"][0].update(
+        carryforward_by_origin_year={"2023": 250, "2014": 10}), "outside the reviewed origin years"),
+    "unreconciled legacy aggregate": (lambda r, p: p.update(prior_year={"unused_ftc_carryforward": 300}),
+                                      "Reconcile the prior foreign tax carryover"),
+    "tax paid off the categories": (lambda r, p: r["form_1116_ftc"].update(foreign_tax_paid_usd=800.01),
+                                    "reconcile to total foreign tax paid"),
+    "carryover applied total": (lambda r, p: r["form_1116_ftc"].update(carryover_applied_usd=99.99),
+                                "reconcile the carryover applied"),
+    "carryforward created total": (lambda r, p: r["form_1116_ftc"].update(carryforward_created_usd=.01),
+                                   "reconcile the carryover applied"),
+    "Part IV": (lambda r, p: _claim(r, 899.99), "Part IV must reconcile"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_FORM_1116_REFUSALS))
+def test_every_form_1116_rule_refuses_on_its_own(name):
+    change, message = _FORM_1116_REFUSALS[name]
+    result, profile = _form_1116_return()
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+    change(result, profile)
+    issues = _ftc_issues(result, 800, profile=profile)
+    assert any(message in issue for issue in issues), issues
+
+
+def test_form_1116_line_18_admits_a_positive_capital_gain_and_part_iv_stops_at_line_20():
+    result, profile = _form_1116_return()
+    result["form_1040"].update(line_3a_qualified_dividends=0, line_7_capital_gain=5000)
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+    result["form_1040"]["line_7_capital_gain"] = 4999.99
+    assert _evaluate_ftc(result, 800, profile=profile).failed
+    # A capital loss reduces neither the dividends nor the bound.
+    result["form_1040"].update(line_3a_qualified_dividends=8409.01, line_7_capital_gain=-4000)
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+    # Part IV line 33 is the smaller of line 20 and the summed credits (900).
+    result, profile = _form_1116_return()
+    result["form_1040"]["line_16_tax"] = 850
+    _review(result).update(method="external", line_20=850)
+    _claim(result, 900)
+    assert any("Part IV must reconcile" in issue for issue in _ftc_issues(result, 800, profile=profile))
+    _claim(result, 850)
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+
+
+@pytest.mark.parametrize("method", ["checked", "external"])
+def test_schedule_b_uses_the_oldest_carryover_first_under_either_method(method):
+    # Passive: current-year tax 300 against a 400 limitation leaves a 100 excess
+    # limitation. Schedule B line 4 takes it from 2022's 50, then 50 of 2023.
+    result, profile = _form_1116_return()
+    profile["prior_year"]["imported_ftc_baskets"][0]["carryforward_by_origin_year"] = {"2022": 50, "2023": 250}
+    _review(result)["method"] = method
+    _passive(result).update(line_10_carryover_by_origin_year={"2022": 50, "2023": 250}, line_14_eligible_tax=600,
+                            used_carryover_by_origin_year={"2022": 50, "2023": 50},
+                            closing_carryforward_by_origin_year={"2023": 200})
+    assert not _evaluate_ftc(result, 800, profile=profile).failed
+    _passive(result).update(used_carryover_by_origin_year={"2023": 100},
+                            closing_carryforward_by_origin_year={"2022": 50, "2023": 150})
+    issues = _ftc_issues(result, 800, profile=profile)
+    assert any("must use the oldest carryover first" in issue for issue in issues), issues
+
+
+def test_section_951a_category_income_has_no_carryover():
+    # "No foreign tax carryovers are allowed for foreign taxes paid or accrued
+    # on section 951A category income" (2025 Form 1116 instructions, line 10).
+    result, profile = _form_1116_return()
+    profile["prior_year"]["imported_ftc_baskets"][0]["basket"] = "section_951a"
+    issues = _ftc_issues(result, 800, profile=profile)
+    assert any("Section 951A category foreign taxes have no carryover" in issue for issue in issues), issues
+    result, profile = _form_1116_return()
+    _review(result)["method"] = "external"
+    _general(result).update(basket="section_951a", line_23_limitation=400, line_24_credit=400,
+                            closing_carryforward_by_origin_year={"2025": 100})
+    result["form_1116_ftc"]["carryforward_created_usd"] = 100
+    _claim(result, 800)
+    issues = _ftc_issues(result, 800, profile=profile)
+    assert any("section 951A category income, which has no foreign tax carryover" in issue
+               for issue in issues), issues
+    _general(result)["basket"] = "general"
     assert not _evaluate_ftc(result, 800, profile=profile).failed
 
 
