@@ -68,6 +68,7 @@ import math
 import re
 import sys
 from dataclasses import dataclass, replace
+from itertools import combinations
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -2235,14 +2236,19 @@ def _employer_ein(record: LedgerRecord) -> str | None:
     return (record.source_form or {}).get("employer_ein")
 
 
-def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]:
+def _related_payer_tokens(first: frozenset, second: frozenset) -> bool:
+    return bool(first and second) and (first <= second or second <= first)
+
+
+def _employer_groups(forms: list[tuple[LedgerRecord, dict]], *,
+                     assumed_matches: tuple[tuple[int, int], ...] = ()) -> list[list[dict]]:
     """One employer per verified EIN (W-2 Box b).
 
     Names alone split "Acme Corp" from "Acme Corporation", so one employer's
     own over-withholding read as a second employer's and was credited. W-2s
     without an EIN join each other by related names, and join an EIN only
     when theirs is the one EIN their names relate to. Two EINs never share a
-    group: joined through a W-2 without one, two employers' real excess read
+    group in the actual calculation: joined through a W-2 without one, two employers' real excess read
     as zero and a claim of zero was accepted. A related name shared with two
     EINs leaves the W-2 alone, whatever the file's order, so the credit stays
     positive and the EIN review fires. A positive credit with an EIN missing
@@ -2257,31 +2263,67 @@ def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
             index = groups[index]
         return index
 
-    def related(i: int, j: int) -> bool:
-        return bool(tokens[i] and tokens[j]) and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i])
-
-    pairs = [(i, j) for i in range(len(forms)) for j in range(i + 1, len(forms))]
+    pairs = list(combinations(range(len(forms)), 2))
     for i, j in pairs:
-        if eins[i] is not None and eins[i] == eins[j] or eins[i] is None and eins[j] is None and related(i, j):
+        if eins[i] == eins[j] and (eins[i] is not None or _related_payer_tokens(tokens[i], tokens[j])):
             groups[root(j)] = root(i)
     # Decided before any join, so a join cannot change what another sees.
     matches: dict[int, dict[str, int]] = {}
     for i, j in pairs:
-        if (eins[i] is None) != (eins[j] is None) and related(i, j):
+        if (eins[i] is None) != (eins[j] is None) and _related_payer_tokens(tokens[i], tokens[j]):
             unknown, known = (i, j) if eins[i] is None else (j, i)
             matches.setdefault(root(unknown), {})[str(eins[known])] = known
     for unknown, found in matches.items():
         if len(found) == 1:
             groups[root(unknown)] = root(next(iter(found.values())))
+    for i, j in assumed_matches:
+        groups[root(j)] = root(i)
     members: dict[int, list[dict]] = {}
     for index, (_, boxes) in enumerate(forms):
         members.setdefault(root(index), []).append(boxes)
     return list(members.values())
 
 
-def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: float, rate: float) -> float:
+def _employer_excess(employers: list[list[dict]], wages: list[float], base: float, rate: float) -> float:
     from agents.lib.tax_computations import compute_excess_ss_withholding
 
+    withheld = [sum(boxes["ss_tax_withheld"] for boxes in group) for group in employers]
+    return compute_excess_ss_withholding(withheld, wages, base, rate)["excess_credit"]
+
+
+def _check_related_employer_eins(forms: list[tuple[LedgerRecord, dict]], base: float, rate: float,
+                                 credit: float, sources: dict[str, str], numbers: dict[str, int]) -> None:
+    records = [record for record, _ in forms]
+    tokens = [_payer_tokens(record.payer) for record in records]
+    eins = [_employer_ein(record) for record in records]
+    reviewed = [bool(record.source_sha256 and sources.get(record.file) == record.source_sha256)
+                for record in records]
+    pairs = tuple((i, j) for i, j in combinations(range(len(forms)), 2)
+                  if eins[i] != eins[j] and _related_payer_tokens(tokens[i], tokens[j])
+                  and not (reviewed[i] and reviewed[j]))
+    if not pairs:
+        return
+
+    def reduced_by(matches: tuple[tuple[int, int], ...]) -> bool:
+        merged = _employer_groups(forms, assumed_matches=matches)
+        wages = [sum(_ss_wages(boxes) for boxes in group) for group in merged]
+        return _employer_excess(merged, wages, base, rate) < credit
+
+    # Check pairs independently so a change elsewhere cannot hide a decrease.
+    blocking = tuple(pair for pair in pairs if reduced_by((pair,)))
+    # Check joint merges as well: three related employers can need review even
+    # when merging any two alone leaves the credit unchanged.
+    if not blocking and len(pairs) > 1 and reduced_by(pairs):
+        blocking = pairs
+    if blocking:
+        documents = ", ".join(f"#{numbers[records[i].file]} and #{numbers[records[j].file]}" for i, j in blocking)
+        raise ValueError(f"W-2 documents {documents} have related employer names and different EINs. "
+                         f"Review Box b and record {material_evidence.EXCESS_SS_EMPLOYERS_ITEM} "
+                         "bound to the forms and parse ledger.")
+
+
+def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: float, rate: float,
+                   employer_sources: dict[str, str], numbers: dict[str, int]) -> float:
     missing_ein = any(_employer_ein(record) is None for record, _ in forms)
     employers = _employer_groups(forms)
     wages = [sum(_ss_wages(boxes) for boxes in group) for group in employers]
@@ -2295,10 +2337,11 @@ def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: fl
         return 0.0
     if any("ss_tax_withheld" not in boxes for _, boxes in forms):
         raise ValueError("Review W-2 Box 4 for every employer before claiming the excess.")
-    withheld = [sum(boxes["ss_tax_withheld"] for boxes in group) for group in employers]
-    credit = compute_excess_ss_withholding(withheld, wages, base, rate)["excess_credit"]
-    if credit and missing_ein:
-        raise ValueError(_review_employer_ein(person))
+    credit = _employer_excess(employers, wages, base, rate)
+    if credit:
+        if missing_ein:
+            raise ValueError(_review_employer_ein(person))
+        _check_related_employer_eins(forms, base, rate, credit, employer_sources, numbers)
     return credit
 
 
@@ -2337,7 +2380,7 @@ def _joint_return(result: dict, profile: dict) -> bool:
 
 
 def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
-                      tax_law: dict) -> list[str]:
+                      tax_law: dict, *, employer_sources: dict[str, str] | None = None) -> list[str]:
     from agents.lib.tax_computations._shared import _amount
 
     form = result.get("form_1040") or {}
@@ -2354,7 +2397,8 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         if not claimed and not any(len(forms) > 1 for forms in employees.values()):
             return []
         base, rate = _wage_base_and_rate(tax_law)
-        credit = round(sum(_person_excess(person, forms, base, rate)
+        document_numbers = {record.file: number for number, record in enumerate(ledger, 1)}
+        credit = round(sum(_person_excess(person, forms, base, rate, employer_sources or {}, document_numbers)
                            for person, forms in employees.items() if person not in railroad), 2)
         if railroad:
             # The combined Social Security and Tier 1 worksheet is the payments
@@ -3198,6 +3242,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
         personal_sources = material_evidence.reviewed_ledger_sources(item, ledger_sha256)
     overlap_item = evidence.get(material_evidence.BUSINESS_OVERLAP_ITEM) or {}
     overlap_sources = material_evidence.reviewed_ledger_sources(overlap_item, ledger_sha256)
+    employer_item = evidence.get(material_evidence.EXCESS_SS_EMPLOYERS_ITEM) or {}
+    employer_sources = material_evidence.reviewed_ledger_sources(employer_item, ledger_sha256)
     source_review = source_reconciliation.review(
         ledger, year, personal_1099k_sources=personal_sources, overlap_sources=overlap_sources)
     expected = (profile or {}).get("expected_sources")
@@ -3210,7 +3256,8 @@ def evaluate(ledger: "list[LedgerRecord]", result: dict,
 
     sum_checks, unverifiable, missing_targets, advisories = [], [], [], []
     missing_targets.extend(federal_payments.filing_differences(result, profile or {}, tax_law or {}))
-    missing_targets.extend(_excess_ss_checks(ledger, result, profile or {}, tax_law or {}))
+    missing_targets.extend(_excess_ss_checks(
+        ledger, result, profile or {}, tax_law or {}, employer_sources=employer_sources))
     try:
         business_tax, medicare = schedule_c.business_tax_workpapers(
             result, profile or {}, ledger, tax_law or {}, require_other_taxes=True)
@@ -4130,7 +4177,8 @@ def _main(argv: list) -> int:
         material_evidence.sync_group(workspace, material_evidence.W2_PREFIX,
                                      _w2_outcomes(ledger, ledger_sha256))
         evidence_raw, evidence_items = material_evidence.read(workspace)
-        for item_id in (material_evidence.PERSONAL_1099K_ITEM, material_evidence.BUSINESS_OVERLAP_ITEM):
+        for item_id in (material_evidence.PERSONAL_1099K_ITEM, material_evidence.BUSINESS_OVERLAP_ITEM,
+                        material_evidence.EXCESS_SS_EMPLOYERS_ITEM):
             if item_id in evidence_items and material_evidence.open_items(
                     workspace, {item_id: evidence_items[item_id]}, {}):
                 evidence_items.pop(item_id)

@@ -468,3 +468,37 @@ def test_employer_name_variants_cannot_turn_one_employers_excess_into_a_credit(w
     output = release.run(workspace, "tie_out", "--json", expected=2)
     assert "Schedule 3 line 11 disagrees" in output
     _assert_refused(workspace, "the tie_out gate recorded")
+
+
+def test_related_w2_employers_with_distinct_eins_require_review_before_release(workspace):
+    release.add_second_w2_and_estimate(workspace)
+    release.compute(workspace)
+    ledger_path = workspace / "parse_ledger.json"
+    ledger = release.read_json(ledger_path)
+    wages = [record for record in ledger["records"] if record["form_type"] == "W-2"]
+    for index, (record, payer) in enumerate(zip(wages, ("Acme", "Acme Inc"), strict=True), 1):
+        record["payer"] = payer
+        record["source_form"].update(employer_ein=f"12-{index:07d}", series_id=f"statement-{index}")
+        record["key_boxes"].update(ss_wages=100000, ss_tax_withheld=6200)
+    release.write_json(ledger_path, ledger)
+
+    result_path = workspace / "result.json"
+    result = release.read_json(result_path)
+    result["form_1040"].update(schedule_3_line_11_excess_ss=1481.80, line_31_schedule3_part2=1481.80)
+    release.write_json(result_path, result)
+    release.run(workspace, "return_builder")
+    output = release.run(workspace, "tie_out", "--json", expected=2)
+    assert "input.excess_ss_employers" in output
+    _assert_refused(workspace, "the tie_out gate recorded")
+
+    release.run(workspace, "material_evidence", "--id", "input.excess_ss_employers",
+                "--label", "Verified employers", "--outcome", "reviewed", "--input", ledger_path.name,
+                "--input", wages[0]["file"], "--input", wages[1]["file"])
+    worksheet = "payments-review.json"
+    release.write_json(workspace / worksheet, {"schedule_3_line_11": 1481.80})
+    release.run(workspace, "material_evidence", "--id", "input.payments", "--label", "Payments review",
+                "--outcome", "reviewed", "--input", result_path.name, "--input", "taxpayer_profile.json",
+                "--input", release.LAW, "--input", worksheet)
+    release.record_deduction(workspace)
+    release.validate(workspace)
+    _assert_ready(workspace, forms=("form_1040", None, "schedule_d", "california_540"))

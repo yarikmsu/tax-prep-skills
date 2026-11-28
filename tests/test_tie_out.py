@@ -1019,12 +1019,25 @@ def _ss_w2(number, wage, withheld, *, person="primary", payer=None, tips=0):
     return record
 
 
-def _ss_return(*records, claimed=0):
+_SS_LEDGER_DIGEST = "a" * 64
+_SS_EMPLOYER_REVIEW = "input.excess_ss_employers"
+
+
+def _review_ss_employers(*records):
+    sources = {"parse_ledger.json": _SS_LEDGER_DIGEST}
+    for index, record in enumerate(records, 1):
+        record["source_sha256"] = f"{index:064x}"
+        sources[record["file"]] = record["source_sha256"]
+    return {_SS_EMPLOYER_REVIEW: {"outcome": "reviewed", "inputs": sources}}
+
+
+def _ss_return(*records, claimed=0, evidence=None):
     ledger = _ledger(*records)
     result = _result(wages=sum(r["key_boxes"]["wages"] for r in records), w2_wh=0,
                      schedule_3_line_11_excess_ss=claimed, line_31_schedule3_part2=claimed)
     result["meta"] = {"tax_year": 2025, "filing_status": "MFJ"}
-    return T.evaluate(ledger, result, [r.file for r in ledger], tax_law=_SOCIAL_SECURITY_LAW)
+    return T.evaluate(ledger, result, [r.file for r in ledger], tax_law=_SOCIAL_SECURITY_LAW,
+                      evidence_items=evidence, ledger_sha256=_SS_LEDGER_DIGEST)
 
 
 def test_excess_social_security_credit_matches_w2s_for_one_employee():
@@ -1063,7 +1076,65 @@ def test_one_employer_over_withholding_is_excluded_from_the_credit():
 def test_distinct_employer_eins_support_the_credit_even_when_names_match():
     first = _ss_w2(1, 100000, 6200, payer="Example Payroll")
     second = _ss_w2(2, 100000, 6200, payer="Example Payroll")
-    assert not _ss_return(first, second, claimed=1481.80).failed
+    assert _ss_return(first, second, claimed=1481.80).failed
+    evidence = _review_ss_employers(first, second)
+    assert not _ss_return(first, second, claimed=1481.80, evidence=evidence).failed
+
+
+def test_related_employer_names_require_review_bound_to_both_w2s_and_the_ledger():
+    first = _ss_w2(1, 100000, 6200, payer="Acme")
+    second = _ss_w2(2, 100000, 6200, payer="Acme Inc")
+    report = _ss_return(first, second, claimed=1481.80)
+    assert any(_SS_EMPLOYER_REVIEW in item and "W-2 documents #1 and #2" in item
+               for item in report.missing_result_targets)
+    evidence = _review_ss_employers(first, second)
+    assert not _ss_return(first, second, claimed=1481.80, evidence=evidence).failed
+
+    item = evidence[_SS_EMPLOYER_REVIEW]
+    for name in (first["file"], second["file"], "parse_ledger.json"):
+        wrong_inputs = item["inputs"] | {name: "b" * 64}
+        stale = {_SS_EMPLOYER_REVIEW: {**item, "inputs": wrong_inputs}}
+        assert _ss_return(first, second, claimed=1481.80, evidence=stale).failed
+    opened = {_SS_EMPLOYER_REVIEW: {"outcome": "open", "inputs": {}}}
+    assert _ss_return(first, second, claimed=1481.80, evidence=opened).failed
+
+
+def test_related_employer_names_below_wage_base_need_no_review():
+    first = _ss_w2(1, 80000, 4960, payer="Acme")
+    second = _ss_w2(2, 80000, 4960, payer="Acme Inc")
+    assert not _ss_return(first, second).failed
+
+
+def test_related_employer_names_need_no_review_if_merging_does_not_change_credit():
+    first = _ss_w2(1, 50000, 3100, payer="Acme")
+    second = _ss_w2(2, 50000, 3100, payer="Acme Inc")
+    unrelated = _ss_w2(3, 100000, 6200, payer="Other Company")
+    assert not _ss_return(first, second, unrelated, claimed=1481.80).failed
+
+
+def test_multiple_related_employers_can_need_review_even_if_each_pair_does_not():
+    records = [_ss_w2(index, 60000, 3720, payer=payer) for index, payer in
+               enumerate(("Acme", "Acme Inc", "Acme West"), 1)]
+    # Any pair earns less than the wage base. Together, one merged employer
+    # would have no credit, versus $11,160 less $10,918.20 for three employers.
+    assert _ss_return(*records, claimed=241.80).failed
+    evidence = _review_ss_employers(*records)
+    assert not _ss_return(*records, claimed=241.80, evidence=evidence).failed
+
+
+def test_unrelated_merge_cannot_offset_a_reduction_from_a_related_employer_pair():
+    first = _ss_w2(1, 100000, 6200, payer="Acme")
+    second = _ss_w2(2, 100000, 6200, payer="Acme Inc")
+    third = _ss_w2(3, 100000, 8000, payer="Other")
+    fourth = _ss_w2(4, 50000, 0, payer="Other Inc")
+    # Merging Acme lowers the accepted amount by $1,481.80. Merging Other
+    # would raise it by $1,800, so a single comparison could hide Acme's drop.
+    records = (first, second, third, fourth)
+    report = _ss_return(*records, claimed=7681.80)
+    assert any(_SS_EMPLOYER_REVIEW in item and "W-2 documents #1 and #2" in item
+               for item in report.missing_result_targets)
+    evidence = _review_ss_employers(first, second)
+    assert not _ss_return(*records, claimed=7681.80, evidence=evidence).failed
 
 
 @pytest.mark.parametrize("claimed", [0, 1481.80])
@@ -1136,7 +1207,9 @@ def test_a_w2_without_an_ein_never_merges_two_eins_into_a_zero_credit(order):
     # Recorded, it is a third employer: $10,918.20 + $10,918.20 + $310 less
     # one year's $10,918.20 maximum.
     bridge["source_form"]["employer_ein"] = "12-0000003"
-    assert not _ss_return(*records, claimed=11228.20).failed
+    assert _ss_return(*records, claimed=11228.20).failed
+    evidence = _review_ss_employers(*records)
+    assert not _ss_return(*records, claimed=11228.20, evidence=evidence).failed
 
 
 @pytest.mark.parametrize("order", [(0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)])
