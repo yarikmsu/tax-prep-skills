@@ -506,6 +506,9 @@ def test_a_misc_source_from_another_year_is_refused_on_either_side(side):
     ("MISC 1099", "1099MISC"), ("Substitute 1099-MISC", "1099MISC"), ("NEC 1099", "1099NEC"),
     ("Stripe Connect 1099-K", "1099K"), ("1099-G Connecticut", None), ("1099-INT Seneca", None),
     ("1099-B Miscellaneous", None), ("Consolidated 1099 (DIV, INT, MISC, B)", None),
+    # A bare 1099 named by a word elsewhere.
+    ("1099 Form NEC", "1099NEC"), ("1099 Nonemployee Comp (NEC)", "1099NEC"), ("1099 Form MISC", "1099MISC"),
+    ("Miscellaneous Income 1099", "1099MISC"), ("1099 Form NEC and MISC", None),
 ])
 def test_a_form_name_counts_only_beside_the_number(label, form):
     # "CONNECT" holds the letters NEC: read anywhere, a 1099-K left both 1099-K rules.
@@ -515,11 +518,28 @@ def test_a_form_name_counts_only_beside_the_number(label, form):
     assert base == form if form else base not in ("1099NEC", "1099K", "1099MISC")
 
 
-def test_a_statement_title_listing_misc_needs_no_misc_inventory():
-    # Only the name beside the number makes a 1099-MISC; a consolidated
-    # statement's title listing its sections asks nothing of a dividend-only one.
-    statement = _form("consolidated", "Consolidated 1099 (DIV, INT, MISC, B)", "Broker", "a" * 64,
-                      ordinary_dividends=40)
+@pytest.mark.parametrize("label", ["1099 Form NEC", "1099 Nonemployee Comp (NEC)"])
+def test_an_included_nec_under_a_bare_number_keeps_its_amount_check(label):
+    # Read as an unknown form, it was only disclosed and its receipts dropped.
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    issues, _ = _issues(consolidated, _included_business_form(label))
+    assert any("self_employment_gross" in issue or "included_boxes" in issue for issue in issues), issues
+
+
+@pytest.mark.parametrize("title", ["Consolidated 1099 (DIV, INT, MISC, B)", "1099-INT/MISC",
+                                   "Consolidated 1099-DIV, 1099-INT, 1099-MISC, 1099-B"])
+def test_a_statement_title_naming_misc_owes_its_inventory(title):
+    # An unrecorded MISC section would skip the box 2, 9, 10 and 15 refusals;
+    # a zero inventory clears a dividend-only statement.
+    statement = _form("consolidated", title, "Broker", "a" * 64, ordinary_dividends=40)
+    with pytest.raises(T.TieOutError, match="misc_income"):
+        _ledger(statement)
+    statement["misc_income"] = misc_source(box_3=0, box_3_business=0, box_3_other=0, box_4=0, box_5=0, box_6=0)
+    assert len(_ledger(statement)) == 1
+
+
+def test_a_title_naming_another_form_needs_no_misc_inventory():
+    statement = _form("brokerage", "1099-B Miscellaneous", "Broker", "a" * 64, ordinary_dividends=40)
     assert len(_ledger(statement)) == 1
 
 

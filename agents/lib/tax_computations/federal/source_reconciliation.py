@@ -45,7 +45,28 @@ def _base_form(name: str) -> str:
         for form in ("1099NEC", "1099K", "1099MISC"):
             if form in code or form != "1099K" and form[4:] + "1099" in code:
                 return form
+        named = _named_by_word(name)
+        if named:
+            return named
     return "W2" if code == "W2C" else code
+
+
+# A bare "1099" names its form in a word elsewhere ("1099 Form NEC",
+# "Miscellaneous Income 1099"), unless the number already carries another
+# form's letters ("1099-B Miscellaneous", "1099-INT Seneca").
+_FORM_NAME_WORDS = {"NEC": "1099NEC", "NONEMPLOYEE": "1099NEC", "MISC": "1099MISC", "MISCELLANEOUS": "1099MISC"}
+_NUMBER_WORDS = {"1099", "FORM", "CORRECTED", "SUBSTITUTE"}
+
+
+def _named_by_word(name: str) -> str | None:
+    words = re.sub(r"[^A-Za-z0-9]", " ", name).upper().split()
+    if "1099" not in words:
+        return None
+    after = words[words.index("1099") + 1:words.index("1099") + 2]
+    if after and after[0] not in _NUMBER_WORDS and after[0] not in _FORM_NAME_WORDS and len(after[0]) <= 4:
+        return None  # "1099-B", "1099-INT", "1099-DIV": the number's own letters
+    found = {_FORM_NAME_WORDS[word] for word in words if word in _FORM_NAME_WORDS}
+    return found.pop() if len(found) == 1 else None
 
 
 def _marked_corrected(name: str) -> bool:

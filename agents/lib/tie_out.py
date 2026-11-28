@@ -875,7 +875,12 @@ def load_ledger(raw: dict) -> "list[LedgerRecord]":
         ca_investments = None
         misc_income = None
         form_letters = re.sub(r"[^a-zA-Z0-9]", "", str(rec.get("form_type", ""))).upper()
-        is_misc = "1099MISC" in form_letters or "MISC1099" in form_letters
+        # A title naming the MISC section ("1099-INT/MISC", "Consolidated 1099
+        # (DIV, INT, MISC, B)") still owes its inventory, if only a zero one: an
+        # unrecorded section would skip the box 2, 9, 10 and 15 refusals.
+        type_words = re.sub(r"[^a-zA-Z0-9]", " ", str(rec.get("form_type", ""))).upper().split()
+        is_misc = (source_reconciliation._base_form(str(rec.get("form_type", ""))) == "1099MISC"
+                   or "1099MISC" in form_letters or "1099" in form_letters and "MISC" in type_words)
         if (skipped is None and (is_misc or MISC_OTHER in boxes)) or "misc_income" in rec:
             try:
                 included_in = source_form.get("included_in") if source_reconciliation._base_form(form_type) == "1099MISC" else None
