@@ -2301,27 +2301,27 @@ _COMPANY_FORM_WORDS = frozenset({
 _MAX_RELATED_PAIRS = 12
 
 
-def _review_name(name: str) -> tuple[frozenset, str]:
+def _review_name(name: str) -> frozenset:
     """A looser employer name for the EIN review alone, where a false match
-    costs one review: "Acme Corp" and "Acme Corporation", "Acme LLC" and
-    "Acme L.L.C.", "AcmeCorp" and "Acme Corp" read as one name."""
+    costs one review: its words without company-form words, so "Acme Corp"
+    and "Acme Corporation", "Acme LLC" and "Acme L.L.C." read as one name."""
     words = "".join(ch if ch.isalnum() else " " for ch in name.casefold()).split()
-    # Squashed, "L.L.C." ends in "llc" and "A.B.C." reads as "ABC".
-    core = "".join(word for word in words if word not in _COMPANY_FORM_WORDS)
-    stripped = True
-    while stripped:
-        stripped = False
-        for word in sorted(_COMPANY_FORM_WORDS, key=len, reverse=True):
-            if core.endswith(word) and len(core) > len(word):
-                core, stripped = core[:-len(word)], True
-                break
-    return frozenset(words) - _COMPANY_FORM_WORDS, core
+    return frozenset(words) - _COMPANY_FORM_WORDS
 
 
-def _review_related(first: tuple[frozenset, str], second: tuple[frozenset, str]) -> bool:
-    (words, core), (other_words, other_core) = first, second
-    return (bool(words and other_words) and (words <= other_words or other_words <= words)
-            or bool(core) and core == other_core)
+def _abbreviates(first: str, second: str) -> bool:
+    """One word, or a payroll vendor's shortening of it: "Intl" and
+    "International", "St" and "Saint", "J" and "John", "Acme" and "AcmeCorp"
+    share a first letter, the shorter one's letters in order in the longer."""
+    short, long = sorted((first, second), key=len)
+    letters = iter(long)
+    return short == long or short[0] == long[0] and all(ch in letters for ch in short)
+
+
+def _review_related(first: frozenset, second: frozenset) -> bool:
+    """Every word of the shorter name abbreviates a word of the other."""
+    small, large = sorted((first, second), key=len)
+    return bool(small) and all(any(_abbreviates(word, other) for other in large) for word in small)
 
 
 def _related_ein_pairs(forms: list[tuple[LedgerRecord, dict]], sources: dict[str, str],
@@ -2343,12 +2343,15 @@ def _related_ein_pairs(forms: list[tuple[LedgerRecord, dict]], sources: dict[str
                   and not (reviewed[i] and reviewed[j]))
     if len(pairs) > _MAX_RELATED_PAIRS:
         return list(pairs)
-    blocking: set[tuple[int, int]] = set()
+    # Only minimal lowering subsets: a pair whose merge changes nothing would
+    # otherwise ride along in any superset of a pair that does.
+    minimal: list[set[tuple[int, int]]] = []
     for size in range(1, len(pairs) + 1):
         for subset in combinations(pairs, size):
-            if not set(subset) <= blocking and lowers(subset):
-                blocking.update(subset)
-    return sorted(blocking)
+            chosen = set(subset)
+            if not any(found <= chosen for found in minimal) and lowers(subset):
+                minimal.append(chosen)
+    return sorted(set().union(*minimal))
 
 
 def _related_employers_message(related: list[tuple[LedgerRecord, LedgerRecord]],

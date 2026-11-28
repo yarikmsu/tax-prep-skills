@@ -1140,7 +1140,11 @@ def test_unrelated_merge_cannot_offset_a_reduction_from_a_related_employer_pair(
 @pytest.mark.parametrize("first_name,second_name", [
     ("Acme Corp", "Acme Corporation"), ("Acme Inc", "Acme Corp"), ("Acme LLC", "Acme L.L.C."),
     ("The Acme Company", "Acme Co"), ("Acme Ltd", "Acme Limited"), ("AcmeCorp", "Acme Corp"),
-    ("AcmeCorp", "Acme Corporation"),
+    ("AcmeCorp", "Acme Corporation"), ("Acme Intl Inc", "Acme International Inc"),
+    ("Acme Svcs LLC", "Acme Services LLC"), ("Acme Mfg Co", "Acme Manufacturing Company"),
+    ("Acme Hldgs Inc", "Acme Holdings Inc"), ("Acme Grp Inc", "Acme Group Inc"),
+    ("St Marys Hospital", "Saint Marys Hospital"), ("Acme Technologies Internatio", "Acme Technologies International"),
+    ("AcmeCorp West", "Acme Corp West"), ("J Smith Co", "John Smith Co"),
 ])
 def test_company_form_spellings_of_one_employer_need_the_review(first_name, second_name):
     # A word set nesting in the other's missed each pair, so one employer's
@@ -1152,9 +1156,13 @@ def test_company_form_spellings_of_one_employer_need_the_review(first_name, seco
     assert not _ss_return(first, second, claimed=1481.80, evidence=evidence).failed
 
 
-@pytest.mark.parametrize("second_name", ["Beta Corp", "Corp", "The Company"])
-def test_unrelated_or_form_only_names_need_no_review(second_name):
-    first = _ss_w2(1, 100000, 6200, payer="Acme")
+@pytest.mark.parametrize("first_name,second_name", [
+    ("Acme", "Beta Corp"), ("Acme", "Corp"), ("Acme", "The Company"), ("Acme 1 Inc", "Acme 2 Inc"),
+    # Letters in order but a different first letter, or one letter: not an abbreviation.
+    ("Ace", "Grace Corp"), ("A Plus", "Beta Plus"),
+])
+def test_unrelated_or_form_only_names_need_no_review(first_name, second_name):
+    first = _ss_w2(1, 100000, 6200, payer=first_name)
     second = _ss_w2(2, 100000, 6200, payer=second_name)
     assert not _ss_return(first, second, claimed=1481.80).failed
 
@@ -1173,6 +1181,16 @@ def test_a_subset_of_related_pairs_cannot_be_hidden_by_a_merge_that_raises_the_c
                for item in report.missing_result_targets), report.missing_result_targets
     evidence = _review_ss_employers(*records[:3])
     assert not _ss_return(*records, claimed=3341.80, evidence=evidence).failed
+
+
+def test_a_pair_whose_merge_changes_nothing_is_not_named():
+    # Beta and Beta Inc earn under the wage base together: merging them is
+    # neutral, so only the Acme pair, whose merge lowers the credit, is named.
+    records = [_ss_w2(1, 100000, 6200, payer="Acme"), _ss_w2(2, 100000, 6200, payer="Acme Inc"),
+               _ss_w2(3, 40000, 2480, payer="Beta"), _ss_w2(4, 40000, 2480, payer="Beta Inc")]
+    report = _ss_return(*records, claimed=6441.80)
+    assert any("Documents #1 and #2 are W-2s" in item for item in report.missing_result_targets), \
+        report.missing_result_targets
 
 
 def test_both_spouses_related_pairs_are_named_in_one_refusal():
