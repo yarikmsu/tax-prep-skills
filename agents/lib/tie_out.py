@@ -2223,7 +2223,12 @@ def has_rrta_tier1_withholding(ledger: list[LedgerRecord]) -> bool:
     return bool(_rrta_people(ledger))
 
 
-_REVIEW_EMPLOYER_EIN = "Review W-2 Box b and record the employer EIN on each Social Security W-2 for this employee."
+_EMPLOYEE_ROLE = {"primary": "the taxpayer's", "spouse": "the spouse's"}
+
+
+def _review_employer_ein(person: str) -> str:
+    return (f"Review W-2 Box b and record the employer EIN on each of {_EMPLOYEE_ROLE.get(person, 'the')} "
+            "Social Security W-2s.")
 
 
 def _employer_ein(record: LedgerRecord) -> str | None:
@@ -2231,19 +2236,16 @@ def _employer_ein(record: LedgerRecord) -> str | None:
 
 
 def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]:
-    """Group verified employers and represent each unverified W-2 separately."""
-    members: dict[str | int, list[dict]] = {}
-    for index, (record, boxes) in enumerate(forms):
-        ein = _employer_ein(record)
-        members.setdefault(ein if ein is not None else index, []).append(boxes)
-    return list(members.values())
+    """One employer per verified EIN (W-2 Box b).
 
-
-def _named_employers(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]:
-    """Group related names on the legacy zero-credit path."""
+    Names alone split "Acme Corp" from "Acme Corporation", so one employer's
+    own over-withholding read as a second employer's and was credited. A W-2
+    without an EIN joins any W-2 with a related name instead: merging can only
+    lower the credit, and a positive credit with an EIN missing is refused.
+    Names never join two W-2s that both carry an EIN.
+    """
     tokens = [_payer_tokens(record.payer) for record, _ in forms]
-    if not all(tokens):
-        raise ValueError("Review the employer name on each Social Security W-2.")
+    eins = [_employer_ein(record) for record, _ in forms]
     groups = list(range(len(forms)))
 
     def root(index: int) -> int:
@@ -2253,7 +2255,9 @@ def _named_employers(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
 
     for i in range(len(forms)):
         for j in range(i + 1, len(forms)):
-            if tokens[i] <= tokens[j] or tokens[j] <= tokens[i]:
+            named = (None in (eins[i], eins[j]) and bool(tokens[i] and tokens[j])
+                     and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i]))
+            if (eins[i] is not None and eins[i] == eins[j]) or named:
                 groups[root(j)] = root(i)
     members: dict[int, list[dict]] = {}
     for index, (_, boxes) in enumerate(forms):
@@ -2261,15 +2265,11 @@ def _named_employers(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
     return list(members.values())
 
 
-def _person_excess(forms: list[tuple[LedgerRecord, dict]], base: float, rate: float) -> float:
+def _person_excess(person: str, forms: list[tuple[LedgerRecord, dict]], base: float, rate: float) -> float:
     from agents.lib.tax_computations import compute_excess_ss_withholding
 
-    known_eins = {_employer_ein(record) for record, _ in forms}
-    missing_ein = None in known_eins
-    # Keep legacy name grouping for a zero-credit result when the known EINs
-    # do not already establish that the employee had distinct employers.
-    employers = (_named_employers(forms) if missing_ein and len(known_eins) <= 2
-                 else _employer_groups(forms))
+    missing_ein = any(_employer_ein(record) is None for record, _ in forms)
+    employers = _employer_groups(forms)
     wages = [sum(_ss_wages(boxes) for boxes in group) for group in employers]
     if len(wages) < 2:
         return 0.0
@@ -2284,7 +2284,7 @@ def _person_excess(forms: list[tuple[LedgerRecord, dict]], base: float, rate: fl
     withheld = [sum(boxes["ss_tax_withheld"] for boxes in group) for group in employers]
     credit = compute_excess_ss_withholding(withheld, wages, base, rate)["excess_credit"]
     if credit and missing_ein:
-        raise ValueError(_REVIEW_EMPLOYER_EIN)
+        raise ValueError(_review_employer_ein(person))
     return credit
 
 
@@ -2340,7 +2340,7 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
         if not claimed and not any(len(forms) > 1 for forms in employees.values()):
             return []
         base, rate = _wage_base_and_rate(tax_law)
-        credit = round(sum(_person_excess(forms, base, rate)
+        credit = round(sum(_person_excess(person, forms, base, rate)
                            for person, forms in employees.items() if person not in railroad), 2)
         if railroad:
             # The combined Social Security and Tier 1 worksheet is the payments
@@ -2351,9 +2351,12 @@ def _excess_ss_checks(ledger: list[LedgerRecord], result: dict, profile: dict,
                 return ["Schedule 3 line 11 exceeds the Social Security and Tier 1 railroad tax the "
                         "W-2s report withheld above one year's maximum."]
         elif credit != round(claimed, 2):
-            if claimed > credit and any(_employer_ein(record) is None
-                                        for forms in employees.values() for record, _ in forms):
-                raise ValueError(_REVIEW_EMPLOYER_EIN)
+            # Only an employee with two W-2s can have a credit an EIN would
+            # reveal; a spouse's single W-2 without one is not the error.
+            unverified = [person for person, forms in employees.items() if len(forms) > 1
+                          and any(_employer_ein(record) is None for record, _ in forms)]
+            if claimed > credit and unverified:
+                raise ValueError(_review_employer_ein(unverified[0]))
             return ["Schedule 3 line 11 disagrees with the excess Social Security withholding "
                     "supported by each employee's W-2s."]
     except (ValueError, TypeError, OverflowError) as exc:

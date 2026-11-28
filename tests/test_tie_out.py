@@ -858,6 +858,51 @@ def test_legacy_zero_credit_can_group_related_names():
     assert any("W-2 Box b" in item for item in report.missing_result_targets)
 
 
+@pytest.mark.parametrize("second_ein", [None, "12-0000009"])
+def test_a_w2_without_an_ein_joins_a_related_employer_on_the_zero_path(second_ein):
+    """With one EIN known, names were ignored for the EIN; with two known, for
+    the W-2 lacking one. Adding an employer that withheld nothing turned a
+    zero-credit return into a refusal."""
+    first = _ss_w2(1, 176100, 10918.20, payer="Acme")
+    no_ein = _ss_w2(2, 50000, 3100, payer="Acme Inc")
+    del no_ein["source_form"]["employer_ein"]
+    records = [first, no_ein]
+    if second_ein:
+        other = _ss_w2(9, 10000, 0, payer="Beta")
+        other["source_form"]["employer_ein"] = second_ein
+        records.append(other)
+    assert not _ss_return(*records).failed
+    report = _ss_return(*records, claimed=3100)
+    assert any("each of the taxpayer's Social Security W-2s" in item for item in report.missing_result_targets)
+
+
+def test_a_w2_without_an_ein_bridging_two_eins_refuses_a_claim():
+    first = _ss_w2(1, 100000, 6200, payer="Acme")
+    second = _ss_w2(2, 100000, 6200, payer="Acme Inc")
+    third = _ss_w2(3, 10000, 620, payer="Acme Holdings")
+    del third["source_form"]["employer_ein"]
+    # The EIN-less W-2 relates to both names and joins them, which can only
+    # lower the credit; a claim is refused until its EIN is recorded.
+    report = _ss_return(first, second, third, claimed=1481.80)
+    assert any("W-2 Box b" in item for item in report.missing_result_targets)
+
+
+def test_the_ein_review_names_the_employee_with_two_w2s():
+    """A spouse's single W-2 without an EIN cannot have a credit, so the
+    taxpayer's wrong figure was reported as the spouse's missing EIN."""
+    first = _ss_w2(1, 100000, 6200)
+    second = _ss_w2(2, 100000, 6200)
+    spouse = _ss_w2(3, 50000, 3100, person="spouse")
+    del spouse["source_form"]["employer_ein"]
+    report = _ss_return(first, second, spouse, claimed=1481.81)
+    assert any("Schedule 3 line 11 disagrees" in item for item in report.missing_result_targets)
+    assert not any("W-2 Box b" in item for item in report.missing_result_targets)
+    spouse["key_boxes"].update(wages=100000, ss_wages=100000, ss_tax_withheld=6200)
+    spouse_second = _ss_w2(4, 100000, 6200, person="spouse")
+    report = _ss_return(first, second, spouse, spouse_second, claimed=2963.60)
+    assert any("each of the spouse's Social Security W-2s" in item for item in report.missing_result_targets)
+
+
 def test_railroad_credit_remains_a_bound_without_an_ein():
     ss = _ss_w2(1, 100000, 6200)
     railroad = _ss_w2(2, 100000, 0)
@@ -868,7 +913,7 @@ def test_railroad_credit_remains_a_bound_without_an_ein():
     assert _ss_return(ss, railroad, claimed=1481.81).failed
 
 
-@pytest.mark.parametrize("ein", [None, "12-34", "１２-３４５６７８９", "12-123456a"])
+@pytest.mark.parametrize("ein", [None, "12-34", "１２-３４５６７８９", "12-123456a", "12-12345678", "123-4567890"])
 def test_employer_ein_requires_w2_box_b_shape(ein):
     record = _ss_w2(1, 100000, 6200)
     record["source_form"]["employer_ein"] = ein
