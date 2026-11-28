@@ -5163,3 +5163,45 @@ and #118's backlog edits left to this record.
   misspelled `--expected-source-digest` was ignored, extracting unchecked.
   A crypto CSV may now name its exact copy, and the parse CLI refuses stray
   arguments.
+
+## AA127 — harvest inputs and sale order, step 2b (#158)
+
+- Every lot states `tax_advantaged`, and a separate return names each lot's
+  `owner`; the spouse's losses are reported apart while the spouse's purchases
+  still replace. A quantity-less purchase stays a replacement beside another
+  lot, and same-day lots match by loss per share.
+- Review: "mfs" priced the separate return's cap yet counted the spouse's loss,
+  doubling the harvest; off a joint return a spouse's lot still counted. A lot
+  the plan does not sell kept its own purchase out of the replacement pool, so
+  an older lot showed clear (53 of 12,000 fuzz files); such a purchase now
+  holds the lots it may replace. The history check now counts shares, and a
+  separate return domiciled in a community-property state is refused.
+
+## AA140 — employer EIN for excess Social Security, first step (#159)
+
+- W-2 Box b's EIN is recorded and groups each employee's W-2s; a positive
+  credit needs an EIN on each of that employee's Social Security W-2s.
+- Review: counting distinct EINs to choose a grouping refused correct
+  zero-credit returns, and a W-2 without an EIN could join two employers,
+  reading their excess as zero. W-2s without an EIN now join one related EIN,
+  decided whatever the file's order.
+
+## AA140 — a 1099 inside a consolidated statement, second step (#160)
+
+- An included 1099-NEC or 1099-K carries its amount, which the consolidated
+  statement's business gross must cover; a 1099-K link needs Box 1a routed in
+  full to business.
+- Review: the Box 1a routing rule read the label, so a consolidated
+  statement's 1099-K section left $8,000 of $20,000 off Schedule C; the rule
+  now follows the box, and that section counts as a 1099-K. A copy of an
+  included form doubled the receipts to cover, and the NEC-and-K books gate
+  pooled the household.
+
+## AA140 — payment confirmations, third step (#161)
+
+- A balance-due row needs separate remittances confirmed beside an estimate,
+  and a positive Schedule 3 line 10 off a joint return needs the Form 4868
+  ownership.
+- Review: a profile saying MFS beside result meta saying MFJ skipped the
+  ownership check; the window's own edges let a duplicate a day apart through;
+  and an estimate a cent off line 10 counted the extension payment twice.
