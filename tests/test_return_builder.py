@@ -1615,7 +1615,8 @@ def test_estimates_near_balance_due_payments_require_separate_remittances(tmp_pa
         near_match["distinct_payment_confirmed"] = True
         with pytest.raises(ValueError, match="distinct_payment_confirmed"):
             reviewed_payments(result, profile)
-        later["distinct_payment_confirmed"] = True
+    near_match["distinct_payment_confirmed"] = True
+    later["distinct_payment_confirmed"] = True
     reviewed = reviewed_payments(result, profile)
     assert reviewed.line_26 == 500 and len(reviewed.rows) == 3
 
@@ -1646,6 +1647,25 @@ def test_balance_due_payments_without_estimates_need_no_confirmation(tmp_path):
     profile = _set_federal_payments(ws, rows, 0, 0)
     reviewed = reviewed_payments({"meta": {"tax_year": 2026, "filing_status": "MFJ"}}, profile)
     assert reviewed.line_26 == 0 and len(reviewed.rows) == 1
+
+
+def test_multiple_balance_due_payments_without_estimates_require_separate_remittances(tmp_path):
+    from agents.lib.tax_computations.federal.payments import reviewed_payments
+
+    ws = _workspace(tmp_path)
+    first = _federal_row("early-payment", 600, date="2027-01-16", kind="balance_due")
+    second = _federal_row("next-payment", 600.01, date="2027-01-17", kind="balance_due")
+    profile = _set_federal_payments(ws, [first, second], 0, 0)
+    result = {"meta": {"tax_year": 2026, "filing_status": "MFJ"}}
+    with pytest.raises(ValueError, match="distinct_payment_confirmed"):
+        reviewed_payments(result, profile)
+    first["distinct_payment_confirmed"] = True
+    with pytest.raises(ValueError, match="distinct_payment_confirmed"):
+        reviewed_payments(result, profile)
+    second["distinct_payment_confirmed"] = True
+    reviewed = reviewed_payments(result, profile)
+    assert reviewed.line_26 == 0
+    assert [row["amount"] for row in reviewed.rows] == [600, 600.01]
 
 
 @pytest.mark.parametrize("extension,line_31,excess", [

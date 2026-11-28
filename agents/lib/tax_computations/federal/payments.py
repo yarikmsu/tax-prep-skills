@@ -154,6 +154,7 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
     parsed = []
     refs = set()
     has_late_estimate = False
+    balance_count = 0
     has_unconfirmed_balance = False
     third_due = next_business_day(date(year, 9, 15))
     for index, raw in enumerate(rows, 1):
@@ -169,12 +170,14 @@ def reviewed_payments(result: dict, profile: dict, filing_status: str | None = N
         # balance-due date.
         if item["kind"] == "estimate" and date.fromisoformat(item["date"]) > third_due:
             has_late_estimate = True
-        if item["kind"] == "balance_due" and raw.get("distinct_payment_confirmed") is not True:
-            has_unconfirmed_balance = True
-    if has_late_estimate and has_unconfirmed_balance:
-        raise ValueError("A balance-due payment is recorded beside an estimate paid after the third "
-                         "installment's due date. Confirm separate remittances with "
-                         "distinct_payment_confirmed on every balance-due row")
+        if item["kind"] == "balance_due":
+            balance_count += 1
+            if raw.get("distinct_payment_confirmed") is not True:
+                has_unconfirmed_balance = True
+    if has_unconfirmed_balance and (balance_count > 1 or has_late_estimate):
+        raise ValueError("Multiple balance-due payments, or a balance-due payment beside an estimate paid "
+                         "after the third installment's due date, require confirmation of separate remittances. "
+                         "Set distinct_payment_confirmed on every balance-due row after review")
     _check_extension_not_an_estimate(result, rows, parsed, year)
     if not math.isfinite(sum(row["amount"] for row in parsed)):
         raise ValueError("Federal payment records exceed the finite range for a total")
