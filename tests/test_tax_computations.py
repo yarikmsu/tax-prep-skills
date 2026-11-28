@@ -1344,6 +1344,13 @@ class TestCheckForm8938Required:
         with pytest.raises(ValueError, match=f"account #1.*{field}"):
             check_form_8938_required([account], "single", False, self.THRESHOLDS)
 
+    @pytest.mark.parametrize("bad", ["nan", float("nan"), float("inf"), "-inf", "1e400", "-1", -0.01])
+    def test_a_non_finite_or_negative_value_is_refused_as_such(self, bad):
+        # Its own message, not the total's overflow check, which masked a
+        # removed isfinite test with "exceeds the finite range for the total".
+        with pytest.raises(ValueError, match="account #1 max_value_usd must be finite and nonnegative"):
+            check_form_8938_required([{"year_end_value_usd": 0, "max_value_usd": bad}], "single")
+
     @pytest.mark.parametrize("bad", [None, True, "nan", float("inf"), "-1", -0.01, 10**400])
     def test_invalid_account_value_names_the_account_and_field(self, bad):
         account = {"year_end_value_usd": 0, "max_value_usd": bad}

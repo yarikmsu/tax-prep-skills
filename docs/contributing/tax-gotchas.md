@@ -12,7 +12,7 @@ verbatim from CLAUDE.md.
 - 1099-R Code G (direct rollover): $0 taxable but must report on 1040 line 5a
 - Additional Medicare Tax: employer withholds 0.9% on wages >$200K, but MFJ threshold is $250K — over-withholding becomes a credit (Form 8959)
 - FBAR max values (conservative, total inflows) differ from Form 8938 values (realistic simultaneous peak)
-- Form 8938 thresholds differ by filing status — MFJ in US: $200K year-end / $300K any time
+- Form 8938 thresholds differ by filing status — MFJ in US: $100K year-end / $150K any time
 - State HSA non-conformity (CA, NJ): HSA contributions and earnings are state-taxable. (Alabama formerly non-conforming — Ala. Code §40-18-15.6 has allowed the deduction since 2018-01-01)
 - CA SDI has NO taxable wage ceiling since TY2024 (SB 951) — an excess-SDI credit cannot arise for 2024+; `state.sdi_wage_limit` stays null and `compute_excess_sdi` reports not-applicable. Only pre-2024 returns have a cap to exceed. TY2025 Form 540 line 74 is the refundable Motion Picture credit, never excess SDI.
 - Tax-exempt (muni) interest raises PROVISIONAL income for taxable Social Security even though it's untaxed — line 2a is a required input to `compute_taxable_ss`
