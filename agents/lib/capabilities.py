@@ -874,6 +874,16 @@ def _residency_counts(profile: dict, key: str, ceiling: int) -> "dict[str, float
     return out
 
 
+def in_community_property_state(profile: dict) -> bool:
+    """Domicile or address in a community-property state.
+
+    Domicile governs community property (Publication 555), and the address is
+    only where the mail goes: a California domicile with a New York mailbox
+    read as common-law. Either one in the set is enough.
+    """
+    return bool({_profile_state(profile), _residency_domicile(profile)} & _COMMUNITY_PROPERTY_STATES)
+
+
 def _residency_domicile(profile: dict) -> "str | None":
     residency = profile.get("residency")
     if not isinstance(residency, dict):
@@ -1364,7 +1374,7 @@ def evaluate(profile: dict, extra_acknowledged: "set[str] | None" = None) -> Cap
     # are already interviewed, so keying this on married_this_year alone
     # missed every long-married MFS couple.
     if (str(profile.get("filing_status") or "").strip().upper() == "MFS"
-            and _profile_state(profile) in _COMMUNITY_PROPERTY_STATES):
+            and in_community_property_state(profile)):
         _place(Finding(
             _COMMUNITY_PROPERTY_RULE_ID, MANUAL,
             "MFS in a community-property state",

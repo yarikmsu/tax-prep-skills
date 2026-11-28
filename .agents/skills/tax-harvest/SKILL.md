@@ -128,7 +128,8 @@ permissions through the same guarded writer `/tax-scenario` uses.
   sell) must be filtered out; otherwise the scanner refuses the file. A `cost_basis` of
   0 is fine (gift / employer-match shares); a `current_value` of 0 is fine (worthless
   security harvest under §165(g)).
-- **`tax_advantaged`** (default `false`): set to `true` for lots inside an IRA, Roth IRA,
+- **`tax_advantaged`** (required JSON boolean): set to `false` for taxable brokerage lots
+  and to `true` for lots inside an IRA, Roth IRA,
   401(k), 403(b), HSA, or any other tax-advantaged account. §165 does NOT allow Schedule D
   capital losses for sales inside such accounts, so the scanner EXCLUDES these lots from
   the harvest plan (recommending the sell would produce $0 of real tax savings). However,
@@ -138,6 +139,13 @@ permissions through the same guarded writer `/tax-scenario` uses.
   + transactions) so the wash-sale pool is correct, but mark the IRA lots
   `tax_advantaged: true` so their losses don't get recommended. Same goes for HSAs and
   Roth accounts.
+- **`owner`** (required on a married filing separately return): set to `"taxpayer"`
+  or `"spouse"` on every lot. On every return but a joint one, the spouse's losses
+  are shown separately and excluded from the harvest and savings. Include the
+  spouse's purchases when checking wash sales. Keep account labels distinct by owner
+  and identify purchase ownership when the same label covers both owners. A separate
+  return domiciled or addressed in a community-property state is refused: Form 8958 splits community gains
+  and losses between the spouses, which the scanner does not model. [IRS Publication 550](https://www.irs.gov/publications/p550)
 - **Replacement basis plan:** give each buy's `account_type` (`taxable`, `ira`,
   `roth_ira`, or `other_tax_advantaged`) and its actual quantity. Taxable purchases
   receive the matched disallowed loss as a basis increase. For IRA/Roth-IRA
@@ -147,8 +155,12 @@ permissions through the same guarded writer `/tax-scenario` uses.
   unresolved, as do other tax-advantaged regimes. Optional `cost_basis` is the
   full purchase's actual basis, including fees, and permits matched before/after
   basis amounts. List same-day fills in trade order. This is a hypothetical plan
-  for sales of the full losing lots, adds no current-year savings, and never
-  changes `holdings.json`; reconcile with broker records after actual trades.
+  for sales of the full losing lots, oldest acquired first, with higher loss per
+  share first on a shared acquisition date and lot ID breaking ties. A lot the plan
+  does not sell keeps the shares its own purchase bought, so the lots that purchase
+  may replace are held back. It adds no
+  current-year savings and never changes `holdings.json`; reconcile with broker
+  records after actual trades.
 - **`recent_transactions`**: only BUYS within ±30 days of `as_of` matter for wash-sale
   detection. Include ALL accounts §1091 reaches (your IRAs, your spouse's accounts,
   controlled trusts). Future-dated buys (≤ 30 days after `as_of`) also poison a loss —
@@ -161,7 +173,9 @@ permissions through the same guarded writer `/tax-scenario` uses.
   it acquired, is treated as a genuine §1091 replacement (a same-day same-ticker buy
   in your spouse's account IS a wash-sale trigger per Rev. Rul. 2008-5 + spousal-account
   rules — and the scanner correctly catches it). Account comparison is case-insensitive
-  and whitespace-trimmed. Brokerage CSVs always include account info; paste the full
+  and whitespace-trimmed. If a purchase lacks quantity and another lot or buy shares
+  its date, ticker and account, it remains a replacement of unknown quantity. Brokerage
+  CSVs always include account info; paste the full
   transaction list and the scanner does the right thing.
 - **`transaction_coverage`**: the user's statement that `recent_transactions` is the
   whole history. `accounts` names every account `recent_transactions` must include
@@ -169,8 +183,8 @@ permissions through the same guarded writer `/tax-scenario` uses.
   file itself mentions. `from` and `through` are the trade dates the history spans:
   from 30 days before `as_of` through the earlier of 30 days after it and today. With
   the statement, `recent_transactions` must be present, an empty list means "no
-  purchases in the window", and every lot acquired inside the window needs its buy
-  listed. **Until the statement covers the whole file, the scanner holds back every
+  purchases in the window", and every share of a lot acquired inside the window
+  needs its buy listed (a split after the purchase is recorded in its share count). **Until the statement covers the whole file, the scanner holds back every
   taxable losing lot** — out of the plan and the savings, under "Held back", with the
   reason in the report's banner — rather than reading a lot as clear. A malformed
   statement, or a `recent_transactions` that is not a list, is refused.

@@ -195,14 +195,16 @@ def harvest_case(gain=500000, loss=10000, *, short_loss=0, taxable=True):
     # enough for the anniversary case's earlier as_of: what is measured here
     # is WA pricing, not AA127's hold for unconfirmed history.
     h = dict(as_of='2025-12-15', lots=[dict(id='LT', ticker='ABC', account='Taxable',
-        acquired='2023-01-01', quantity=100, cost_basis=loss+100, current_value=100)],
+        acquired='2023-01-01', quantity=100, cost_basis=loss+100, current_value=100,
+        tax_advantaged=False)],
         recent_transactions=[],
         transaction_coverage={'accounts': ['Taxable', 'Other'], 'from': '2024-12-01',
                               'through': '2025-12-15'},
         wa_harvest=dict(deductions_unchanged=True, taxable_lots=dict(LT=taxable)))
     if short_loss:
         h['lots'].append(dict(id='ST', ticker='DEF', account='Taxable', acquired='2025-06-01',
-                             quantity=100, cost_basis=short_loss+100, current_value=100))
+                             quantity=100, cost_basis=short_loss+100, current_value=100,
+                             tax_advantaged=False))
     def build():
         return lh.build_harvest(r, p, law, h, 2025, name='wa', today=datetime.date(2025,12,15))
     return build, r, p, law, h
