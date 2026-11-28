@@ -509,6 +509,104 @@ def test_included_consolidated_interest_keeps_its_existing_disposition():
     assert _issues(consolidated, interest) == ((), ("Document #2 is reported within consolidated document #1.",))
 
 
+@pytest.mark.parametrize("routes, refused", [
+    ({"self_employment_gross": 12000}, True),
+    # Inside a consolidated statement capital_proceeds is the Form 1099-B
+    # total, so it cannot account for the rest of Box 1a.
+    ({"self_employment_gross": 12000, "capital_proceeds": 8000}, True),
+    ({"self_employment_gross": 12000, "personal_1099k": 8000}, False),
+    ({"self_employment_gross": 20000, "capital_proceeds": 50000}, False),
+])
+def test_box_1a_inside_a_consolidated_statement_is_routed_in_full(routes, refused):
+    """The routing rule read the label, so a consolidated statement's Form
+    1099-K section passed with $8,000 of Box 1a on no line."""
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         form_1099k_box_1a=20000, **routes)
+    issues, _ = _issues(consolidated)
+    routed = [issue for issue in issues if "Form 1099-K Box 1a" in issue]
+    assert bool(routed) is refused
+    if refused:
+        assert "record a Form 1099-K with capital receipts as its own document" in routed[0]
+
+
+@pytest.mark.parametrize("copy_link", ["duplicate_of", "included_in"])
+def test_a_copy_of_an_included_business_form_counts_once(copy_link):
+    """Every disposition of a second download was refused, and the coverage
+    message asked for a consolidated gross twice the real receipts."""
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    included = _included_business_form("1099-NEC")
+    copy = _included_business_form("1099-NEC", doc_id="copy")
+    if copy_link == "duplicate_of":
+        copy["source_form"] = {"duplicate_of": "business"}
+    issues, disclosures = _issues(consolidated, included, copy)
+    assert issues == ()
+    assert "Document #2 is reported within consolidated document #1." in disclosures
+
+
+def test_the_original_of_a_corrected_included_form_names_the_correction():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120)
+    corrected = _included_business_form("1099-NEC Corrected")
+    corrected["source_form"].update(tax_year=2025, series_id="s", corrected=True)
+    original = dict(_form("original", "1099-NEC", "Broker", "c" * 64), skipped="superseded", key_boxes={},
+                    source_form={"tax_year": 2025, "series_id": "s", "superseded_by": "business"})
+    issues, disclosures = _issues(consolidated, corrected, original)
+    assert issues == ()
+    assert "Document #2 replaced superseded document #3 for the same filer, year and statement." in disclosures
+
+
+def test_a_copy_cannot_name_a_skip_outside_an_active_statement():
+    nec = dict(_form("nec", "1099-NEC", "Broker", "b" * 64), skipped="not used", key_boxes={})
+    copy = dict(_form("copy", "1099-NEC", "Broker", "b" * 64), skipped="copy", key_boxes={},
+                source_form={"duplicate_of": "nec"})
+    issues, _ = _issues(nec, copy)
+    assert any("Document #2 must name an active retained form." in issue for issue in issues)
+
+
+def test_spouses_business_forms_need_no_shared_book():
+    """Only forms sent to one recipient can report one payment twice. Pooling
+    the household asked for a book the one-owner rule then refused."""
+    primary_statement = _form("primary-1099", "Consolidated 1099", "Broker", "a" * 64,
+                              self_employment_gross=120)
+    nec = _included_business_form("1099-NEC", doc_id="nec")
+    nec["source_form"]["included_in"] = "primary-1099"
+    spouse_statement = _form("spouse-1099", "Consolidated 1099", "Bank", "c" * 64, person="spouse",
+                             self_employment_gross=300)
+    k = dict(_included_business_form("1099-K", doc_id="k", digest="d" * 64, amount=300),
+             payer="Bank", person="spouse")
+    k["source_form"]["included_in"] = "spouse-1099"
+    issues, _ = _issues(primary_statement, nec, spouse_statement, k)
+    assert not any("receipt-level book" in issue or "one Schedule C owner" in issue for issue in issues)
+    nec["person"] = primary_statement["person"] = "spouse"
+    issues, _ = _issues(primary_statement, nec, spouse_statement, k)
+    assert any("receipt-level book" in issue for issue in issues)
+
+
+def test_a_fraction_of_a_cent_in_the_consolidated_gross_is_named():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64,
+                         self_employment_gross=120.001)
+    issues, _ = _issues(consolidated, _included_business_form("1099-NEC"))
+    assert any("Consolidated document #1 self_employment_gross: business receipts must be recorded to the cent"
+               in issue for issue in issues)
+
+
+@pytest.mark.parametrize("form_type, source_form", [
+    ("1099-INT", {"included_in": "consolidated", "included_boxes": {"self_employment_gross": 120}}),
+    ("1099-NEC", {"duplicate_of": "consolidated", "included_boxes": {"self_employment_gross": 120}}),
+    ("1099-NEC", {"included_in": "consolidated", "included_boxes": {"wages": 120}}),
+    ("1099-NEC", {"included_in": "consolidated", "included_boxes": {}}),
+    ("1099-K", {"included_in": "consolidated",
+                "included_boxes": {"self_employment_gross": 1, "form_1099k_box_1a": True}}),
+    ("1099-NEC", {"included_in": "consolidated", "included_boxes": {"self_employment_gross": -1}}),
+])
+def test_included_boxes_are_refused_when_the_ledger_loads(form_type, source_form):
+    record = dict(_form("business", form_type, "Broker", "b" * 64), skipped="in consolidated",
+                  key_boxes={}, source_form=source_form)
+    with pytest.raises(T.TieOutError, match="included_boxes"):
+        _ledger(_form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40), record)
+
+
 @pytest.mark.parametrize("kept_type, flag, accepted", [
     ("Form W-2c", True, True), ("W-2", True, False),            # a W-2 is corrected only by a W-2c
     ("1099-INT Corrected", True, True), ("1099-INT", True, False), ("Corrected 1099-INT", False, False),

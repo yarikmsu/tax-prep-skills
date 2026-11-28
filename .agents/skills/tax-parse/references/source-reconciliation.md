@@ -28,18 +28,22 @@ record and `source_sha256`, including copies and replaced versions.
   every 1099 from that issuer.
 - A standalone 1099 already reported inside a consolidated statement is a
   skip with `source_form.included_in` naming the consolidated record.
-  On an included Form 1099-NEC, record Box 1 in
+  On an included Form 1099-NEC, record Box 1 (Box 1a from TY2026) in
   `source_form.included_boxes.self_employment_gross`. For an included Form
   1099-K, record Box 1a in `source_form.included_boxes.form_1099k_box_1a`
   and record the amount routed to business in
   `source_form.included_boxes.self_employment_gross`. This link requires the
   full Box 1a amount routed to business. Keep a Form 1099-K with a mixed or
-  nonbusiness route active and route its receipts separately. The retained
+  nonbusiness route active, route its receipts separately, and leave its
+  amounts off the consolidated record. The retained
   consolidated record carries the combined gross for the included business
   forms in `key_boxes.self_employment_gross`. The included amounts serve as
   evidence and the retained record contributes the gross to the return.
   If one statement includes both positive 1099-NEC and 1099-K amounts, use
   separate active business source records so the books can track overlap.
+  A second copy or the superseded original of an included form names that
+  included form in `duplicate_of` or `superseded_by`, never the consolidated
+  record; the statement's receipts then count once.
 - A skipped W-2 or 1099 beside an active one from the same issuer and
   recipient needs one of `duplicate_of`, `superseded_by` or `included_in`.
   A reason alone is not checked, and a real second form would vanish.
@@ -73,7 +77,11 @@ Copy each 1099-K's original Box 1a in `form_1099k_box_1a` and route its
 reviewed receipts to the appropriate categories (`self_employment_gross`,
 `personal_1099k`, `capital_proceeds`). The routed amounts must add up to
 Box 1a to the cent: every dollar has a line, and a remainder left unrouted
-drops from the return. Record an explicit Box 1a zero when the effective form
+drops from the return. The rule follows the box onto any record: a
+consolidated statement carrying a 1099-K's Box 1a routes all of it to
+`self_employment_gross` or `personal_1099k`, because its `capital_proceeds`
+is also the Form 1099-B total. Record a 1099-K with capital receipts as its
+own document. Record an explicit Box 1a zero when the effective form
 reports zero. Personal-item gains go to Form 8949. Personal-item losses are
 nondeductible.
 
@@ -86,7 +94,8 @@ and each affected 1099-K with repeatable `--input` arguments. Include
 supporting transaction records when used. Refresh the review after a source
 or its ledger entry changes.
 
-For a return with both business forms, ledger the accounting source with the
+When one recipient has both business forms, active or included, ledger the
+accounting source with the
 same taxpayer `person` and a `source_form.tax_year` matching the return. Give
 the record only the `self_employment_book_gross` category and
 `business_receipts` rows with `payment_id`, `amount`, and `reported_by`.

@@ -176,9 +176,12 @@ def _payer_identity(name: str) -> tuple[str, ...]:
 
 
 def _review_1099k(record: LedgerRecord, number: int,
-                  personal_sources: dict[str, str] | None) -> list[str]:
+                  personal_sources: dict[str, str] | None, *, own_form: bool = True) -> list[str]:
     boxes = dict(record.key_boxes)
-    routes = {route: boxes[route] for route in _K_ROUTES if route in boxes}
+    # Inside another statement, capital_proceeds is also its Form 1099-B
+    # total, so it cannot show how much of Box 1a went to Schedule D.
+    route_names = _K_ROUTES if own_form else (BUSINESS_GROSS, "personal_1099k")
+    routes = {route: boxes[route] for route in route_names if route in boxes}
     reported = boxes.get(K_REPORTED_GROSS)
     if reported is None:
         return [f"Document #{number} needs verified Form 1099-K Box 1a in {K_REPORTED_GROSS}."]
@@ -187,6 +190,10 @@ def _review_1099k(record: LedgerRecord, number: int,
     # leaving it unrouted needed less review than calling it personal.
     routed = round(sum(routes.values()), 2)
     if routed != round(reported, 2):
+        if not own_form:
+            return [f"Document #{number} routes ${routed:,.2f} of its ${reported:,.2f} Form 1099-K Box 1a "
+                    "to business or personal receipts. Route all of it, or record a Form 1099-K with "
+                    "capital receipts as its own document."]
         return [f"Document #{number} routes ${routed:,.2f} of its ${reported:,.2f} Form 1099-K Box 1a. "
                 "Route all of it to business, personal or capital receipts."]
     if (personal_sources is not None and (routes.get("personal_1099k") or routes.get("capital_proceeds"))
@@ -201,7 +208,7 @@ def _included_business_amount(record: LedgerRecord, form: str) -> int:
     business = boxes.get(BUSINESS_GROSS)
     if form == "1099NEC":
         if boxes.keys() != {BUSINESS_GROSS}:
-            raise ValueError(f"record Form 1099-NEC Box 1 in included_boxes.{BUSINESS_GROSS}")
+            raise ValueError(f"record Form 1099-NEC Box 1 (Box 1a from TY2026) in included_boxes.{BUSINESS_GROSS}")
     elif boxes.keys() != {BUSINESS_GROSS, K_REPORTED_GROSS} or business != boxes[K_REPORTED_GROSS]:
         raise ValueError("record Form 1099-K Box 1a in included_boxes and route the full amount to "
                          "business receipts for this link. Keep a mixed or nonbusiness Form 1099-K active "
@@ -209,14 +216,25 @@ def _included_business_amount(record: LedgerRecord, form: str) -> int:
     return _cents(business)
 
 
+def _included_in_active(records: dict, record: LedgerRecord) -> bool:
+    """A form reported inside an active consolidated statement.
+
+    Its copy or its superseded original names it, never the statement: the
+    statement's sum check would otherwise count one form's receipts twice.
+    """
+    target = records.get((record.source_form or {}).get("included_in"))
+    return target is not None and target[1].skipped is None
+
+
 def _review_forms(ledger: list[LedgerRecord], year: object,
-                  personal_sources: dict[str, str] | None) -> tuple[list[str], list[str], set[str]]:
+                  personal_sources: dict[str, str] | None
+                  ) -> tuple[list[str], list[str], set[tuple[str, str]]]:
     problems, disclosures = [], []
     records = {r.doc_id: (number, r) for number, r in enumerate(ledger, 1)}
     digests: dict[str, list[tuple[int, LedgerRecord]]] = defaultdict(list)
     active: list[tuple[int, LedgerRecord, str, tuple[str, ...]]] = []
     unlinked: list[tuple[int, LedgerRecord, str, tuple[str, ...]]] = []
-    included_business: dict[str, list[tuple[int, str, int]]] = defaultdict(list)
+    included_business: dict[str, list[tuple[int, str, int, str | None]]] = defaultdict(list)
     for number, record in records.values():
         details = record.source_form or {}
         source_year = details.get("tax_year")
@@ -228,8 +246,10 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
         if record.source_sha256:
             digests[record.source_sha256].append((number, record))
         if record.skipped is None:
-            if form == "1099K":
-                problems.extend(_review_1099k(record, number, personal_sources))
+            # The box decides, not the label: a consolidated statement's
+            # Form 1099-K section otherwise passed with Box 1a half routed.
+            if form == "1099K" or K_REPORTED_GROSS in dict(record.key_boxes):
+                problems.extend(_review_1099k(record, number, personal_sources, own_form=form == "1099K"))
             if _information_return(form):
                 active.append((number, record, form, payer))
             continue
@@ -245,7 +265,8 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
         retained = records.get(link)
         if copy_of and retained is not None and _crypto_csv_copy(record, retained[1]):
             continue
-        if retained is None or retained[1].skipped is not None:
+        if retained is None or (retained[1].skipped is not None and not (
+                (copy_of or superseded_by) and _included_in_active(records, retained[1]))):
             problems.append(f"Document #{number} must name an active retained form.")
             continue
         kept_number, kept = retained
@@ -270,7 +291,7 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
                 except ValueError as exc:
                     problems.append(f"Document #{number} in consolidated document #{kept_number}: {exc}.")
                 else:
-                    included_business[kept.doc_id].append((number, form, cents))
+                    included_business[kept.doc_id].append((number, form, cents, record.source_sha256))
             else:
                 disclosures.append(f"Document #{number} is reported within consolidated document #{kept_number}.")
         else:
@@ -294,26 +315,30 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
                for _, other, other_form, other_payer in active):
             problems.append(f"Document #{number} is skipped beside an active form from the same payer and "
                             "recipient. Record duplicate_of, superseded_by or included_in.")
-    included_classes = set()
+    included_classes: set[tuple[str, str]] = set()
     for kept_id, included in included_business.items():
         kept_number, kept = records[kept_id]
-        numbers = ", ".join(f"#{number}" for number, _, _ in included)
+        numbers = ", ".join(f"#{number}" for number, _, _, _ in included)
         amount = dict(kept.key_boxes).get(BUSINESS_GROSS)
+        # One download saved twice is one form: its receipts count once.
+        receipts = {digest: cents for _, _, cents, digest in included}
         try:
-            covered = amount is not None and _cents(amount) >= sum(cents for _, _, cents in included)
-        except ValueError:
-            covered = False
+            covered = amount is not None and _cents(amount) >= sum(receipts.values())
+        except ValueError as exc:
+            problems.append(f"Consolidated document #{kept_number} {BUSINESS_GROSS}: {exc}.")
+            continue
         if not covered:
             problems.append(f"Consolidated document #{kept_number} needs {BUSINESS_GROSS} covering "
-                            f"all included business receipts from documents {numbers}.")
+                            f"all included business receipts from documents {numbers}. A copy or the "
+                            "original of an included form names that form in duplicate_of or superseded_by.")
             continue
-        classes = {form for _, form, cents in included if cents}
+        classes = {form for _, form, cents, _ in included if cents}
         if _BUSINESS_FORMS <= classes:
             problems.append(f"Consolidated document #{kept_number} includes both Forms 1099-NEC and 1099-K "
                             f"in documents {numbers}. Keep the business forms active separately to trace overlap.")
             continue
-        included_classes.update(classes)
-        for number, _, _ in included:
+        included_classes.update((kept.person, form) for form in classes)
+        for number, _, _, _ in included:
             disclosures.append(f"Document #{number} is reported within consolidated document #{kept_number}.")
     return problems, disclosures, included_classes
 
@@ -358,13 +383,21 @@ def _shared_statements(active: list) -> list[str]:
 
 
 def _book_total(ledger: list[LedgerRecord], year: object,
-                overlap_sources: dict[str, str], included_classes: set[str]) -> tuple[float | None, int, int]:
+                overlap_sources: dict[str, str],
+                included_classes: set[tuple[str, str]]) -> tuple[float | None, int, int]:
     reported = {r.doc_id: r for r in ledger if r.skipped is None and BUSINESS_GROSS in dict(r.key_boxes)}
-    classes = included_classes | {
-        _base_form(r.form_type) for r in reported.values() if dict(r.key_boxes)[BUSINESS_GROSS] > 0}
+    # Only forms sent to one recipient can report one payment twice. Pooling
+    # the household asked a couple with one form each for a book that the
+    # one-owner rule below then refused.
+    classes: dict[str, set[str]] = defaultdict(set)
+    for person, form in included_classes:
+        classes[person].add(form)
+    for r in reported.values():
+        if dict(r.key_boxes)[BUSINESS_GROSS] > 0:
+            classes[r.person].add(_base_form(r.form_type))
     books = [r for r in ledger if r.business_receipts]
     if not books:
-        if _BUSINESS_FORMS <= classes:
+        if any(_BUSINESS_FORMS <= forms for forms in classes.values()):
             raise ValueError("Reconcile business Forms 1099-NEC and 1099-K to a receipt-level book before final export.")
         return None, 0, 0
     if type(year) is not int or any((r.source_form or {}).get("tax_year") != year for r in books):
