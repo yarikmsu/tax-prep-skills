@@ -471,8 +471,8 @@ Topic 608 (excess tier 1 RRTA, and combined SS + tier 1 over the base, are
 also creditable) and tell the user the helper's figure would understate it.
 The tie-out compares Boxes 3, 4 and 7 by employee and employer EIN, and
 requires an EIN on each Social Security W-2 of an employee with a positive
-credit. A W-2 without an EIN joins a related payer name, which can only lower
-the credit, so it settles only a zero-credit check. When an employee's W-2 records Tier 1
+credit. A W-2 without an EIN joins one related payer name, never two different
+EINs, and so settles only a zero-credit check. When an employee's W-2 records Tier 1
 RRTA withholding, attach the combined worksheet to the payments review. The tie-out bounds
 that employee's share by the Social Security and Tier 1 tax withheld above one
 year's maximum, and still checks the other spouse exactly.

@@ -2240,13 +2240,16 @@ def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
 
     Names alone split "Acme Corp" from "Acme Corporation", so one employer's
     own over-withholding read as a second employer's and was credited. A W-2
-    without an EIN joins any W-2 with a related name instead: merging can only
-    lower the credit, and a positive credit with an EIN missing is refused.
-    Names never join two W-2s that both carry an EIN.
+    without an EIN joins a W-2 with a related name instead. Names never join
+    two different EINs, directly or through a W-2 without one: that bridge
+    merged two employers and read their real excess as zero, a claim of zero
+    then accepted. A positive credit with an EIN missing is refused, so a name
+    join settles only a zero-credit check.
     """
     tokens = [_payer_tokens(record.payer) for record, _ in forms]
     eins = [_employer_ein(record) for record, _ in forms]
     groups = list(range(len(forms)))
+    group_ein = list(eins)
 
     def root(index: int) -> int:
         while groups[index] != index:
@@ -2255,10 +2258,12 @@ def _employer_groups(forms: list[tuple[LedgerRecord, dict]]) -> list[list[dict]]
 
     for i in range(len(forms)):
         for j in range(i + 1, len(forms)):
-            named = (None in (eins[i], eins[j]) and bool(tokens[i] and tokens[j])
-                     and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i]))
-            if (eins[i] is not None and eins[i] == eins[j]) or named:
-                groups[root(j)] = root(i)
+            first, second = root(i), root(j)
+            known = {group_ein[first], group_ein[second]} - {None}
+            named = bool(tokens[i] and tokens[j]) and (tokens[i] <= tokens[j] or tokens[j] <= tokens[i])
+            if first != second and len(known) <= 1 and (named or eins[i] is not None and eins[i] == eins[j]):
+                groups[second] = first
+                group_ein[first] = group_ein[first] or group_ein[second]
     members: dict[int, list[dict]] = {}
     for index, (_, boxes) in enumerate(forms):
         members.setdefault(root(index), []).append(boxes)

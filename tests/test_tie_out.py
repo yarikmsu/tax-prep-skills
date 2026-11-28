@@ -887,6 +887,23 @@ def test_a_w2_without_an_ein_bridging_two_eins_refuses_a_claim():
     assert any("W-2 Box b" in item for item in report.missing_result_targets)
 
 
+@pytest.mark.parametrize("order", [(0, 1, 2), (2, 0, 1), (1, 2, 0)])
+def test_a_w2_without_an_ein_never_merges_two_eins_into_a_zero_credit(order):
+    """Joined to both, it merged two employers and read their $11,228.20
+    excess as zero, so a claim of zero passed with the credit lost."""
+    first = _ss_w2(1, 176100, 10918.20, payer="Acme")
+    second = _ss_w2(2, 176100, 10918.20, payer="Acme Holdings")
+    bridge = _ss_w2(3, 5000, 310, payer="Acme Holdings West")
+    del bridge["source_form"]["employer_ein"]
+    records = [(first, second, bridge)[index] for index in order]
+    report = _ss_return(*records)
+    assert any("W-2 Box b" in item for item in report.missing_result_targets)
+    # Recorded, it is a third employer: $10,918.20 + $10,918.20 + $310 less
+    # one year's $10,918.20 maximum.
+    bridge["source_form"]["employer_ein"] = "12-0000003"
+    assert not _ss_return(*records, claimed=11228.20).failed
+
+
 def test_the_ein_review_names_the_employee_with_two_w2s():
     """A spouse's single W-2 without an EIN cannot have a credit, so the
     taxpayer's wrong figure was reported as the spouse's missing EIN."""
