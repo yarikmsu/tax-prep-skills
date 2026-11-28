@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, NamedTuple
 
 from agents.lib.secure_fs import redact
+from agents.lib.tax_computations.federal.misc_income import classify_misc_income, validate_misc_income
 
 if TYPE_CHECKING:
     from agents.lib.tie_out import LedgerRecord
@@ -36,11 +37,39 @@ def _clean_code(name: str) -> str:
 def _base_form(name: str) -> str:
     code = _clean_code(name)
     # Containment, as the 1099-DA rule reads it: "Substitute 1099-K" or
-    # "PayPal 1099-K" matched no business rule as a prefix test.
-    for business_form in ("1099NEC", "1099K"):
-        if business_form in code and not _consolidated(code):
-            return business_form
+    # "PayPal 1099-K" matched no business rule as a prefix test. A NEC or MISC
+    # name counts beside the number on either side ("MISC 1099") and nowhere
+    # else: "Stripe Connect 1099-K" holds the letters NEC, and as a 1099-NEC
+    # it skipped both 1099-K rules.
+    if not _consolidated(code):
+        for form in ("1099NEC", "1099K", "1099MISC"):
+            if form in code or form != "1099K" and form[4:] + "1099" in code:
+                return form
+        named = _named_by_word(name)
+        if named:
+            return named
     return "W2" if code == "W2C" else code
+
+
+# A bare "1099" names its form in a word elsewhere ("1099 Form NEC",
+# "Miscellaneous Income 1099"), unless the number already carries another
+# form's letters ("1099-B Miscellaneous", "1099-INT Seneca").
+_FORM_NAME_WORDS = {"NEC": "1099NEC", "NONEMPLOYEE": "1099NEC", "MISC": "1099MISC", "MISCELLANEOUS": "1099MISC"}
+# The other 1099 forms' letters: any other short word after the number
+# ("Copy", "Tax", "2025") is not a form, and the label's NEC or MISC still counts.
+_OTHER_1099_LETTERS = {"A", "B", "C", "CAP", "DA", "DIV", "G", "H", "INT", "K", "LS", "LTC", "OID", "PATR",
+                       "Q", "QA", "R", "S", "SA", "SB"}
+
+
+def _named_by_word(name: str) -> str | None:
+    words = re.sub(r"[^A-Za-z0-9]", " ", name).upper().split()
+    if "1099" not in words:
+        return None
+    after = words[words.index("1099") + 1:words.index("1099") + 2]
+    if after and after[0] in _OTHER_1099_LETTERS:
+        return None  # "1099-B", "1099-INT", "1099-DIV": the number's own letters
+    found = {_FORM_NAME_WORDS[word] for word in words if word in _FORM_NAME_WORDS}
+    return found.pop() if len(found) == 1 else None
 
 
 def _marked_corrected(name: str) -> bool:
@@ -216,6 +245,16 @@ def _included_business_amount(record: LedgerRecord, form: str) -> int:
     return _cents(business)
 
 
+def _included_misc_amounts(record: LedgerRecord, year: object) -> dict[str, int]:
+    if record.misc_income is None:
+        raise ValueError("record reviewed misc_income on the included Form 1099-MISC")
+    source = validate_misc_income(record.misc_income, dict(record.key_boxes), skipped=True,
+                                  included_in=(record.source_form or {}).get("included_in"))
+    if year is not None and source["tax_year"] != year:
+        raise ValueError("included Form 1099-MISC names a different filing year")
+    return {category: _cents(amount) for category, amount in classify_misc_income(source).items()}
+
+
 def _included_in_active(records: dict, record: LedgerRecord) -> bool:
     """A form reported inside an active consolidated statement.
 
@@ -244,7 +283,7 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
     digests: dict[str, list[tuple[int, LedgerRecord]]] = defaultdict(list)
     active: list[tuple[int, LedgerRecord, str, tuple[str, ...]]] = []
     unlinked: list[tuple[int, LedgerRecord, str, tuple[str, ...]]] = []
-    included_business: dict[str, list[tuple[int, str, int, str | None]]] = defaultdict(list)
+    included_amounts: dict[str, list[tuple[int, str, dict[str, int], str]]] = defaultdict(list)
     for number, record in records.values():
         details = record.source_form or {}
         source_year = details.get("tax_year")
@@ -295,13 +334,14 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
             disclosures.append(f"Document #{kept_number} replaced superseded document #{number} for the same filer, year and statement.")
         elif (included_in and same_owner and "1099" in form and not _consolidated(form)
               and _consolidated(kept_form) and record.source_sha256 and kept.source_sha256):
-            if form in _BUSINESS_FORMS:
+            if form in _BUSINESS_FORMS or form == "1099MISC":
                 try:
-                    cents = _included_business_amount(record, form)
+                    amounts = (_included_misc_amounts(record, year) if form == "1099MISC"
+                               else {BUSINESS_GROSS: _included_business_amount(record, form)})
                 except ValueError as exc:
                     problems.append(f"Document #{number} in consolidated document #{kept_number}: {exc}.")
                 else:
-                    included_business[kept.doc_id].append((number, form, cents, record.source_sha256))
+                    included_amounts[kept.doc_id].append((number, form, amounts, record.source_sha256))
             else:
                 disclosures.append(f"Document #{number} is reported within consolidated document #{kept_number}.")
         else:
@@ -326,28 +366,54 @@ def _review_forms(ledger: list[LedgerRecord], year: object,
             problems.append(f"Document #{number} is skipped beside an active form from the same payer and "
                             "recipient. Record duplicate_of, superseded_by or included_in.")
     included_classes: set[tuple[str, str]] = set()
-    for kept_id, included in included_business.items():
+    for kept_id, included in included_amounts.items():
         kept_number, kept = records[kept_id]
         numbers = ", ".join(f"#{number}" for number, _, _, _ in included)
-        amount = dict(kept.key_boxes).get(BUSINESS_GROSS)
         # One download saved twice is one form: its receipts count once, and
         # copies that disagree cannot both be its reading.
-        receipts: dict[str | None, int] = {}
-        if any(receipts.setdefault(digest, cents) != cents for _, _, cents, digest in included):
+        readings: dict[str, tuple[str, dict[str, int]]] = {}
+        if any(readings.setdefault(digest, (form, amounts)) != (form, amounts)
+               for _, form, amounts, digest in included):
             problems.append(f"Consolidated document #{kept_number}: copies of one included form "
                             f"in documents {numbers} record different amounts.")
             continue
+        totals: dict[str, int] = defaultdict(int)
+        misc_totals: dict[str, int] = defaultdict(int)
+        for form, amounts in readings.values():
+            for category, cents in amounts.items():
+                totals[category] += cents
+                if form == "1099MISC":
+                    misc_totals[category] += cents
+        kept_boxes = dict(kept.key_boxes)
         try:
-            covered = amount is not None and _cents(amount) >= sum(receipts.values())
+            missing = []
+            for category, total in totals.items():
+                if category not in kept_boxes or _cents(kept_boxes[category]) < total:
+                    missing.append(category)
         except ValueError as exc:
-            problems.append(f"Consolidated document #{kept_number} {BUSINESS_GROSS}: {exc}.")
+            problems.append(f"Consolidated document #{kept_number} {category}: {exc}.")
             continue
-        if not covered:
-            problems.append(f"Consolidated document #{kept_number} needs {BUSINESS_GROSS} covering "
-                            f"all included business receipts from documents {numbers}. A copy or the "
-                            "original of an included form names that form in duplicate_of or superseded_by.")
+        if missing:
+            for category in missing:
+                description = "business receipts" if category == BUSINESS_GROSS else "amounts"
+                problems.append(f"Consolidated document #{kept_number} needs {category} covering "
+                                f"all included {description} from documents {numbers}. A copy or the "
+                                "original of an included form names that form in duplicate_of or superseded_by.")
             continue
-        classes = {form for _, form, cents, _ in included if cents}
+        if misc_totals:
+            try:
+                if kept.misc_income is None:
+                    raise ValueError("record reviewed misc_income for the consolidated Form 1099-MISC section")
+                source = validate_misc_income(kept.misc_income, kept_boxes)
+                if year is not None and source["tax_year"] != year:
+                    raise ValueError("the consolidated Form 1099-MISC section names a different filing year")
+                own_misc = classify_misc_income(dict(source, other_business_gross=0, other_federal_withholding=0))
+                if any(_cents(own_misc.get(category, 0)) < total for category, total in misc_totals.items()):
+                    raise ValueError("the reviewed Form 1099-MISC section must cover the included MISC amounts")
+            except ValueError as exc:
+                problems.append(f"Consolidated document #{kept_number} for included documents {numbers}: {exc}.")
+                continue
+        classes = {form for form, amounts in readings.values() if form in _BUSINESS_FORMS and amounts.get(BUSINESS_GROSS)}
         # The statement's own Form 1099-K section shares its gross with the
         # included forms, so Box 1a matched with a 1099-NEC's receipts in it.
         if _own_1099k_section(kept):

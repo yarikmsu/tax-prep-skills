@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agents.lib import tie_out as T  # noqa: E402
 from tests.skill_text import listed_boxes, skill_text  # noqa: E402
+from tests.test_misc_income import source as misc_source  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -425,6 +426,150 @@ def _included_business_form(form_type, *, doc_id="business", digest="b" * 64, am
         boxes["form_1099k_box_1a"] = amount
     return dict(_form(doc_id, form_type, "Broker", digest), skipped="in consolidated",
                 key_boxes={}, source_form={"included_in": "consolidated", "included_boxes": boxes})
+
+
+def _included_misc(**changes):
+    source = misc_source(box_3=0, box_3_business=0, box_3_other=0, box_4=0, box_5=0, box_6=0)
+    source.update(changes)
+    return dict(_form("misc", "1099-MISC", "Broker", "d" * 64), skipped="in consolidated",
+                key_boxes={}, source_form={"included_in": "consolidated"}, misc_income=source)
+
+
+def test_included_misc_business_and_withholding_must_be_fully_carried():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    standalone = _included_misc(box_3=900, box_3_business=900, box_4=50)
+    issues, disclosures = _issues(consolidated, standalone)
+    for category in ("self_employment_gross", "federal_withholding_1099"):
+        assert any("Consolidated document #1" in issue and "documents #2" in issue
+                   and category in issue for issue in issues)
+    assert not disclosures
+
+    consolidated["key_boxes"].update(self_employment_gross=900, federal_withholding_1099=50)
+    issues, _ = _issues(consolidated, standalone)
+    assert any("reviewed misc_income" in issue for issue in issues)
+    consolidated["misc_income"] = misc_source(box_3=0, box_3_business=0, box_3_other=0, box_4=0, box_5=0, box_6=0,
+                                               other_business_gross=900, other_federal_withholding=50)
+    assert any("Form 1099-MISC section must cover" in issue for issue in _issues(consolidated, standalone)[0])
+    consolidated["misc_income"] = standalone["misc_income"]
+    issues, disclosures = _issues(consolidated, standalone)
+    assert not issues
+    assert disclosures == ("Document #2 is reported within consolidated document #1.",)
+
+
+def test_included_misc_substitute_payments_are_counted_once():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = _included_misc(box_8=90)
+    consolidated["misc_income"] = standalone["misc_income"]
+    ledger = _ledger(consolidated, standalone)
+    result = {"meta": {"tax_year": 2025}, "schedule_1_other_income": {
+        "remaining_income": 0, "remaining_income_confirmed": True}}
+    workpaper = T.derive_schedule1_other_workpaper(ledger, result, {})
+    assert workpaper["miscellaneous_other_income"] == 90
+    assert not _issues(consolidated, standalone)[0]
+
+
+def test_included_misc_business_amount_adds_to_included_nec_amount():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, self_employment_gross=900)
+    standalone = _included_misc(box_3=900, box_3_business=900)
+    consolidated["misc_income"] = standalone["misc_income"]
+    nec = _included_business_form("1099-NEC")
+    issues, _ = _issues(consolidated, standalone, nec)
+    assert any("documents #2, #3" in issue and "self_employment_gross" in issue
+               for issue in issues)
+    consolidated["misc_income"] = dict(standalone["misc_income"], other_business_gross=120)
+    consolidated["key_boxes"]["self_employment_gross"] = 1020
+    assert not _issues(consolidated, standalone, nec)[0]
+
+
+def test_a_skipped_misc_requires_classification_or_an_active_rental_source():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    no_review = _included_misc()
+    del no_review["misc_income"]
+    issues, _ = _issues(consolidated, no_review)
+    assert any("Document #2 in consolidated document #1" in issue and "reviewed misc_income" in issue
+               for issue in issues)
+    with pytest.raises(T.TieOutError, match="box1.*active.*rental"):
+        _ledger(consolidated, _included_misc(box_1=600))
+
+
+@pytest.mark.parametrize("side", ["included", "consolidated"])
+def test_a_misc_source_from_another_year_is_refused_on_either_side(side):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = _included_misc(box_8=90)
+    consolidated["misc_income"] = dict(standalone["misc_income"])
+    target = standalone if side == "included" else consolidated
+    target["misc_income"] = dict(target["misc_income"], tax_year=2026, form_revision="12/2026")
+    assert any("different filing year" in issue for issue in _issues(consolidated, standalone)[0])
+
+
+@pytest.mark.parametrize("label,form", [
+    ("MISC 1099", "1099MISC"), ("Substitute 1099-MISC", "1099MISC"), ("NEC 1099", "1099NEC"),
+    ("Stripe Connect 1099-K", "1099K"), ("1099-G Connecticut", None), ("1099-INT Seneca", None),
+    ("1099-B Miscellaneous", None), ("Consolidated 1099 (DIV, INT, MISC, B)", None),
+    # A bare 1099 named by a word elsewhere.
+    ("1099 Form NEC", "1099NEC"), ("1099 Nonemployee Comp (NEC)", "1099NEC"), ("1099 Form MISC", "1099MISC"),
+    ("Miscellaneous Income 1099", "1099MISC"), ("1099 Form NEC and MISC", None),
+    ("1099 Copy B NEC", "1099NEC"), ("1099 Tax Form NEC", "1099NEC"), ("Form 1099 Rev 2025 NEC", "1099NEC"),
+    ("1099 for Nonemployee Compensation", "1099NEC"),
+])
+def test_a_form_name_counts_only_beside_the_number(label, form):
+    # "CONNECT" holds the letters NEC: read anywhere, a 1099-K left both 1099-K rules.
+    from agents.lib.tax_computations.federal import source_reconciliation as reconciliation
+
+    base = reconciliation._base_form(label)
+    assert base == form if form else base not in ("1099NEC", "1099K", "1099MISC")
+
+
+@pytest.mark.parametrize("label", ["1099 Form NEC", "1099 Nonemployee Comp (NEC)"])
+def test_an_included_nec_under_a_bare_number_keeps_its_amount_check(label):
+    # Read as an unknown form, it was only disclosed and its receipts dropped.
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    issues, _ = _issues(consolidated, _included_business_form(label))
+    assert any("self_employment_gross" in issue or "included_boxes" in issue for issue in issues), issues
+
+
+@pytest.mark.parametrize("title", ["Consolidated 1099 (DIV, INT, MISC, B)", "1099-INT/MISC",
+                                   "Consolidated 1099-DIV, 1099-INT, 1099-MISC, 1099-B"])
+def test_a_statement_title_naming_misc_owes_its_inventory(title):
+    # An unrecorded MISC section would skip the box 2, 9, 10 and 15 refusals;
+    # a zero inventory clears a dividend-only statement.
+    statement = _form("consolidated", title, "Broker", "a" * 64, ordinary_dividends=40)
+    with pytest.raises(T.TieOutError, match="misc_income"):
+        _ledger(statement)
+    statement["misc_income"] = misc_source(box_3=0, box_3_business=0, box_3_other=0, box_4=0, box_5=0, box_6=0)
+    assert len(_ledger(statement)) == 1
+
+
+def test_a_title_naming_another_form_needs_no_misc_inventory():
+    statement = _form("brokerage", "1099-B Miscellaneous", "Broker", "a" * 64, ordinary_dividends=40)
+    assert len(_ledger(statement)) == 1
+
+
+@pytest.mark.parametrize("form_type", ["Substitute 1099-MISC", "MISC 1099", "Form 1099 MISC"])
+def test_included_misc_spellings_need_their_review(form_type):
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = dict(_included_misc(box_8=90), form_type=form_type)
+    consolidated["misc_income"] = standalone["misc_income"]
+    assert not _issues(consolidated, standalone)[0]
+    del standalone["misc_income"]
+    assert any("reviewed misc_income" in issue for issue in _issues(consolidated, standalone)[0])
+
+
+def test_included_interest_still_uses_the_consolidated_disposition():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, taxable_interest=40)
+    interest = dict(_form("interest", "1099-INT", "Broker", "b" * 64), skipped="in consolidated",
+                    key_boxes={}, source_form={"included_in": "consolidated"})
+    assert _issues(consolidated, interest) == ((), ("Document #2 is reported within consolidated document #1.",))
+
+
+def test_included_misc_copies_use_one_reviewed_amount_per_digest():
+    consolidated = _form("consolidated", "Consolidated 1099", "Broker", "a" * 64, miscellaneous_other_income=90)
+    standalone = _included_misc(box_8=90)
+    consolidated["misc_income"] = standalone["misc_income"]
+    copy = dict(standalone, doc_id="misc-copy", file="documents/misc-copy.pdf")
+    assert not _issues(consolidated, standalone, copy)[0]
+    copy["misc_income"] = dict(standalone["misc_income"], box_8=89)
+    assert any("record different amounts" in issue for issue in _issues(consolidated, standalone, copy)[0])
 
 
 @pytest.mark.parametrize("form_type", ["1099-NEC", "1099-K"])

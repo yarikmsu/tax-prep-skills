@@ -15,7 +15,8 @@ def classify_misc_income(raw) -> dict:
               "box_7", "box_8", "box_9", "box_10", "box_11", "box_15",
               "other_business_gross", "other_federal_withholding"}
     if not isinstance(raw, dict) or set(raw) != fields:
-        raise ValueError("misc_income requires the covered year/revision, every reviewed income box and explicit box3 split")
+        raise ValueError("misc_income requires the covered year/revision, every reviewed income box and explicit box3 split "
+                         "(all zero for a statement whose MISC section reports nothing)")
     year = raw["tax_year"]
     if type(year) is not int or year not in _REVISIONS:
         raise ValueError("1099-MISC form year has not been reviewed")
@@ -47,15 +48,22 @@ def classify_misc_income(raw) -> dict:
     }.items() if v}
 
 
-def validate_misc_income(raw, boxes: dict, *, skipped: bool = False) -> dict:
+def validate_misc_income(raw, boxes: dict, *, skipped: bool = False, included_in: str | None = None) -> dict:
     mapped = classify_misc_income(raw)
     if not isinstance(boxes, dict):
         raise ValueError("MISC key_boxes must be an object")
-    if skipped and mapped:
-        raise ValueError("a skipped MISC record cannot carry reportable income or withholding")
-    for category in ("self_employment_gross", MISC_OTHER, "federal_withholding_1099", "rental_reported_rents"):
-        if _money(boxes.get(category, 0), category) != mapped.get(category, 0):
-            raise ValueError("MISC canonical income/withholding categories disagree with reviewed source boxes")
+    if skipped and included_in:
+        if mapped.get("rental_reported_rents"):
+            raise ValueError("1099-MISC box1 rents need an active form with its own rental source; "
+                             "leave that form's amounts off the consolidated record's misc_income and key_boxes")
+        if boxes or raw["other_business_gross"] or raw["other_federal_withholding"]:
+            raise ValueError("an included 1099-MISC records only its own reviewed source boxes in misc_income")
+    else:
+        if skipped and mapped:
+            raise ValueError("a skipped MISC record cannot carry reportable income or withholding")
+        for category in ("self_employment_gross", MISC_OTHER, "federal_withholding_1099", "rental_reported_rents"):
+            if _money(boxes.get(category, 0), category) != mapped.get(category, 0):
+                raise ValueError("MISC canonical income/withholding categories disagree with reviewed source boxes")
     # Copy source facts; no caller can mutate a validated record through `raw`.
     return {k: (_money(v, f"1099-MISC {k}") if k not in
         {"tax_year", "form_revision", "reviewed", "box_7"} else v) for k, v in raw.items()}
