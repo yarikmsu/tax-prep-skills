@@ -8,6 +8,9 @@ map goes stale in a way the schema cannot.
 
 - `federal.filing_statuses.<single|mfj|mfs|hoh>.{brackets,standard_deduction}`
 - `federal.capital_gains_rates.{zero_pct_limit,fifteen_pct_limit}`
+- `federal.tax_table.max_taxable_income` — the covered year's exclusive Tax
+  Table ceiling from the federal Schedule D instructions. The reviewed
+  Schedule D worksheet is capped at ordinary bracket tax at or above it.
 - `federal.child_tax_credit.phase_out_start`
 - `federal.additional_medicare_tax.threshold`
 - `federal.niit.threshold`

@@ -133,6 +133,13 @@ interview never captures is invisible to every downstream check.
   to have used the exclusion in the prior 2 years; **ask whether a Form
   1099-S was received** — if yes, the sale must be reported even when
   fully excluded)
+- Did you sell real property for which depreciation was allowed or allowable,
+  including rental property or a home used for business, receive an
+  installment payment on such a sale, or receive a Schedule K-1 or Form 2439
+  reporting unrecaptured section 1250 or 28% rate gain? Set
+  `sold_depreciated_real_property` to
+  true or false — the capability gate refuses it unanswered — and collect the
+  depreciation and sale records for Schedule D Tax Worksheet review.
 - Did you receive an inheritance? → sets `received_inheritance` (bequests
   themselves are not income, but capture date-of-death FMV basis
   documentation now; EXCEPTION — income in respect of a decedent (§691):

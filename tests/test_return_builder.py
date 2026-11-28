@@ -429,6 +429,179 @@ class TestTheCapitalGainCharacterRuleIsTheSharedOne:
         assert short["line_16_tax"] > long["line_16_tax"]
 
 
+@pytest.mark.parametrize("wages,worksheet_tax,expected", [
+    (100000, 18200, 18200),  # Regular tax at $101,000 = $2,000 + $81,000 × 20%.
+    (100000, 18200.01, None),
+])
+def test_schedule_d_worksheet_tax_goes_to_line_16_without_exceeding_regular_tax(
+        tmp_path, wages, worksheet_tax, expected):
+    law = _law()
+    law["federal"]["tax_table"] = {"max_taxable_income": 100000}
+    ws = _workspace(tmp_path, {"line_7_capital_gain": 1000}, law=law,
+                    records=[{"wages": wages}, {"unrecaptured_section_1250_gain": 1000}])
+    result_path = ws / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["schedule_d"]["tax_worksheet_tax"] = worksheet_tax
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    if expected is None:
+        with pytest.raises(RB.Blocked, match="Schedule D Tax Worksheet.*exceeds"):
+            _build(ws)
+    else:
+        assert _build(ws)[1]["line_16_tax"] == expected
+
+
+@pytest.mark.parametrize("wages,provisional", [(48350, 5578.50), (48374, 5583.78)])
+def test_schedule_d_tax_uses_the_table_amount_even_when_exact_brackets_differ(wages, provisional):
+    # TY2025 single. The $125 gain is absorbed in the 12% bracket. Worksheet
+    # lines 44 and 46 use the printed $48,450–$48,500 Tax Table row of $5,579.
+    law = {"federal": {
+        "filing_statuses": {"single": {"brackets": [
+            {"rate": .10, "min": 0, "max": 11925},
+            {"rate": .12, "min": 11925, "max": 48475},
+            {"rate": .22, "min": 48475, "max": None},
+        ]}},
+        "capital_gains_rates": {"zero_pct_limit": {"single": 48350}, "fifteen_pct_limit": {"single": 533400}},
+        "tax_table": {"max_taxable_income": 100000},
+    }}
+    form = _template_1040() | {"line_7_capital_gain": 125}
+    result = {"meta": {"tax_year": 2025, "filing_status": "Single"}, "form_1040": form,
+              "schedule_d": {"part_ii_long_term": {"line_15_net_long_term": 125}}}
+    ledger = [T.LedgerRecord("wages", "documents/wages.pdf", "W-2", "Employer", "primary", (("wages", wages),), None),
+              T.LedgerRecord("reit", "documents/reit.pdf", "1099-DIV", "Fund", "primary",
+                             (("unrecaptured_section_1250_gain", 125),), None)]
+    assert RB.build(result, law, ledger, "Single")["line_16_tax"] == provisional
+    result["schedule_d"]["tax_worksheet_tax"] = 5579
+    assert RB.build(result, law, ledger, "Single")["line_16_tax"] == 5579
+
+
+_WORKSHEET_LAW = {"federal": {
+    "filing_statuses": {"single": {"brackets": [
+        {"rate": .10, "min": 0, "max": 11925},
+        {"rate": .12, "min": 11925, "max": 48475},
+        {"rate": .22, "min": 48475, "max": None},
+    ]}},
+    "capital_gains_rates": {"zero_pct_limit": {"single": 48350}, "fifteen_pct_limit": {"single": 533400}},
+    "tax_table": {"max_taxable_income": 100000},
+}}
+
+
+def _worksheet_return(wages, worksheet_tax, *, qualified=0, ledger_gain=125, gain=125, flags=None):
+    """A single filer with long-term gain; line 15 is wages + qualified + gain."""
+    form = _template_1040() | {"line_7_capital_gain": gain, "line_3a_qualified_dividends": qualified,
+                               "line_3b_ordinary_dividends": qualified}
+    long_term = {"line_15_net_long_term": gain}
+    result = {"meta": {"tax_year": 2025, "filing_status": "Single"}, "form_1040": form,
+              "schedule_d": {"part_ii_long_term": long_term, "tax_worksheet_tax": worksheet_tax}}
+    ledger = [T.LedgerRecord("wages", "documents/wages.pdf", "W-2", "Employer", "primary", (("wages", wages),), None),
+              T.LedgerRecord("reit", "documents/reit.pdf", "1099-DIV", "Fund", "primary",
+                             (("unrecaptured_section_1250_gain", ledger_gain),), None)]
+    if qualified:
+        ledger.append(T.LedgerRecord("div", "documents/div.pdf", "1099-DIV", "Fund", "primary",
+                                     (("ordinary_dividends", qualified), ("qualified_dividends", qualified)), None))
+    profile = {"filing_status": "Single", "flags": flags} if flags is not None else None
+    return RB.build(result, _WORKSHEET_LAW, ledger, "Single", profile)["line_16_tax"]
+
+
+def test_a_worksheet_tax_below_the_qdcg_figure_is_accepted():
+    # $49,475 taxable with $1,000 of qualified dividends: QDCG prices all
+    # $1,125 at 15%, $5,732.25. The worksheet's 25% line taxes the $125 at
+    # the 12% ordinary rate, $5,728.50 exact and $5,729 by the Tax Table.
+    assert _worksheet_return(48350, None, qualified=1000) == 5732.25
+    assert _worksheet_return(48350, 5729, qualified=1000) == 5729
+    # Its floor below the ceiling is the tax on line 18 less half a Tax Table
+    # row: $48,350 - $25 taxes at $5,560.50.
+    assert _worksheet_return(48350, 5560.50, qualified=1000) == 5560.50
+    with pytest.raises(RB.Blocked, match="below the tax"):
+        _worksheet_return(48350, 5560.49, qualified=1000)
+
+
+@pytest.mark.parametrize("wages,worksheet_tax", [(48350, 0), (48350, 5000), (100878, 0), (100878, 17000)])
+def test_a_worksheet_tax_below_its_line_18_tax_is_refused(wages, worksheet_tax):
+    # Line 18 is line 15 less the qualified dividends and net capital gain;
+    # line 47 is never below the tax on it ($5,560.50 with half a Tax Table
+    # row below the ceiling; $17,107.16 on $100,878 above it).
+    with pytest.raises(RB.Blocked, match="below the tax on Form 1040 line 15"):
+        _worksheet_return(wages, worksheet_tax)
+
+
+@pytest.mark.parametrize("worksheet_tax,accepted", [(17134.66, True), (17135, True), (17135.01, False)])
+def test_the_regular_tax_cap_allows_its_whole_dollar_rounding(worksheet_tax, accepted):
+    # $101,003 taxable: $5,578.50 + 22% × $52,528 = $17,134.66, entered as $17,135.
+    if accepted:
+        assert _worksheet_return(100878, worksheet_tax) == worksheet_tax
+    else:
+        with pytest.raises(RB.Blocked, match="exceeds the regular tax"):
+            _worksheet_return(100878, worksheet_tax)
+
+
+@pytest.mark.parametrize("wages,worksheet_tax,accepted", [
+    (99875, 16914, True), (99875, 16914.01, False), (99874.99, 16914.01, True),
+])
+def test_the_regular_tax_cap_starts_at_the_tax_table_ceiling(wages, worksheet_tax, accepted):
+    # $100,000 taxable: $5,578.50 + 22% × $51,525 = $16,914 exactly.
+    if accepted:
+        assert _worksheet_return(wages, worksheet_tax) == worksheet_tax
+    else:
+        with pytest.raises(RB.Blocked, match="exceeds the regular tax"):
+            _worksheet_return(wages, worksheet_tax)
+
+
+def test_a_foreign_earned_income_return_skips_only_the_cap():
+    # Form 2555's line 16 stacks the exclusion, so the regular tax on line 15
+    # is no cap; it is still at least the tax on line 18, less two table rows
+    # and a dollar ($101,003 - $125 - $50 taxes at $17,096.16, $17,096 in whole
+    # dollars, less $1).
+    assert _worksheet_return(100878, 20000, flags={"lives_abroad": True}) == 20000
+    with pytest.raises(RB.Blocked, match="exceeds the regular tax"):
+        _worksheet_return(100878, 20000, flags={"lives_abroad": False})
+    assert _worksheet_return(100878, 17095, flags={"lives_abroad": True}) == 17095
+    for low in (0, 17094.99):
+        with pytest.raises(RB.Blocked, match="below the tax"):
+            _worksheet_return(100878, low, flags={"lives_abroad": True})
+
+
+def test_the_table_allowance_follows_line_21_not_line_15():
+    # Line 15 $100,000 with $1 of dividends and $1 of 2b gain: line 21 is
+    # $99,999, which the table prices at $16,909 (row $99,950-$100,000), so
+    # line 47 is $16,909.15 although line 15 is at the ceiling.
+    assert _worksheet_return(99998, 16909.15, qualified=1, ledger_gain=1, gain=1) == 16909.15
+
+
+@pytest.mark.parametrize("change,blocked", [
+    ({}, None),
+    ({"ledger_gain": 0}, "needs a special-rate gain"),
+    ({"ledger_gain": 0, "flags": {"sold_depreciated_real_property": "yes"}}, None),
+    ({"ledger_gain": 0, "flags": {"sold_depreciated_real_property": False}}, "needs a special-rate gain"),
+])
+def test_what_admits_a_worksheet_tax(change, blocked):
+    # A recorded $0 box 2b is no special-rate gain; any answer but "no" to the
+    # depreciated-sale question is.
+    if blocked:
+        with pytest.raises(RB.Blocked, match=blocked):
+            _worksheet_return(48350, 5579, **change)
+    else:
+        assert _worksheet_return(48350, 5579, **change) == 5579
+
+
+def test_an_unanswered_depreciated_sale_question_blocks_the_capability_gate():
+    # Read as "no", a profile from before the question never held the sale.
+    from agents.lib import capabilities as C
+
+    flags = {flag: False for flag in C._REQUIRED_GATE_FLAGS} | {rule.flag: False for rule in C.RULES
+                                                                if rule.state == "CA"}
+    del flags["sold_depreciated_real_property"]
+    profile = {"tax_year": 2025, "filing_status": "MFJ", "flags": flags, "address": {"state": "CA"}}
+    blocking = C.evaluate(profile).blocking
+    assert any("sold_depreciated_real_property" in finding.note for finding in blocking), blocking
+    flags["sold_depreciated_real_property"] = False
+    assert not C.evaluate(profile).blocking
+
+
+def test_a_worksheet_tax_must_be_recorded_to_the_cent():
+    with pytest.raises(RB.Blocked, match="to the cent"):
+        _worksheet_return(48350, 5579.001)
+
+
 class TestTheAmtReachesTotalTax:
     """The gap this slice closes. `form_6251.amt` was computed and recorded, and
     the 1040 had no line 17 field for it to land on — so an ISO exerciser's

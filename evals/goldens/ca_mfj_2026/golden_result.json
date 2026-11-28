@@ -107,6 +107,7 @@
     "total_sec_199a": 0
   },
   "schedule_d": {
+    "tax_worksheet_tax": null,
     "part_i_short_term": {
       "line_1a_1099b_box_a": {
         "proceeds": 0,

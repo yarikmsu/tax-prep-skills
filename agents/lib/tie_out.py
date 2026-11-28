@@ -156,7 +156,10 @@ _INFORMATIONAL = {"ss_wages", "ss_tips", "medicare_wages", "sdi_withheld",
                   # state return, and an occupational tax on wages may have
                   # no return at all.
                   "other_local_withholding"}
-_INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS)
+_SPECIAL_RATE_GAIN_CATEGORIES = {
+    "unrecaptured_section_1250_gain", "collectibles_gain_distributions", "collectibles_transactions",
+}
+_INFORMATIONAL.update(CA_INVESTMENT_COMPONENTS, _SPECIAL_RATE_GAIN_CATEGORIES)
 _INFORMATIONAL.add(source_reconciliation.BOOK_GROSS)
 _INFORMATIONAL.add("rrta_tier1_tax_withheld")
 
@@ -2180,6 +2183,19 @@ def category_sums(ledger: "list[LedgerRecord]") -> "dict[str, float]":
         for cat, amount in rec.key_boxes:
             sums[cat] = sums.get(cat, 0.0) + amount
     return sums
+
+
+def has_special_rate_gains(ledger: list[LedgerRecord], profile: dict) -> bool:
+    """The return needs review of a possible Schedule D Tax Worksheet.
+
+    A present answer that is not false holds it ("yes" as a string is not a
+    "no"); an absent one is the capability gate's to ask, the flag being in
+    `capabilities._REQUIRED_GATE_FLAGS`.
+    """
+    sold = (profile.get("flags") or {}).get("sold_depreciated_real_property")
+    return (sold is not None and sold is not False
+            or any(category in _SPECIAL_RATE_GAIN_CATEGORIES and amount > 0
+                   for record in ledger if record.skipped is None for category, amount in record.key_boxes))
 
 
 def filing_medicare_wages(ledger: list[LedgerRecord], fallback) -> float:

@@ -1,5 +1,17 @@
 # Standard form extraction
 
+For a declared California Form 540NR part-year plan, retain actual receipt and
+service dates, each W-2 CA Box 16 wage amount (including a confirmed zero when
+absent), payroll workday and source evidence, stock-exercise source and basis
+worksheets, and resident and nonresident income allocations. Keep differences
+in tax law separate from sourcing; annual wages divided by residence days is
+not evidence. Use workday records and source evidence for allocations based on
+where the wages were earned. Use the existing CA withholding, PTET and
+ISO ledger categories once, regardless of mailing address. Leave uncertain
+allocations open for tax-compute's `state-return-ca-part-year.md` reference;
+parsing never guesses domicile. Use the taxpayer's reviewed residence facts
+and income-source evidence.
+
 ### W-2 Extraction
 Must capture: Boxes 1-8, 10-11, 12 (all codes), 13, 14 (14a-14b from TY2026; every label, SDI, PFL and UI among them), 15-20 (state and local wages, tax withheld and locality, every row)
 Check: Box 12 codes (AA=Roth 401k, C=life ins, D=401k, DD=health, W=HSA)
@@ -58,11 +70,13 @@ state tax/state ID/state income remain 5/6/7. Preserve source amounts once
 and follow the [tip/overtime source review](tips-overtime.md).
 
 ### 1099-DIV Extraction
-Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (cap gain dist), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).
+Must capture: Boxes 1a (ordinary), 1b (qualified), 2a (capital gain distributions), 2b (unrecaptured section 1250 gain), 2d (collectibles gain), 5 (Sec 199A), 12 (exempt-interest dividends), 14-16 (state, state tax withheld). Read boxes 2b and 2d on standalone and consolidated statements. They are already included in box 2a. For CA, obtain the annual fund supplement and follow [California investments](california-investments.md).
 Note: Foreign tax paid in Box 7 → feeds Form 1116
 
 ### 1099-B Extraction
-Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, boxes 14-16 (state, state tax withheld)
+Must capture: Proceeds, cost basis, wash sale adjustments, gain/loss, box 3 (collectibles or QOF indicators), boxes 14-16 (state, state tax withheld).
+Count transactions with the collectibles
+box marked in `collectibles_transactions` for the Schedule D worksheet review.
 For TY2023-2024 crypto, also capture boxes 1a-1g, 2-13, 14-16 and CUSIP, keeping blanks explicit.
 Use the reviewed 1099-B input table in `docs/contributing/crypto-accounts.md`:
 an older summary that omitted a special-treatment box must be re-read from

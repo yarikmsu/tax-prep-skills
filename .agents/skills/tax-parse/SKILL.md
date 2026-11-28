@@ -15,15 +15,6 @@ Parse all source tax documents in the workspace and extract structured data.
 /tax-parse --group foreign  # Parse only foreign documents
 ```
 
-For a declared California Form540NR part-year plan, retain actual receipt and
-service dates, each W-2 CA Box16 wage amount (including a confirmed zero
-when absent), payroll workday/source evidence, stock-exercise source/basis
-worksheets and resident/nonresident income allocations. Keep law differences
-separate from sourcing; annual wages divided by residence days is not evidence.
-Use the existing CA withholding/PTET/ISO ledger categories once, regardless of
-mailing address. Unknown allocations remain unresolved for tax-compute's
-`state-return-ca-part-year.md` reference; parsing never guesses domicile.
-
 ## Prerequisites
 - `taxpayer_profile.json` must exist (run `/tax-setup` first)
 - Source documents (PDFs, XLSX, CSV) in the `documents/` directory — or an
@@ -394,10 +385,13 @@ Rules:
   | 1099-INT box 1 (+3) | `taxable_interest` stays inclusive; preserve the federally included box-3 part as `us_obligation_interest`. Box 8 → both inclusive `tax_exempt_interest` and component `municipal_interest`, with issuer-state detail |
   | 1099-DIV box 1a / 1b | `ordinary_dividends` / `qualified_dividends` |
   | 1099-DIV box 2a | `capital_gain_distributions` (→ Schedule D line 13) |
+  | 1099-DIV box 2b | `unrecaptured_section_1250_gain` (part of box 2a; Schedule D Tax Worksheet review) |
+  | 1099-DIV box 2d | `collectibles_gain_distributions` (part of box 2a; Schedule D Tax Worksheet review) |
   | 1099-DIV box 12 | `exempt_interest_dividends` AND inclusive `tax_exempt_interest` (add to INT box 8, never to ordinary dividends); retain per-fund detail and annual qualification evidence |
   | Fund portion of 1099-DIV box 1a | `fund_ordinary_dividends` AND inclusive `ordinary_dividends`; a component, never additional federal income |
   | 1099-R box 1 / 2a | `retirement_gross` / `retirement_taxable` (box 2a is ADVISORY at the gate — the return may legitimately recompute 4b/5b via Form 8606 basis, QCD, or rollover; OMIT `retirement_taxable` when box 2b "taxable amount not determined" is checked — box 1 still hard-ties) |
   | 1099-B proceeds total | `capital_proceeds` |
+  | 1099-B box 3 collectibles indicator | `collectibles_transactions` (count marked transactions; Schedule D Tax Worksheet review) |
   | 1099-DA box 1f proceeds total | `capital_proceeds` (its per-transaction rows feed `/tax-parse-crypto`'s `broker_reporting`, which routes them to Form 8949). Box 11c (first-sale NFT proceeds, kept out of 1f) → `nft_first_sale_proceeds`, which BLOCKS the tie-out gate |
   | Any 1099 federal withholding box | `federal_withholding_1099` |
   | SSA-1099 box 5 | `ss_benefits` (may be NEGATIVE when repayments exceed gross — record the negative as-is; the gate switches to a Pub 915 advisory instead of a sum tie) |

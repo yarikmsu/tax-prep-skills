@@ -23,6 +23,29 @@ builder does, so you can say which path it took and why, and so you can check
 the inputs it read (line 15, line 3a, and Schedule D line 15) are the ones you
 meant.
 
+**Special-rate gains.** Review the covered-year Schedule D instructions when
+Form 1099-DIV reports box 2b or 2d, Form 1099-B marks a collectibles sale, or
+the taxpayer sold depreciated real property, received an installment payment on
+such a sale, or received a K-1 or Form 2439 reporting unrecaptured section 1250
+or 28% rate gain (the `sold_depreciated_real_property` answer covers all three). Work the Schedule D Tax Worksheet
+when required after netting the gains and losses. If the instructions direct
+another line 16 method after netting, document that determination and work the
+directed tax calculation. Enter the reviewed tax in `schedule_d.tax_worksheet_tax`
+and rerun the builder to derive Form 1040 line 16. Record
+`input.schedule_d_tax_worksheet` as `reviewed` through `material_evidence`,
+with the worksheet, `result.json`, `taxpayer_profile.json`, the covered-year
+law cache, `parse_ledger.json` and the source documents used. The builder
+refuses a figure below the tax on line 15 less the qualified dividends and net
+capital gain (the worksheet's line 18), allowing half a Tax Table row below the
+table's ceiling, and from the ceiling up a figure above the regular tax on
+line 15, allowing its whole-dollar rounding. A Form 2555 return's line 16 comes
+from the Foreign Earned Income Tax Worksheet, so a filer living abroad keeps the
+floor, with two table rows and a dollar of allowance, but not the cap. Recompute dependent tax worksheets
+from the updated line 16 and rerun the validation gates. While
+the worksheet review is open, the ordinary calculation is provisional and
+only a draft can be exported.
+[2025 IRS Schedule D instructions](https://www.irs.gov/pub/irs-prior/i1040sd--2025.pdf)
+
 **QDCG Tax Worksheet** (if qualified dividends or net capital gain > 0):
 
 `compute_qdcg_tax()` from `agents/lib/tax_computations/`:

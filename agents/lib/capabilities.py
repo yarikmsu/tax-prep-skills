@@ -630,6 +630,10 @@ _REQUIRED_GATE_FLAGS = (
     "has_dependent_unearned_income",
     "has_unreported_or_allocated_tips",
     "has_nonresident_source_income",
+    # AA122: a sale of depreciated real property holds the package for the
+    # Schedule D Tax Worksheet, and a profile from before the question cannot
+    # say "no" to it.
+    "sold_depreciated_real_property",
 )
 _MIGRATION_RULE_ID = "unanswered_gate_questions"
 

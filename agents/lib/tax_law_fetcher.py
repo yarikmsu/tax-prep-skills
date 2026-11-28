@@ -1605,6 +1605,10 @@ def check_freshness(year: int, workspace: str = ".") -> dict:
                     continue
                 if k == "sdi_wage_limit" and v is None and _sdi_null_is_valid:
                     continue
+                # The return-specific filing gate requires this ceiling only
+                # when applying a reviewed Schedule D Tax Worksheet.
+                if path == "federal.tax_table" and k == "max_taxable_income" and v is None:
+                    continue
                 # underpayment_rates may legitimately stay empty: a
                 # withholding-only taxpayer never needs the §6621 timeline,
                 # and compute_form_2210 degrades LOUDLY at the point of need
@@ -2603,6 +2607,8 @@ def _check_against(dotted: str, ref, value, *, top: bool = True,
         _check_number(dotted, value, is_rate=(parent == "federal.historical_top_rate") or None)
         if parent in ("exchange_rates", "federal.historical_top_rate") and value <= 0:
             raise TaxLawSetError(f"{dotted}: must be positive")
+        if dotted == "federal.tax_table.max_taxable_income" and (value <= 0 or int(value) != value):
+            raise TaxLawSetError(f"{dotted}: expected a positive whole-dollar ceiling")
 
 
 def _check_dynamic_key(parent: str, key: str) -> None:
@@ -2616,6 +2622,18 @@ def _dynamic_ref(parent: str):
     if parent == "ptet":
         return {"schedule": [], "vintage": ""}
     return None  # a number: an exchange rate or a historical top rate
+
+
+def cache_schema(data: dict, year: int, *, requested_federal_block: str = "") -> dict:
+    """The initialized cache plus optional filing blocks present or being fetched."""
+    seed = create_empty_tax_law(year)
+    federal = data.get("federal")
+    present = federal.keys() if isinstance(federal, dict) else ()
+    optional = {"tax_table": {"max_taxable_income": None}}
+    for key, block in optional.items():
+        if key in present or key == requested_federal_block:
+            seed["federal"][key] = block
+    return seed
 
 
 def _seed_root(dotted: str, data: dict, year: int):
@@ -2632,7 +2650,8 @@ def _seed_root(dotted: str, data: dict, year: int):
                 f"{dotted}: no state block yet — set `state` to the "
                 "create_state_template output first, then its fields")
         return state_schema(code, year), segs[1:], "state"
-    return create_empty_tax_law(year), segs, ""
+    requested = segs[1] if len(segs) > 1 and segs[0] == "federal" else ""
+    return cache_schema(data, year, requested_federal_block=requested), segs, ""
 
 
 def declared_state_code(data: dict) -> "str | None":

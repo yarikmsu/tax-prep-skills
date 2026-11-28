@@ -157,6 +157,7 @@
     "married_this_year": false,
     "divorced_this_year": false,
     "sold_primary_home": false,
+    "sold_depreciated_real_property": null,
     "received_inheritance": false,
     "has_pre2019_alimony": false,
     "has_post2018_alimony": false,
