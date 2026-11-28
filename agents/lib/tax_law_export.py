@@ -78,7 +78,7 @@ from agents.lib.secure_fs import (  # noqa: E402
     write_secure,
 )
 from agents.lib.tax_law_fetcher import (  # noqa: E402
-    create_empty_tax_law,
+    cache_schema,
     create_retirement_conformity_template,
     declared_state_code,
     get_tax_law_path,
@@ -115,7 +115,7 @@ def audit_schema(data: dict, year: int) -> dict:
     schema = {
         "about": ("Generated from the engine by tax_law_export.py when the copy "
                   "beside it was made. Not a cache: it holds no fetched figure."),
-        "cache_seed": create_empty_tax_law(year),
+        "cache_seed": cache_schema(data, year),
         "state_seed": None if code is None else state_schema(code, year),
         "state_regime_code": state_regime_code(data),
         "state_regimes": state_regimes(year),

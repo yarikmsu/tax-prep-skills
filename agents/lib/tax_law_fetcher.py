@@ -229,7 +229,6 @@ def create_empty_tax_law(year: int) -> dict:
                 "fifteen_pct_limit": {"single": None, "mfj": None, "mfs": None, "hoh": None},
                 "twenty_pct_above": True,
             },
-            "tax_table": {"max_taxable_income": None},
             "social_security": {
                 "wage_base": None,
                 "employee_rate": 0.062,
@@ -2625,6 +2624,18 @@ def _dynamic_ref(parent: str):
     return None  # a number: an exchange rate or a historical top rate
 
 
+def cache_schema(data: dict, year: int, *, requested_federal_block: str = "") -> dict:
+    """The initialized cache plus optional filing blocks present or being fetched."""
+    seed = create_empty_tax_law(year)
+    federal = data.get("federal")
+    present = federal.keys() if isinstance(federal, dict) else ()
+    optional = {"tax_table": {"max_taxable_income": None}}
+    for key, block in optional.items():
+        if key in present or key == requested_federal_block:
+            seed["federal"][key] = block
+    return seed
+
+
 def _seed_root(dotted: str, data: dict, year: int):
     """The schema tree `dotted` is resolved in, and the segments under it."""
     segs = dotted.split(".")
@@ -2639,7 +2650,8 @@ def _seed_root(dotted: str, data: dict, year: int):
                 f"{dotted}: no state block yet — set `state` to the "
                 "create_state_template output first, then its fields")
         return state_schema(code, year), segs[1:], "state"
-    return create_empty_tax_law(year), segs, ""
+    requested = segs[1] if len(segs) > 1 and segs[0] == "federal" else ""
+    return cache_schema(data, year, requested_federal_block=requested), segs, ""
 
 
 def declared_state_code(data: dict) -> "str | None":
