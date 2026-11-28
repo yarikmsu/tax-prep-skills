@@ -21,7 +21,8 @@
       "acquired": "2024-01-15",
       "quantity": 100,
       "cost_basis": 12000,
-      "current_value": 10500
+      "current_value": 10500,
+      "tax_advantaged": false
     },
     {
       "id": "L2",
@@ -30,7 +31,8 @@
       "acquired": "2026-06-01",
       "quantity": 50,
       "cost_basis": 11000,
-      "current_value": 8500
+      "current_value": 8500,
+      "tax_advantaged": false
     },
     {
       "id": "L3",
@@ -39,7 +41,8 @@
       "acquired": "2022-03-10",
       "quantity": 25,
       "cost_basis": 5000,
-      "current_value": 20000
+      "current_value": 20000,
+      "tax_advantaged": false
     },
     {
       "id": "L4",
@@ -48,7 +51,8 @@
       "acquired": "2023-09-01",
       "quantity": 20,
       "cost_basis": 8000,
-      "current_value": 5000
+      "current_value": 5000,
+      "tax_advantaged": false
     },
     {
       "id": "L5",

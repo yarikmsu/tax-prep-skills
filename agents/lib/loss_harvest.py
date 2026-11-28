@@ -274,8 +274,9 @@ class HoldingLot:
     # tax-advantaged accounts STILL contribute to the §1091 pool per Rev. Rul.
     # 2008-5 (an IRA purchase poisons a taxable sale of substantially identical
     # securities; the disallowed loss in that case is permanently lost — it
-    # cannot shift to the IRA's basis). Defaults to False (taxable brokerage).
+    # cannot shift to the IRA's basis).
     tax_advantaged: bool
+    owner: str | None
 
     # Wash-sale state (populated by _apply_wash_sale_prorate after parse_holdings;
     # parse_holdings emits optimistic defaults: clear / no disallowance).
@@ -283,7 +284,7 @@ class HoldingLot:
     # deductible loss for §1091 to disallow, so status stays "clear" regardless
     # of replacement-pool signal:
     disallowed_loss: float    # IRC §1091 prorated portion of unrealized_loss
-    allowed_loss: float       # = unrealized_loss - disallowed_loss; what's harvestable
+    allowed_loss: float       # loss remaining after proration, zero for an excluded spouse's lot
     wash_sale_status: 'Literal["clear", "partial", "fully_blocked"]'
     wash_sale_blocked: bool   # back-compat alias: (status == "fully_blocked")
     wash_sale_reason: 'str | None'  # joined human-readable description of in-window buys
@@ -308,20 +309,6 @@ def _required_str(d: dict, key: str, label: str) -> str:
     return v.strip()
 
 
-def _optional_bool(d: dict, key: str, label: str, *, default: bool = False) -> bool:
-    """Optional boolean field. Strict: truthy strings ('true', '1', 'yes') are
-    REJECTED — a typo like `"tax_advantaged": "yes"` must not silently degrade
-    to False (or accidentally True via Python truthiness) on a field whose value
-    determines whether a phantom-savings recommendation is emitted."""
-    if key not in d or d[key] is None:
-        return default
-    v = d[key]
-    if not isinstance(v, bool):
-        raise LossHarvestError(
-            f"{label} {key!r} must be a JSON boolean (true/false), got {v!r}")
-    return v
-
-
 def _required_num(d: dict, key: str, label: str, *, allow_negative: bool = False) -> float:
     raw = d.get(key)
     try:
@@ -341,7 +328,7 @@ def _required_num(d: dict, key: str, label: str, *, allow_negative: bool = False
     return float(v)
 
 
-def parse_holdings(data: dict, *, today: datetime.date
+def parse_holdings(data: dict, *, today: datetime.date, separate_return: bool = False
                    ) -> 'tuple[list[HoldingLot], list[dict], datetime.date]':
     """Validate + normalize a holdings.json payload.
 
@@ -408,15 +395,22 @@ def parse_holdings(data: dict, *, today: datetime.date
             )
         basis = _required_num(raw, "cost_basis", f"lot {lot_id}")
         value = _required_num(raw, "current_value", f"lot {lot_id}")
-        tax_advantaged = _optional_bool(raw, "tax_advantaged", f"lot {lot_id}")
+        tax_advantaged = raw.get("tax_advantaged")
+        if not isinstance(tax_advantaged, bool):
+            raise LossHarvestError(
+                f"lot {redact(lot_id)} 'tax_advantaged' must be a JSON boolean (true/false)")
+        owner = raw.get("owner")
+        if (separate_return or owner is not None) and owner not in ("taxpayer", "spouse"):
+            raise LossHarvestError(f"lot {redact(lot_id)} 'owner' must be 'taxpayer' or 'spouse'")
         loss = round(max(0.0, basis - value), 2)
         period = derive_holding_period(acquired, as_of)
+        allowed_loss = 0.0 if separate_return and owner == "spouse" else loss
         lots.append(HoldingLot(
             id=lot_id, ticker=ticker, account=account, acquired=acquired,
             quantity=quantity, cost_basis=basis, current_value=value,
             unrealized_loss=loss, holding_period=period,
-            tax_advantaged=tax_advantaged,
-            disallowed_loss=0.0, allowed_loss=loss,
+            tax_advantaged=tax_advantaged, owner=owner,
+            disallowed_loss=0.0, allowed_loss=allowed_loss,
             wash_sale_status="clear", wash_sale_blocked=False, wash_sale_reason=None,
             est_value_per_dollar=0.0,
         ))
@@ -518,7 +512,7 @@ def _apply_history_coverage(lots: 'list[HoldingLot]', gap: 'str | None'
 
 def _apply_wash_sale_prorate(
     lots: list[HoldingLot], recent_txns: list[dict], as_of: datetime.date,
-    classifications: dict[tuple[str, str], str],
+    classifications: dict[tuple[str, str], str], *, separate_return: bool = False,
 ) -> list[HoldingLot]:
     """Match replacement purchases in trade order across eligible losing lots.
 
@@ -570,12 +564,9 @@ def _apply_wash_sale_prorate(
     # only TAXABLE, LOSING lots earn the exclusion (held-at-gain and tax-
     # advantaged lots are replacements when they share the buy's date+account).
     #
-    # Inf-qty within a consumption group: when budget > 0, assume the qty-less
-    # buy IS (at least) the remaining self-acquisition (contribution 0, budget
-    # → 0). When budget is exhausted (prior known-qty buys filled it), the
-    # qty-less buy is a genuine unknown-qty replacement → inf contribution.
-    # Sort qty-known buys first within each group so the result is
-    # order-independent for mixed groups.
+    # A quantity-less buy can use the remaining budget only when exactly one
+    # lot shares its acquisition key. Sort known quantities first so a buy
+    # with missing quantity cannot consume their budget.
     replacements = []
     for ticker, buys in in_window_buys.items():
         # Group buys by (date, account) within this ticker. defaultdict's
@@ -587,28 +578,25 @@ def _apply_wash_sale_prorate(
             by_group[(buy["date"], buy["account"])].append(buy)
 
         for (buy_date, buy_account), group_buys in by_group.items():
-            # Budget for THIS (date, account) group, computed ONCE.
-            budget = sum(
-                l.quantity for l in lots
-                if l.ticker == ticker
-                and l.acquired == buy_date
-                and _account_key(l.account) == buy_account
-                and l.unrealized_loss > 0
-                and not l.tax_advantaged
-            )
+            same_key_lots = [lot for lot in lots if lot.ticker == ticker and lot.acquired == buy_date
+                             and _account_key(lot.account) == buy_account]
+            budget = sum(lot.quantity for lot in same_key_lots
+                         if lot.allowed_loss > 0 and not lot.tax_advantaged)
+            spouse_at_key = separate_return and any(lot.owner == "spouse" for lot in same_key_lots)
             # qty-known buys first (deterministic for mixed groups). Stable sort
             # preserves input order within each category.
             group_buys.sort(key=lambda b: math.isinf(b["quantity"]))
             for buy in group_buys:
                 buy_qty = buy["quantity"]
-                if math.isinf(buy_qty):
-                    if budget > 0:
-                        # Qty-less buy claims remaining self-acquisition slot.
+                owner = buy["owner_is_taxpayer"]
+                if separate_return and (owner is False or (spouse_at_key and owner is None)):
+                    # A spouse's purchase remains available to replace the taxpayer's sale.
+                    contribution = buy_qty
+                elif math.isinf(buy_qty):
+                    if budget > 0 and len(same_key_lots) == 1:
                         contribution = 0.0
                         budget = 0.0
                     else:
-                        # Budget already exhausted by prior known-qty self
-                        # buys → this inf is a genuine unknown-qty replacement.
                         contribution = math.inf
                 else:
                     matched = min(buy_qty, budget)
@@ -619,11 +607,11 @@ def _apply_wash_sale_prorate(
                                      "excluded_lots": []})
 
     replacements.sort(key=lambda buy: (buy["date"], buy["index"]))
-    # Allocation follows the existing FIFO sale convention. Sorting all losing
-    # lots together lets different tickers share one reviewed purchase.
+    # Assume oldest lots are sold first. For a shared acquisition date,
+    # match the highest loss per share first to avoid overstating the harvest.
     losing_lots = sorted(
-        (lot for lot in lots if lot.unrealized_loss > 0 and not lot.tax_advantaged),
-        key=lambda lot: lot.acquired,
+        (lot for lot in lots if lot.allowed_loss > 0 and not lot.tax_advantaged),
+        key=lambda lot: (lot.acquired, -lot.unrealized_loss / lot.quantity, lot.id),
     )
     prorated_by_id = {}
     for lot in losing_lots:
@@ -1008,6 +996,7 @@ class HarvestReport:
     # the user sees losses in retirement accounts and can consider portfolio
     # rebalancing (no tax mechanism, but a real position-management signal).
     tax_advantaged_loss: float
+    spouse_loss: float
 
     # Schedule D netting outcome (signed; gains positive, losses negative)
     baseline_net_st_gain: float
@@ -1261,9 +1250,11 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
 
     # Per-lot inventory; wash-sale state from the prorate matcher, then the hold
     # for history the file does not confirm (AA127).
-    lots, txns, as_of = parse_holdings(holdings, today=today)
+    separate_return = filing_status == "MFS"
+    lots, txns, as_of = parse_holdings(holdings, today=today, separate_return=separate_return)
     coverage = parse_transaction_coverage(holdings)
-    lots = _apply_wash_sale_prorate(lots, txns, as_of, _wash_sale_classifications(holdings))
+    lots = _apply_wash_sale_prorate(lots, txns, as_of, _wash_sale_classifications(holdings),
+                                   separate_return=separate_return)
     listed = holdings.get("recent_transactions") is not None
     lots = _apply_history_coverage(
         lots, _coverage_gap(coverage, lots, txns, listed, as_of, today))
@@ -1356,10 +1347,12 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
     blocked_loss = round(sum(l.disallowed_loss for l in enriched), 2)
     # Total unrealized loss locked in tax-advantaged accounts (not deductible).
     # Reconciliation invariant the renderer relies on:
-    #   total_loss + blocked_loss + tax_advantaged_loss + unverified_loss
+    #   total_loss + blocked_loss + tax_advantaged_loss + spouse_loss + unverified_loss
     #     == Σ unrealized_loss over all lots
+    spouse_lots = {lot.id for lot in enriched if separate_return and lot.owner == "spouse"}
     tax_advantaged_loss = round(sum(l.unrealized_loss for l in enriched
-                                    if l.tax_advantaged), 2)
+                                    if l.tax_advantaged and l.id not in spouse_lots), 2)
+    spouse_loss = round(sum(l.unrealized_loss for l in enriched if l.id in spouse_lots), 2)
     unverified_loss = round(sum(l.allowed_loss for l in enriched if l.held_back), 2)
 
     # Baseline Schedule D
@@ -1456,7 +1449,7 @@ def build_harvest(result: dict, profile: dict, tax_law: dict, holdings: dict,
         lots=sorted_lots, eligible_lot_ids=[l.id for l in eligible],
         st_loss_harvested=st_loss, lt_loss_harvested=lt_loss,
         total_loss_harvested=total_loss, wash_sale_blocked_loss=blocked_loss,
-        tax_advantaged_loss=tax_advantaged_loss,
+        tax_advantaged_loss=tax_advantaged_loss, spouse_loss=spouse_loss,
         baseline_net_st_gain=round(base_st, 2),
         baseline_net_lt_gain=round(base_lt, 2),
         new_net_st_gain=round(new_st, 2),
@@ -1514,6 +1507,7 @@ def _report_to_dict(r: HarvestReport) -> dict:
         "total_loss_harvested": r.total_loss_harvested,
         "wash_sale_blocked_loss": r.wash_sale_blocked_loss,
         "tax_advantaged_loss": r.tax_advantaged_loss,
+        "spouse_loss": r.spouse_loss,
         "baseline_net_st_gain": r.baseline_net_st_gain,
         "baseline_net_lt_gain": r.baseline_net_lt_gain,
         "new_net_st_gain": r.new_net_st_gain,
@@ -1631,8 +1625,10 @@ def render_markdown(r: HarvestReport) -> str:
     # build_harvest). The "Total unrealized losses" row makes it visible, so
     # the user can trace every dollar from holdings to a category.
     total_unrealized = round(r.total_loss_harvested + r.wash_sale_blocked_loss
-                             + r.tax_advantaged_loss + r.unverified_loss, 2)
+                             + r.tax_advantaged_loss + r.spouse_loss + r.unverified_loss, 2)
     held_row = [f"| {held_title} | {_money(r.unverified_loss)} |"] if held else []
+    spouse_row = ([f"| Spouse's lots excluded from this return | {_money(r.spouse_loss)} |"]
+                  if r.spouse_loss else [])
     lines += ["## Bottom line", "",
               "| Item | Amount |", "|---|---:|",
               f"| Total unrealized losses (all lots) | "
@@ -1641,6 +1637,7 @@ def render_markdown(r: HarvestReport) -> str:
               *held_row,
               f"| Tax-advantaged accounts (not deductible) | "
               f"{_money(r.tax_advantaged_loss)} |",
+              *spouse_row,
               f"| **Eligible to harvest this year** | "
               f"**{_money(r.total_loss_harvested)}** |",
               f"|   of which short-term | {_money(r.st_loss_harvested)} |",
@@ -1690,7 +1687,10 @@ def render_markdown(r: HarvestReport) -> str:
         lines.append(f"- No lot is cleared to harvest. See \"{held_title}\" below." if held
                      else "- No eligible losing lots — nothing to harvest.")
     else:
-        lines += ["| Lot | Ticker | Account | Held | Allowed loss | "
+        lines += ["Wash-sale matching assumes the oldest lots are sold first. For lots acquired "
+                  "on the same date, sell those with the highest loss per share first, then "
+                  "use lot ID to break ties.", "",
+                  "| Lot | Ticker | Account | Held | Allowed loss | "
                   "Disallowed (§1091) | Est. $ saved/$ |",
                   "|---|---|---|---|---:|---:|---:|"]
         for l in eligible:
@@ -1775,7 +1775,8 @@ def render_markdown(r: HarvestReport) -> str:
     # capital-loss deduction inside IRA/401(k)/HSA/Roth). Surfacing them as
     # a discrete section is more honest than silently dropping the lot.
     tax_adv = [l for l in r.lots
-               if l.tax_advantaged and l.unrealized_loss > 0]
+               if l.tax_advantaged and l.unrealized_loss > 0
+               and not (r.filing_status == "MFS" and l.owner == "spouse")]
     if tax_adv:
         lines += ["## Tax-advantaged account positions (no deductible loss)", "",
                   "_These positions are at an unrealized loss inside a tax-advantaged "

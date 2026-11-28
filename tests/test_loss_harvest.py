@@ -169,7 +169,7 @@ def test_wash_sale_ignores_zero_quantity_buys():
 def test_parse_holdings_rejects_negative_quantity():
     bad = {"lots": [{"id": "x", "ticker": "X", "account": "A",
                      "acquired": "2024-01-01", "quantity": -1,
-                     "cost_basis": 100, "current_value": 50}]}
+                     "cost_basis": 100, "current_value": 50, "tax_advantaged": False}]}
     with pytest.raises(lh.LossHarvestError, match="quantity"):
         lh.parse_holdings(bad, today=TODAY)
 
@@ -180,7 +180,7 @@ def test_parse_holdings_rejects_zero_quantity():
     # taxpayer no longer owns. Must be rejected at parse time.
     bad = {"lots": [{"id": "ghost", "ticker": "X", "account": "A",
                      "acquired": "2024-01-01", "quantity": 0,
-                     "cost_basis": 10000, "current_value": 5000}]}
+                     "cost_basis": 10000, "current_value": 5000, "tax_advantaged": False}]}
     with pytest.raises(lh.LossHarvestError, match="must be > 0"):
         lh.parse_holdings(bad, today=TODAY)
 
@@ -189,7 +189,7 @@ def test_parse_holdings_allows_zero_cost_basis():
     # Legitimate: gift shares, employer match (basis 0 is acceptable).
     ok = {"lots": [{"id": "g", "ticker": "X", "account": "A",
                     "acquired": "2024-01-01", "quantity": 10,
-                    "cost_basis": 0, "current_value": 500}]}
+                    "cost_basis": 0, "current_value": 500, "tax_advantaged": False}]}
     lots, _, _ = lh.parse_holdings(ok, today=TODAY)
     assert lots[0].unrealized_loss == 0  # this lot is a gain, not a loss
 
@@ -198,7 +198,7 @@ def test_parse_holdings_allows_zero_current_value():
     # Legitimate: worthless security harvest (§165(g)).
     ok = {"lots": [{"id": "w", "ticker": "BUST", "account": "A",
                     "acquired": "2024-01-01", "quantity": 100,
-                    "cost_basis": 5000, "current_value": 0}]}
+                    "cost_basis": 5000, "current_value": 0, "tax_advantaged": False}]}
     lots, _, _ = lh.parse_holdings(ok, today=TODAY)
     assert lots[0].unrealized_loss == 5000
 
@@ -206,7 +206,7 @@ def test_parse_holdings_allows_zero_current_value():
 def test_parse_holdings_rejects_negative_basis():
     bad = {"lots": [{"id": "x", "ticker": "X", "account": "A",
                      "acquired": "2024-01-01", "quantity": 1,
-                     "cost_basis": -100, "current_value": 50}]}
+                     "cost_basis": -100, "current_value": 50, "tax_advantaged": False}]}
     with pytest.raises(lh.LossHarvestError, match="basis"):
         lh.parse_holdings(bad, today=TODAY)
 
@@ -214,7 +214,7 @@ def test_parse_holdings_rejects_negative_basis():
 def test_parse_holdings_rejects_malformed_date():
     bad = {"lots": [{"id": "x", "ticker": "X", "account": "A",
                      "acquired": "not-a-date", "quantity": 1,
-                     "cost_basis": 100, "current_value": 50}]}
+                     "cost_basis": 100, "current_value": 50, "tax_advantaged": False}]}
     with pytest.raises(lh.LossHarvestError, match="acquired"):
         lh.parse_holdings(bad, today=TODAY)
 
@@ -222,7 +222,7 @@ def test_parse_holdings_rejects_malformed_date():
 def test_parse_holdings_rejects_future_acquired_date():
     bad = {"lots": [{"id": "x", "ticker": "X", "account": "A",
                      "acquired": "2030-01-01", "quantity": 1,
-                     "cost_basis": 100, "current_value": 50}]}
+                     "cost_basis": 100, "current_value": 50, "tax_advantaged": False}]}
     with pytest.raises(lh.LossHarvestError, match="future"):
         lh.parse_holdings(bad, today=TODAY)
 
@@ -230,9 +230,9 @@ def test_parse_holdings_rejects_future_acquired_date():
 def test_parse_holdings_requires_unique_lot_ids():
     bad = {"lots": [
         {"id": "dup", "ticker": "A", "account": "A", "acquired": "2024-01-01",
-         "quantity": 1, "cost_basis": 100, "current_value": 50},
+         "quantity": 1, "cost_basis": 100, "current_value": 50, "tax_advantaged": False},
         {"id": "dup", "ticker": "B", "account": "A", "acquired": "2024-01-01",
-         "quantity": 1, "cost_basis": 100, "current_value": 50},
+         "quantity": 1, "cost_basis": 100, "current_value": 50, "tax_advantaged": False},
     ]}
     with pytest.raises(lh.LossHarvestError, match="unique"):
         lh.parse_holdings(bad, today=TODAY)
@@ -250,7 +250,7 @@ def test_parse_holdings_empty_lots_raises():
 def _valid_lot():
     return {"id": "L", "ticker": "X", "account": "A",
             "acquired": "2024-01-01", "quantity": 10,
-            "cost_basis": 100, "current_value": 50}
+            "cost_basis": 100, "current_value": 50, "tax_advantaged": False}
 
 
 def test_parse_holdings_rejects_string_transaction():
@@ -483,7 +483,7 @@ def test_build_harvest_allows_missing_cg_when_no_preferential_income():
     }
     h = _holdings_with([{"id": "ST", "ticker": "X", "account": "A",
                          "acquired": "2026-06-01", "quantity": 10,  # short-term lot
-                         "cost_basis": 1000, "current_value": 500}])
+                         "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}])
     law = _load("tax_law_2026.json")
     law["federal"].pop("capital_gains_rates", None)
     # Must succeed — no exception. Returns a real report.
@@ -566,7 +566,7 @@ def test_build_harvest_anchor_invariant_with_niit_modeled():
     h = {"as_of": "2026-12-15",
          "lots": [{"id": "g", "ticker": "X", "account": "A",
                    "acquired": "2024-01-01", "quantity": 10,
-                   "cost_basis": 100, "current_value": 500}]}  # gain, not loss
+                   "cost_basis": 100, "current_value": 500, "tax_advantaged": False}]}  # gain, not loss
     r = _build(holdings=h)
     assert r.total_loss_harvested == 0
     assert r.harvested_fed_tax == r.baseline_fed_tax  # == line_24
@@ -659,7 +659,7 @@ def test_proration_1_share_drip_against_100_share_lot():
     h = _holdings_with(
         lots=[{"id": "BIG", "ticker": "VTSAX", "account": "A",
                "acquired": "2024-01-01", "quantity": 100,
-               "cost_basis": 12000, "current_value": 10000}],   # loss $2000
+               "cost_basis": 12000, "current_value": 10000, "tax_advantaged": False}],   # loss $2000
         txns=[{"ticker": "VTSAX", "account": "DRIP",
                "date": "2026-12-01", "kind": "buy", "quantity": 1}],
     )
@@ -677,7 +677,7 @@ def test_proration_exact_match_quantity_fully_blocks():
     h = _holdings_with(
         lots=[{"id": "X", "ticker": "ABC", "account": "A",
                "acquired": "2024-01-01", "quantity": 50,
-               "cost_basis": 5000, "current_value": 3000}],
+               "cost_basis": 5000, "current_value": 3000, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy", "quantity": 50}],
     )
     r = _build(holdings=h)
@@ -695,7 +695,7 @@ def test_proration_oversize_replacement_still_full_block():
     h = _holdings_with(
         lots=[{"id": "X", "ticker": "ABC", "account": "A",
                "acquired": "2024-01-01", "quantity": 50,
-               "cost_basis": 5000, "current_value": 3000}],
+               "cost_basis": 5000, "current_value": 3000, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy", "quantity": 200}],
     )
     r = _build(holdings=h)
@@ -709,7 +709,7 @@ def test_proration_missing_quantity_treated_as_inf_full_block():
     h = _holdings_with(
         lots=[{"id": "X", "ticker": "ABC", "account": "A",
                "acquired": "2024-01-01", "quantity": 50,
-               "cost_basis": 5000, "current_value": 3000}],
+               "cost_basis": 5000, "current_value": 3000, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy"}],
     )
     r = _build(holdings=h)
@@ -726,10 +726,10 @@ def test_proration_fifo_match_across_two_losing_lots():
         lots=[
             {"id": "A", "ticker": "ABC", "account": "A",
              "acquired": "2020-01-01", "quantity": 30,
-             "cost_basis": 3000, "current_value": 2100},  # loss $900, LT
+             "cost_basis": 3000, "current_value": 2100, "tax_advantaged": False},  # loss $900, LT
             {"id": "B", "ticker": "ABC", "account": "A",
              "acquired": "2025-01-01", "quantity": 80,
-             "cost_basis": 8000, "current_value": 6000},  # loss $2000, ST
+             "cost_basis": 8000, "current_value": 6000, "tax_advantaged": False},  # loss $2000, ST
         ],
         txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy", "quantity": 50}],
     )
@@ -751,10 +751,10 @@ def test_proration_no_double_counting_with_multiple_lots_same_ticker():
         lots=[
             {"id": "old", "ticker": "TSLA", "account": "A",
              "acquired": "2022-01-01", "quantity": 3,
-             "cost_basis": 1500, "current_value": 1000},   # loss $500, qty 3
+             "cost_basis": 1500, "current_value": 1000, "tax_advantaged": False},   # loss $500, qty 3
             {"id": "new", "ticker": "TSLA", "account": "A",
              "acquired": "2025-01-01", "quantity": 100,
-             "cost_basis": 30000, "current_value": 25000}, # loss $5000, qty 100
+             "cost_basis": 30000, "current_value": 25000, "tax_advantaged": False}, # loss $5000, qty 100
         ],
         txns=[{"ticker": "TSLA", "date": "2026-12-01", "kind": "buy", "quantity": 5}],
     )
@@ -772,16 +772,19 @@ def test_proration_no_double_counting_with_multiple_lots_same_ticker():
 # Tax-advantaged-account handling (the v1.5 fix for Codex P1, Rev. Rul. 2008-5)
 # --------------------------------------------------------------------------
 
-def test_parse_holdings_defaults_tax_advantaged_to_false():
-    # Holdings files written under v1 (before this field existed) must still
-    # parse — every lot defaults to taxable. Forward-compat for older fixtures.
+@pytest.mark.parametrize("flag", [{}, {"tax_advantaged": None}])
+def test_parse_holdings_requires_tax_advantaged(flag):
+    # Account type is unknown even though the buy and the Roth lot share a key.
+    # Assuming taxable would both offer the Roth loss and hide its purchase.
     h = _holdings_with(
-        lots=[{"id": "x", "ticker": "X", "account": "A",
-               "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 100, "current_value": 50}],
+        lots=[{"id": "roth", "ticker": "X", "account": "Roth",
+               "acquired": "2026-12-01", "quantity": 10,
+               "cost_basis": 1100, "current_value": 100, **flag}],
+        txns=[{"ticker": "X", "account": "Roth", "date": "2026-12-01",
+               "quantity": 10, "account_type": None}],
     )
-    lots, _, _ = lh.parse_holdings(h, today=TODAY)
-    assert lots[0].tax_advantaged is False
+    with pytest.raises(lh.LossHarvestError, match="lot roth.*tax_advantaged.*boolean"):
+        _build(holdings=h)
 
 
 def test_parse_holdings_rejects_non_bool_tax_advantaged():
@@ -806,7 +809,7 @@ def test_tax_advantaged_lot_excluded_from_eligible():
              "tax_advantaged": True},
             {"id": "tax", "ticker": "ABC", "account": "Schwab",
              "acquired": "2024-01-01", "quantity": 50,
-             "cost_basis": 5000, "current_value": 3000},  # control: taxable, eligible
+             "cost_basis": 5000, "current_value": 3000, "tax_advantaged": False},  # control: taxable, eligible
         ],
     )
     r = _build(holdings=h)
@@ -822,7 +825,7 @@ def test_wash_sale_basis_plan_separates_taxable_and_ira_replacements():
     h = _holdings_with(
         lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500}],
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-02", "quantity": 2,
                "account": "Retirement", "account_type": "ira", "owner_is_taxpayer": True},
               {"ticker": "ABC", "date": "2026-12-01", "quantity": 3,
@@ -849,10 +852,10 @@ def test_basis_plan_consumes_replacement_shares_once_across_lots():
     h = _holdings_with(
         lots=[{"id": "first", "ticker": "ABC", "account": "Broker",
                "acquired": "2023-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500},
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False},
               {"id": "second", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 2000, "current_value": 1000}],
+               "cost_basis": 2000, "current_value": 1000, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 15,
                "account_type": "taxable", "cost_basis": 1200}])
     r = _build(holdings=h)
@@ -871,7 +874,7 @@ def test_missing_replacement_facts_never_claim_future_basis(kind, quantity):
     h = _holdings_with(
         lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500}],
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": quantity,
                "account_type": kind}])
     r = _build(holdings=h)
@@ -885,7 +888,7 @@ def test_basis_plan_conserves_cents_across_replacement_purchases():
     h = _holdings_with(
         lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 3,
-               "cost_basis": 1, "current_value": 0}],
+               "cost_basis": 1, "current_value": 0, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": f"2026-12-0{day}", "quantity": 1,
                "account_type": "taxable"} for day in (1, 2, 3)])
     a = _build(holdings=h).lots[0].wash_sale_adjustments
@@ -902,7 +905,7 @@ def test_invalid_replacement_basis_metadata_refuses(field, value):
     h = _holdings_with(
         lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500}],
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 5,
                field: value}])
     with pytest.raises(lh.LossHarvestError):
@@ -913,7 +916,7 @@ def test_replacement_classification_must_agree_with_the_listed_account():
     h = _holdings_with(
         lots=[{"id": "sale", "ticker": "ABC", "account": "Broker",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500}],
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-01", "quantity": 5,
                "account": "Broker", "account_type": "ira"}])
     with pytest.raises(lh.LossHarvestError, match="conflicts"):
@@ -948,7 +951,7 @@ def test_rev_rul_2008_5_ira_buy_poisons_taxable_harvest():
     h = _holdings_with(
         lots=[{"id": "tax", "ticker": "ZZZ", "account": "Schwab",
                "acquired": "2024-01-01", "quantity": 20,
-               "cost_basis": 4000, "current_value": 2000}],   # $2000 LT loss, taxable
+               "cost_basis": 4000, "current_value": 2000, "tax_advantaged": False}],   # $2000 LT loss, taxable
         txns=[
             # IRA buy of 5 shares 10d before the harvest — STILL trips §1091
             # on the taxable lot per Rev. Rul. 2008-5.
@@ -979,7 +982,7 @@ def test_render_markdown_omits_tax_advantaged_section_when_no_such_lots():
     h = _holdings_with(
         lots=[{"id": "x", "ticker": "X", "account": "Schwab",
                "acquired": "2024-01-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 500}],
+               "cost_basis": 1000, "current_value": 500, "tax_advantaged": False}],
     )
     r = _build(holdings=h)
     md = lh.render_markdown(r)
@@ -999,7 +1002,7 @@ def test_self_acquisition_in_window_not_counted_as_replacement():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
                "kind": "buy", "quantity": 10}],
     )
@@ -1018,10 +1021,10 @@ def test_buy_qty_exceeds_lot_qty_excess_blocks():
         lots=[
             {"id": "A", "ticker": "ABC", "account": "Schwab",
              "acquired": "2026-12-01", "quantity": 10,
-             "cost_basis": 1000, "current_value": 700},
+             "cost_basis": 1000, "current_value": 700, "tax_advantaged": False},
             {"id": "B", "ticker": "ABC", "account": "Schwab",
              "acquired": "2026-12-01", "quantity": 5,
-             "cost_basis": 500, "current_value": 600},  # at a GAIN, still held
+             "cost_basis": 500, "current_value": 600, "tax_advantaged": False},  # at a GAIN, still held
         ],
         txns=[{"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
                "kind": "buy", "quantity": 15}],
@@ -1039,7 +1042,7 @@ def test_separate_post_acquisition_buy_still_blocks():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
              "kind": "buy", "quantity": 10},
@@ -1061,7 +1064,7 @@ def test_inf_qty_buy_matching_lot_acquisition_assumed_self():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "account": "Schwab",
                "date": "2026-12-01", "kind": "buy"}],  # qty None
     )
@@ -1077,7 +1080,7 @@ def test_inf_qty_buy_not_matching_lot_still_full_blocks():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2024-01-01", "quantity": 10,  # OUT of window
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "account": "Schwab",
                "date": "2026-12-05", "kind": "buy"}],  # qty None
     )
@@ -1093,10 +1096,10 @@ def test_self_acquisition_does_not_exclude_other_tickers():
         lots=[
             {"id": "A", "ticker": "ABC", "account": "Schwab",
              "acquired": "2026-12-01", "quantity": 10,
-             "cost_basis": 1000, "current_value": 700},
+             "cost_basis": 1000, "current_value": 700, "tax_advantaged": False},
             {"id": "D", "ticker": "DEF", "account": "Schwab",
              "acquired": "2020-01-01", "quantity": 5,  # acquired out of window
-             "cost_basis": 1000, "current_value": 700},
+             "cost_basis": 1000, "current_value": 700, "tax_advantaged": False},
         ],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
@@ -1123,7 +1126,7 @@ def test_tax_advantaged_lot_does_not_earn_self_acquisition_exclusion():
              "tax_advantaged": True},
             {"id": "tax", "ticker": "ABC", "account": "Schwab",
              "acquired": "2024-01-01", "quantity": 10,   # acquired out of window
-             "cost_basis": 1000, "current_value": 700},
+             "cost_basis": 1000, "current_value": 700, "tax_advantaged": False},
         ],
         txns=[{"ticker": "ABC", "account": "Fidelity IRA",
                "date": "2026-12-01", "kind": "buy", "quantity": 5}],
@@ -1144,7 +1147,7 @@ def test_cross_account_buy_on_same_date_does_not_earn_self_exclusion():
     h = _holdings_with(
         lots=[{"id": "tax", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
              "kind": "buy", "quantity": 10},  # taxable lot's own
@@ -1168,7 +1171,7 @@ def test_inf_qty_cross_account_buy_stays_full_block():
     h = _holdings_with(
         lots=[{"id": "tax", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "account": "Spouse Schwab",
                "date": "2026-12-01", "kind": "buy"}],  # qty None
     )
@@ -1189,7 +1192,7 @@ def test_buy_without_account_does_not_earn_self_exclusion():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-01",
                "kind": "buy", "quantity": 10}],  # no account field
     )
@@ -1210,7 +1213,7 @@ def test_same_date_split_fill_consumes_budget_once():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
              "kind": "buy", "quantity": 10},  # lot's own acquisition
@@ -1232,7 +1235,7 @@ def test_same_date_known_then_inf_blocks_fully():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
              "kind": "buy", "quantity": 10},
@@ -1253,7 +1256,7 @@ def test_same_date_inf_consumes_remaining_budget_when_known_partial():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[
             {"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
              "kind": "buy", "quantity": 5},
@@ -1275,10 +1278,10 @@ def test_multi_lot_same_group_shared_budget():
         lots=[
             {"id": "A", "ticker": "ABC", "account": "Schwab",
              "acquired": "2026-12-01", "quantity": 10,
-             "cost_basis": 1000, "current_value": 700},  # loss $300
+             "cost_basis": 1000, "current_value": 700, "tax_advantaged": False},  # loss $300
             {"id": "B", "ticker": "ABC", "account": "Schwab",
              "acquired": "2026-12-01", "quantity": 5,
-             "cost_basis": 500, "current_value": 350},   # loss $150
+             "cost_basis": 500, "current_value": 350, "tax_advantaged": False},   # loss $150
         ],
         txns=[{"ticker": "ABC", "account": "Schwab", "date": "2026-12-01",
                "kind": "buy", "quantity": 20}],  # 15 self + 5 replacement
@@ -1298,7 +1301,7 @@ def test_account_match_case_insensitive():
     h = _holdings_with(
         lots=[{"id": "A", "ticker": "ABC", "account": "Schwab Brokerage",
                "acquired": "2026-12-01", "quantity": 10,
-               "cost_basis": 1000, "current_value": 700}],
+               "cost_basis": 1000, "current_value": 700, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "account": "  schwab brokerage  ",
                "date": "2026-12-01", "kind": "buy", "quantity": 10}],
     )
@@ -1312,10 +1315,10 @@ def test_a_fully_blocked_lot_holds_back_a_later_lot_its_purchase_could_replace()
         lots=[
             {"id": "first",  "ticker": "ZZZ", "account": "A",
              "acquired": "2020-01-01", "quantity": 10,
-             "cost_basis": 1000, "current_value": 500},
+             "cost_basis": 1000, "current_value": 500, "tax_advantaged": False},
             {"id": "second", "ticker": "ZZZ", "account": "A",
              "acquired": "2025-01-01", "quantity": 10,
-             "cost_basis": 1000, "current_value": 500},
+             "cost_basis": 1000, "current_value": 500, "tax_advantaged": False},
         ],
         # 10-share replacement pool exactly absorbed by the first lot.
         txns=[{"ticker": "ZZZ", "date": "2026-12-10", "kind": "buy", "quantity": 10}],
@@ -1345,7 +1348,7 @@ def test_build_harvest_zero_eligible_when_no_losses():
         "as_of": "2026-12-15",
         "lots": [{"id": "G1", "ticker": "X", "account": "A",
                   "acquired": "2024-01-01", "quantity": 10,
-                  "cost_basis": 100, "current_value": 500}],
+                  "cost_basis": 100, "current_value": 500, "tax_advantaged": False}],
     }
     r = _build(holdings=h)
     assert r.total_loss_harvested == 0
@@ -1358,7 +1361,7 @@ def test_build_harvest_loss_exceeds_gains_triggers_3k_cap_and_carryforward():
     # No baseline gains — synthesize a result.json fixture with zero Sched D.
     h = _holdings_with([{"id": "BIG", "ticker": "ZZZ", "account": "A",
                          "acquired": "2020-01-01", "quantity": 100,
-                         "cost_basis": 60000, "current_value": 50000}])  # LT loss 10000
+                         "cost_basis": 60000, "current_value": 50000, "tax_advantaged": False}])  # LT loss 10000
     res = _load("result.json")
     res["form_1040"]["line_7_capital_gain"] = 0
     res["schedule_d"] = {
@@ -1377,7 +1380,8 @@ def test_build_harvest_loss_exceeds_gains_triggers_3k_cap_and_carryforward():
 def test_build_harvest_mfs_uses_1500_loss_cap():
     h = _holdings_with([{"id": "BIG", "ticker": "ZZZ", "account": "A",
                          "acquired": "2020-01-01", "quantity": 100,
-                         "cost_basis": 60000, "current_value": 50000}])
+                         "cost_basis": 60000, "current_value": 50000,
+                         "tax_advantaged": False, "owner": "taxpayer"}])
     res = _load("result.json")
     res["meta"]["filing_status"] = "MFS"
     res["form_1040"]["line_7_capital_gain"] = 0
@@ -1555,7 +1559,7 @@ def test_render_surfaces_1091d_basis_shift_for_fully_blocked():
     h = _holdings_with(
         lots=[{"id": "X", "ticker": "ABC", "account": "A",
                "acquired": "2024-01-01", "quantity": 50,
-               "cost_basis": 5000, "current_value": 3000}],
+               "cost_basis": 5000, "current_value": 3000, "tax_advantaged": False}],
         txns=[{"ticker": "ABC", "date": "2026-12-10", "kind": "buy", "quantity": 50}],
     )
     md = lh.render_markdown(_build(holdings=h))
@@ -2322,7 +2326,7 @@ def _with_lot_bought_in_window(listed):
     h = _load("holdings.json")
     h["lots"].append({"id": "L6", "ticker": "VTSAX", "account": "Schwab Brokerage",
                       "acquired": "2026-12-01", "quantity": 10,
-                      "cost_basis": 1000, "current_value": 1100})
+                      "cost_basis": 1000, "current_value": 1100, "tax_advantaged": False})
     if listed:
         h["recent_transactions"].append({"ticker": "VTSAX", "account": "Schwab Brokerage",
                                          "date": "2026-12-01", "kind": "buy", "quantity": 10})
@@ -2366,7 +2370,7 @@ def _cross_ticker_holdings():
     return _holdings_with(
         lots=[{"id": "fund", "ticker": "VTSAX", "account": "Brokerage",
                "acquired": "2024-01-01", "quantity": 100,
-               "cost_basis": 12000, "current_value": 10000}],
+               "cost_basis": 12000, "current_value": 10000, "tax_advantaged": False}],
         txns=[{"ticker": "VTI", "account": "Spouse Plan", "date": "2026-12-01",
                "quantity": 25}],
     )
@@ -2484,7 +2488,7 @@ def test_reviewed_buy_matched_to_a_blocked_other_ticker_cannot_clear_a_sale():
 def _losing_lot(lot_id, ticker, acquired, quantity, account="Brokerage"):
     # $20 of loss per share.
     return {"id": lot_id, "ticker": ticker, "account": account, "acquired": acquired,
-            "quantity": quantity, "cost_basis": 120 * quantity, "current_value": 100 * quantity}
+            "quantity": quantity, "cost_basis": 120 * quantity, "current_value": 100 * quantity, "tax_advantaged": False}
 
 
 def _in_window_buy(ticker, quantity, account="Spouse Plan", date="2026-12-01"):
@@ -2496,6 +2500,70 @@ def _scan(lots, txns, pairs=()):
     holdings["wash_sale_classifications"] = [_review_pair(*pair) for pair in pairs]
     report = _build(holdings=holdings)
     return report, {lot.id: lot for lot in report.lots}
+
+
+def _scan_mfs(lots, txns=()):
+    result = _load("result.json")
+    result["meta"]["filing_status"] = "MFS"
+    profile = _load("taxpayer_profile.json")
+    profile["filing_status"] = "MFS"
+    return lh.build_harvest(result, profile, _load("tax_law_2026.json"),
+                            _holdings_with(lots, list(txns)), 2026, name="mfs", today=TODAY)
+
+
+@pytest.mark.parametrize("owner", [{}, {"owner": None}, {"owner": "joint"}])
+def test_mfs_requires_lot_owner(owner):
+    lot = _losing_lot("S1", "VTI", "2025-03-01", 50, "Spouse Schwab")
+    with pytest.raises(lh.LossHarvestError, match="lot S1.*owner.*taxpayer.*spouse"):
+        _scan_mfs([{**lot, **owner}])
+
+
+def test_mfs_excludes_spouse_losses_but_keeps_spouse_replacement_purchases():
+    lots = [dict(_losing_lot("T1", "VTI", "2025-03-01", 50), owner="taxpayer"),
+            dict(_losing_lot("S1", "VTI", "2026-12-01", 50, "Spouse Schwab"), owner="spouse"),
+            dict(_losing_lot("S2", "VTI", "2025-03-01", 5, "Spouse IRA"),
+                 owner="spouse", tax_advantaged=True)]
+    buy = _in_window_buy("VTI", 50, account="Spouse Schwab")
+    report = _scan_mfs(lots, [buy])
+    assert report.eligible_lot_ids == []
+    assert report.fed_savings == 0
+    assert report.wash_sale_blocked_loss == 1000
+    assert report.spouse_loss == 1100
+    assert report.tax_advantaged_loss == 0
+    assert lh._report_to_dict(report)["spouse_loss"] == 1100
+    markdown = lh.render_markdown(report)
+    assert "Spouse's lots excluded from this return | $1,100 |" in markdown
+    assert "Total unrealized losses (all lots) | $2,100 |" in markdown
+
+
+@pytest.mark.parametrize("owner", [None, False])
+def test_mfs_does_not_use_an_ambiguous_or_spouse_purchase_as_own(owner):
+    lots = [dict(_losing_lot("T1", "VTI", "2025-03-01", 50), owner="taxpayer"),
+            dict(_losing_lot("T2", "VTI", "2026-12-01", 5), owner="taxpayer"),
+            dict(_losing_lot("S1", "VTI", "2026-12-01", 50), owner="spouse")]
+    buy = dict(_in_window_buy("VTI", 50, account="Brokerage"), owner_is_taxpayer=owner)
+    report = _scan_mfs(lots, [buy])
+    assert next(lot for lot in report.lots if lot.id == "T1").disallowed_loss == 1000
+
+
+@pytest.mark.parametrize("quantity", [None, 100])
+def test_buy_matching_a_losing_and_a_gaining_lot_blocks_the_old_loss(quantity):
+    lots = [dict(_losing_lot("X", "VTI", "2025-03-01", 50), cost_basis=8000),
+            _losing_lot("L1", "VTI", "2026-12-01", 10),
+            dict(_losing_lot("L2", "VTI", "2026-12-01", 90), cost_basis=8000)]
+    report, by_id = _scan(lots, [_in_window_buy("VTI", quantity, account="Brokerage")])
+    assert by_id["X"].disallowed_loss == 3000
+    assert report.total_loss_harvested == 0
+
+
+def test_same_day_lots_match_the_highest_loss_per_share_first_in_both_file_orders():
+    a = dict(_losing_lot("A", "VTI", "2024-01-01", 10), cost_basis=1010)
+    b = dict(_losing_lot("B", "VTI", "2024-01-01", 10, "Other"), cost_basis=2000)
+    for lots in ([a, b], [b, a]):
+        report, by_id = _scan(lots, [_in_window_buy("VTI", 5)])
+        assert by_id["B"].disallowed_loss == 500
+        assert report.total_loss_harvested == 510
+        assert "highest loss per share first" in lh.render_markdown(report)
 
 
 def test_an_identical_purchase_absorbed_by_another_ticker_holds_the_later_lot():
@@ -2519,9 +2587,9 @@ def test_an_identical_decision_never_raises_the_harvest():
     # Reviewing a pair as identical only adds replacements, so it can never
     # leave more loss to harvest than not_identical does.
     lots = [{"id": "A", "ticker": "VTSAX", "account": "Brokerage", "acquired": "2020-01-01",
-             "quantity": 200, "cost_basis": 2200, "current_value": 2000},
+             "quantity": 200, "cost_basis": 2200, "current_value": 2000, "tax_advantaged": False},
             {"id": "B", "ticker": "VTI", "account": "Brokerage", "acquired": "2024-01-01",
-             "quantity": 100, "cost_basis": 15000, "current_value": 10000}]
+             "quantity": 100, "cost_basis": 15000, "current_value": 10000, "tax_advantaged": False}]
     harvested = {decision: _scan(lots, [_in_window_buy("VTI", 100)],
                                  [("VTSAX", "VTI", decision)])[0].total_loss_harvested
                  for decision in ("not_identical", "identical")}
